@@ -11,6 +11,13 @@ import {
   updateGroup,
 } from "./services/groups.js";
 import {
+  clampListParams as clampSubGroupListParams,
+  createSubGroup,
+  deleteSubGroup,
+  listSubGroups,
+  updateSubGroup,
+} from "./services/subGroups.js";
+import {
   clampListParams,
   createUser,
   deleteUser,
@@ -394,6 +401,200 @@ app.delete("/api/admin/groups/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not delete group." });
+  }
+});
+
+app.get("/api/admin/sub-groups", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+
+    const { page: p, pageSize: ps } = clampSubGroupListParams({
+      page,
+      pageSize,
+    });
+    const result = await listSubGroups({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list sub groups." });
+  }
+});
+
+app.post("/api/admin/sub-groups", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const groupIdRaw = req.body?.groupId;
+    const groupId =
+      typeof groupIdRaw === "number"
+        ? groupIdRaw
+        : typeof groupIdRaw === "string"
+          ? Number.parseInt(groupIdRaw, 10)
+          : NaN;
+    if (!Number.isFinite(groupId) || groupId < 1) {
+      res.status(400).json({ error: "Group is required." });
+      return;
+    }
+
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
+    if (!name.trim()) {
+      res.status(400).json({ error: "Name is required." });
+      return;
+    }
+
+    const subGroup = await createSubGroup({ groupId, name });
+    res.status(201).json({ subGroup });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res
+        .status(409)
+        .json({
+          error: "A sub group with this name already exists under that group.",
+        });
+      return;
+    }
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23503"
+    ) {
+      res.status(400).json({ error: "Selected group does not exist." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not create sub group." });
+  }
+});
+
+app.patch("/api/admin/sub-groups/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid sub group id." });
+      return;
+    }
+
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
+    if (!name.trim()) {
+      res.status(400).json({ error: "Name is required." });
+      return;
+    }
+
+    let groupId: number | undefined;
+    if (req.body?.groupId !== undefined) {
+      const groupIdRaw = req.body.groupId;
+      const parsed =
+        typeof groupIdRaw === "number"
+          ? groupIdRaw
+          : typeof groupIdRaw === "string"
+            ? Number.parseInt(groupIdRaw, 10)
+            : NaN;
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        res.status(400).json({ error: "Invalid group id." });
+        return;
+      }
+      groupId = parsed;
+    }
+
+    const subGroup = await updateSubGroup(id, { name, groupId });
+    if (!subGroup) {
+      res.status(404).json({ error: "Sub group not found." });
+      return;
+    }
+    res.json({ subGroup });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res
+        .status(409)
+        .json({
+          error: "A sub group with this name already exists under that group.",
+        });
+      return;
+    }
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23503"
+    ) {
+      res.status(400).json({ error: "Selected group does not exist." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not update sub group." });
+  }
+});
+
+app.delete("/api/admin/sub-groups/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid sub group id." });
+      return;
+    }
+
+    const deleted = await deleteSubGroup(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Sub group not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not delete sub group." });
   }
 });
 

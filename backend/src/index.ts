@@ -6,8 +6,11 @@ import { getAdminByEmail, verifyPassword } from "./services/adminAuth.js";
 import {
   clampListParams,
   createUser,
+  deleteUser,
   DUMMY_ROLES,
   listUsers,
+  normalizePermissions,
+  updateUser,
 } from "./services/users.js";
 
 const app = express();
@@ -150,7 +153,13 @@ app.post("/api/admin/users", async (req, res) => {
       return;
     }
 
-    const user = await createUser({ email, password, role });
+    const permissions = normalizePermissions({
+      perm_view: req.body?.perm_view,
+      perm_edit: req.body?.perm_edit,
+      perm_delete: req.body?.perm_delete,
+    });
+
+    const user = await createUser({ email, password, role, permissions });
     res.status(201).json({ user });
   } catch (err) {
     if (
@@ -164,6 +173,111 @@ app.post("/api/admin/users", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Could not create user." });
+  }
+});
+
+app.patch("/api/admin/users/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid user id." });
+      return;
+    }
+
+    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const role = typeof req.body?.role === "string" ? req.body.role : "";
+    const passwordRaw = req.body?.password;
+    const password =
+      typeof passwordRaw === "string" && passwordRaw.trim() !== ""
+        ? passwordRaw
+        : undefined;
+
+    if (!email.trim() || !role) {
+      res.status(400).json({ error: "Email and role are required." });
+      return;
+    }
+
+    if (!(DUMMY_ROLES as readonly string[]).includes(role)) {
+      res.status(400).json({ error: "Invalid role." });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown> | undefined;
+    const hasPermKeys =
+      body &&
+      ("perm_view" in body ||
+        "perm_edit" in body ||
+        "perm_delete" in body);
+    const permissions = hasPermKeys
+      ? normalizePermissions({
+          perm_view: body?.perm_view,
+          perm_edit: body?.perm_edit,
+          perm_delete: body?.perm_delete,
+        })
+      : undefined;
+
+    const user = await updateUser(id, { email, role, password, permissions });
+    if (!user) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
+    res.json({ user });
+  } catch (err) {
+    if (err instanceof Error && err.message === "Invalid role.") {
+      res.status(400).json({ error: "Invalid role." });
+      return;
+    }
+    if (err instanceof Error && err.message.includes("Password must")) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res.status(409).json({ error: "A user with this email already exists." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not update user." });
+  }
+});
+
+app.delete("/api/admin/users/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid user id." });
+      return;
+    }
+
+    const deleted = await deleteUser(id);
+    if (!deleted) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not delete user." });
   }
 });
 

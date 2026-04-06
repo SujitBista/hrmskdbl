@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "HRMS Admin",
-  description: "Admin dashboard for HRMS",
+  title: "HRMS · Saptakoshi Development Bank",
+  description:
+    "Internal HRMS admin for Saptakoshi Development Bank Limited (SKDBL).",
 };
 
 export default function RootLayout({

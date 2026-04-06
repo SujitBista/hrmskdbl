@@ -1,5 +1,6 @@
 "use client";
 
+import { SaptakoshiLogo } from "@/components/saptakoshi-logo";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -35,19 +36,24 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="flex min-h-full flex-1 flex-col items-center justify-center bg-zinc-100 px-4 py-16">
-      <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-        <h1 className="text-center text-2xl font-semibold tracking-tight text-zinc-900">
-          Admin
-        </h1>
-        <p className="mt-2 text-center text-sm text-zinc-500">
-          Sign in to continue to the dashboard.
-        </p>
-        <form className="mt-8 space-y-5" onSubmit={onSubmit}>
+    <div className="flex min-h-full flex-1 flex-col items-center justify-center bg-[linear-gradient(165deg,var(--brand-muted)_0%,#f8fafc_45%,#eef4f0_100%)] px-4 py-16">
+      <div className="w-full max-w-md rounded-2xl border border-emerald-900/10 bg-white/95 p-8 shadow-[0_8px_30px_-12px_rgba(15,81,50,0.18)] backdrop-blur-sm">
+        <div className="mb-8 flex flex-col items-center gap-4 border-b border-emerald-900/10 pb-8">
+          <SaptakoshiLogo variant="hero" />
+          <div className="text-center">
+            <h1 className="text-lg font-semibold tracking-tight text-[var(--brand-primary)]">
+              HRMS — Admin
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Sign in with your administrator account.
+            </p>
+          </div>
+        </div>
+        <form className="space-y-5" onSubmit={onSubmit}>
           <div>
             <label
               htmlFor="email"
-              className="block text-sm font-medium text-zinc-700"
+              className="block text-sm font-medium text-slate-700"
             >
               Email
             </label>
@@ -59,13 +65,13 @@ export default function AdminPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 shadow-sm outline-none ring-zinc-400 focus:ring-2"
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
             />
           </div>
           <div>
             <label
               htmlFor="password"
-              className="block text-sm font-medium text-zinc-700"
+              className="block text-sm font-medium text-slate-700"
             >
               Password
             </label>
@@ -77,7 +83,7 @@ export default function AdminPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 shadow-sm outline-none ring-zinc-400 focus:ring-2"
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
             />
           </div>
           {error ? (
@@ -88,11 +94,14 @@ export default function AdminPage() {
           <button
             type="submit"
             disabled={loading}
-            className="flex w-full items-center justify-center rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-center rounded-lg bg-[var(--brand-primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--brand-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
+        <p className="mt-8 text-center text-xs text-slate-500">
+          Saptakoshi Development Bank Limited · Internal use
+        </p>
       </div>
     </div>
   );

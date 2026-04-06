@@ -1,6 +1,11 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useId, useState } from "react";
+import {
+  getDefaultPermissions,
+  normalizePermissionsInput,
+  type UserPermissions,
+} from "@/lib/user-permissions";
 
 type Props = {
   onCreated?: () => void;
@@ -11,6 +16,9 @@ export function CreateUserForm({ onCreated }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("");
+  const [perms, setPerms] = useState<UserPermissions>(() =>
+    getDefaultPermissions()
+  );
   const [roles, setRoles] = useState<string[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -44,7 +52,12 @@ export function CreateUserForm({ onCreated }: Props) {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, role }),
+        body: JSON.stringify({
+          email,
+          password,
+          role,
+          ...normalizePermissionsInput(perms),
+        }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
@@ -54,6 +67,7 @@ export function CreateUserForm({ onCreated }: Props) {
       setSuccess("User created successfully.");
       setEmail("");
       setPassword("");
+      setPerms(getDefaultPermissions());
       if (roles[0]) {
         setRole(roles[0]);
       }
@@ -78,7 +92,7 @@ export function CreateUserForm({ onCreated }: Props) {
         Create user
       </h2>
       <p className="mt-1 text-sm text-slate-600">
-        Add a system user and assign a role.
+        Add a system user, assign a role, and set what they can do with records.
       </p>
       <form className="mt-6 flex flex-col gap-5" onSubmit={onSubmit}>
         <div>
@@ -142,6 +156,67 @@ export function CreateUserForm({ onCreated }: Props) {
             Placeholder roles until role management is added.
           </p>
         </div>
+        <fieldset className="rounded-lg border border-slate-200 p-4">
+          <legend className="px-1 text-sm font-medium text-slate-800">
+            Record permissions
+          </legend>
+          <p className="mb-3 text-xs text-slate-500">
+            Edit and delete require view. Turning off view clears edit and delete.
+          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={perms.perm_view}
+                onChange={(ev) => {
+                  const on = ev.target.checked;
+                  setPerms(
+                    on
+                      ? normalizePermissionsInput({
+                          ...perms,
+                          perm_view: true,
+                        })
+                      : { perm_view: false, perm_edit: false, perm_delete: false }
+                  );
+                }}
+                className="size-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+              />
+              View records
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={perms.perm_edit}
+                onChange={(ev) =>
+                  setPerms(
+                    normalizePermissionsInput({
+                      ...perms,
+                      perm_edit: ev.target.checked,
+                    })
+                  )
+                }
+                className="size-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+              />
+              Create / update records
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={perms.perm_delete}
+                onChange={(ev) =>
+                  setPerms(
+                    normalizePermissionsInput({
+                      ...perms,
+                      perm_delete: ev.target.checked,
+                    })
+                  )
+                }
+                className="size-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+              />
+              Delete records
+            </label>
+          </div>
+        </fieldset>
         {error ? (
           <p className="text-sm text-red-600" role="alert">
             {error}

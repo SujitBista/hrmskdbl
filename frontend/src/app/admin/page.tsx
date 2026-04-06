@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-export default function LoginPage() {
+export default function AdminPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,7 +25,7 @@ export default function LoginPage() {
         setError(data.error ?? "Could not sign in.");
         return;
       }
-      router.replace("/dashboard");
+      router.replace("/admin/dashboard");
       router.refresh();
     } catch {
       setError("Something went wrong. Try again.");
@@ -38,10 +38,10 @@ export default function LoginPage() {
     <div className="flex min-h-full flex-1 flex-col items-center justify-center bg-zinc-100 px-4 py-16">
       <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
         <h1 className="text-center text-2xl font-semibold tracking-tight text-zinc-900">
-          Admin sign in
+          Admin
         </h1>
         <p className="mt-2 text-center text-sm text-zinc-500">
-          Use the credentials from your seed step.
+          Sign in to continue to the dashboard.
         </p>
         <form className="mt-8 space-y-5" onSubmit={onSubmit}>
           <div>

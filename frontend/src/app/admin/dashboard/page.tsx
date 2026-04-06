@@ -1,12 +1,11 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { LogoutButton } from "./logout-button";
 
-export default async function DashboardPage() {
+export default async function AdminDashboardPage() {
   const session = await getSession();
   if (!session) {
-    redirect("/login");
+    redirect("/admin");
   }
 
   return (
@@ -40,11 +39,6 @@ export default async function DashboardPage() {
             header.
           </p>
         </div>
-        <p className="mt-6 text-center text-sm text-zinc-500">
-          <Link href="/" className="text-zinc-700 underline hover:text-zinc-900">
-            Back to home
-          </Link>
-        </p>
       </main>
     </div>
   );

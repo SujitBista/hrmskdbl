@@ -11,7 +11,7 @@ export function LogoutButton() {
     setLoading(true);
     try {
       await fetch("/api/auth/logout", { method: "POST" });
-      router.replace("/login");
+      router.replace("/admin");
       router.refresh();
     } finally {
       setLoading(false);

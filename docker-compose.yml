@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hrms
+      POSTGRES_PASSWORD: hrms
+      POSTGRES_DB: hrms
+    ports:
+      - "5432:5432"
+    volumes:
+      - hrms_pgdata:/var/lib/postgresql/data
+
+volumes:
+  hrms_pgdata:

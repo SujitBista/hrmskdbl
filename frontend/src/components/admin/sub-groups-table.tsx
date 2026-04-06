@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { formatAdminDateTime } from "@/lib/format-datetime";
 
 export type SubGroupRow = {
   id: number;
@@ -28,17 +29,6 @@ type ListResponse = {
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-
-function formatCreatedAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
-    return iso;
-  }
-  return d.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
 
 export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
   const searchId = useId();
@@ -311,7 +301,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
                   </td>
                   <td className="px-4 py-3 text-slate-900">{row.name}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
-                    {formatCreatedAt(row.created_at)}
+                    {formatAdminDateTime(row.created_at)}
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <div className="flex flex-wrap items-center justify-end gap-2">

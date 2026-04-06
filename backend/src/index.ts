@@ -3,6 +3,12 @@ import cors from "cors";
 import express from "express";
 import { signAdminToken, verifyAdminToken } from "./auth/jwt.js";
 import { getAdminByEmail, verifyPassword } from "./services/adminAuth.js";
+import {
+  clampListParams,
+  createUser,
+  DUMMY_ROLES,
+  listUsers,
+} from "./services/users.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -55,6 +61,109 @@ app.post("/api/auth/login", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Login failed." });
+  }
+});
+
+function getBearerToken(req: express.Request): string | undefined {
+  const header = req.headers.authorization;
+  return header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+}
+
+app.get("/api/admin/roles", (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+    res.json({ roles: [...DUMMY_ROLES] });
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+  }
+});
+
+app.get("/api/admin/users", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const result = await listUsers({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list users." });
+  }
+});
+
+app.post("/api/admin/users", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const password =
+      typeof req.body?.password === "string" ? req.body.password : "";
+    const role = typeof req.body?.role === "string" ? req.body.role : "";
+
+    if (!email.trim() || !password || !role) {
+      res
+        .status(400)
+        .json({ error: "Email, password, and role are required." });
+      return;
+    }
+
+    if (password.length < 8) {
+      res
+        .status(400)
+        .json({ error: "Password must be at least 8 characters." });
+      return;
+    }
+
+    if (!(DUMMY_ROLES as readonly string[]).includes(role)) {
+      res.status(400).json({ error: "Invalid role." });
+      return;
+    }
+
+    const user = await createUser({ email, password, role });
+    res.status(201).json({ user });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res.status(409).json({ error: "A user with this email already exists." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not create user." });
   }
 });
 

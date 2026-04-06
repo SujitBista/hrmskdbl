@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 function UserPlusIcon({ className }: { className?: string }) {
   return (
@@ -21,24 +22,61 @@ function UserPlusIcon({ className }: { className?: string }) {
   );
 }
 
+function UserGroupIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12c-1.314 0-2.438.402-3.341 1.09m6.032 4.036A5.971 5.971 0 0012 18.719m0 0a5.971 5.971 0 00-3.691-1.594M12 12a3 3 0 11-6 0 3 3 0 016 0zm6 3a3 3 0 11-6 0 3 3 0 016 0z"
+      />
+    </svg>
+  );
+}
+
 type Props = {
   mobileOpen: boolean;
   onNavigate: () => void;
 };
 
 export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
+  const pathname = usePathname();
   const linkClass =
-    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-emerald-50 hover:text-[var(--brand-primary)]";
+    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition hover:bg-emerald-50 hover:text-[var(--brand-primary)]";
+  const linkInactive = "text-slate-700";
+  const linkActive =
+    "bg-emerald-50 text-[var(--brand-primary)] ring-1 ring-emerald-900/10";
 
   const nav = (
     <nav className="flex flex-col gap-1 p-3" aria-label="Admin">
       <Link
         href="/admin/dashboard#create-user"
-        className={linkClass}
+        className={`${linkClass} ${
+          pathname === "/admin/dashboard" ? linkActive : linkInactive
+        }`}
         onClick={onNavigate}
       >
         <UserPlusIcon className="h-5 w-5 shrink-0 text-emerald-800/80" />
         Create user
+      </Link>
+      <Link
+        href="/admin/dashboard/groups#create-group"
+        className={`${linkClass} ${
+          pathname?.startsWith("/admin/dashboard/groups")
+            ? linkActive
+            : linkInactive
+        }`}
+        onClick={onNavigate}
+      >
+        <UserGroupIcon className="h-5 w-5 shrink-0 text-emerald-800/80" />
+        Create group
       </Link>
     </nav>
   );

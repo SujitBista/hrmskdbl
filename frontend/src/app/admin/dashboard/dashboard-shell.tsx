@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SaptakoshiLogo } from "@/components/saptakoshi-logo";
 import {
@@ -15,7 +16,9 @@ export function AdminDashboardShell({
   email: string;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const pageTitle = pathname?.includes("/groups") ? "Groups" : "Dashboard";
 
   useEffect(() => {
     if (!mobileNavOpen) {
@@ -59,7 +62,7 @@ export function AdminDashboardShell({
               <p className="text-xs font-medium uppercase tracking-wide text-emerald-900/70">
                 HRMS · Admin
               </p>
-              <h1 className="text-lg font-semibold text-slate-900">Dashboard</h1>
+              <h1 className="text-lg font-semibold text-slate-900">{pageTitle}</h1>
             </div>
           </div>
           <nav className="flex flex-wrap items-center gap-3 text-sm sm:gap-4">

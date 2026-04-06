@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { formatAdminDateTime } from "@/lib/format-datetime";
 import {
   normalizePermissionsInput,
   type UserPermissions,
@@ -65,17 +66,6 @@ function PermissionBadges({ perms }: { perms: UserPermissions }) {
       ))}
     </span>
   );
-}
-
-function formatCreatedAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
-    return iso;
-  }
-  return d.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
 }
 
 export function UsersTable({ refreshKey }: { refreshKey: number }) {
@@ -376,7 +366,7 @@ export function UsersTable({ refreshKey }: { refreshKey: number }) {
                     <PermissionBadges perms={rowPermissions(u)} />
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
-                    {formatCreatedAt(u.created_at)}
+                    {formatAdminDateTime(u.created_at)}
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <div className="flex flex-wrap items-center justify-end gap-2">

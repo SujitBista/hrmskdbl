@@ -4,6 +4,13 @@ import express from "express";
 import { signAdminToken, verifyAdminToken } from "./auth/jwt.js";
 import { getAdminByEmail, verifyPassword } from "./services/adminAuth.js";
 import {
+  clampListParams as clampGroupListParams,
+  createGroup,
+  deleteGroup,
+  listGroups,
+  updateGroup,
+} from "./services/groups.js";
+import {
   clampListParams,
   createUser,
   deleteUser,
@@ -250,6 +257,143 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Could not update user." });
+  }
+});
+
+app.get("/api/admin/groups", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+
+    const { page: p, pageSize: ps } = clampGroupListParams({ page, pageSize });
+    const result = await listGroups({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list groups." });
+  }
+});
+
+app.post("/api/admin/groups", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
+    if (!name.trim()) {
+      res.status(400).json({ error: "Name is required." });
+      return;
+    }
+
+    const group = await createGroup({ name });
+    res.status(201).json({ group });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res.status(409).json({ error: "A group with this name already exists." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not create group." });
+  }
+});
+
+app.patch("/api/admin/groups/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid group id." });
+      return;
+    }
+
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
+    if (!name.trim()) {
+      res.status(400).json({ error: "Name is required." });
+      return;
+    }
+
+    const group = await updateGroup(id, { name });
+    if (!group) {
+      res.status(404).json({ error: "Group not found." });
+      return;
+    }
+    res.json({ group });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res.status(409).json({ error: "A group with this name already exists." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not update group." });
+  }
+});
+
+app.delete("/api/admin/groups/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid group id." });
+      return;
+    }
+
+    const deleted = await deleteGroup(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Group not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not delete group." });
   }
 });
 

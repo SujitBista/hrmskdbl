@@ -30,6 +30,13 @@ async function migrate() {
   await query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS perm_delete BOOLEAN NOT NULL DEFAULT FALSE;
   `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_groups (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
   console.log("Migration complete.");
 }
 

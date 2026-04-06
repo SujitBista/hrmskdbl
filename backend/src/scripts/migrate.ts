@@ -37,6 +37,15 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_sub_groups (
+      id SERIAL PRIMARY KEY,
+      group_id INTEGER NOT NULL REFERENCES hrms_groups(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (group_id, name)
+    );
+  `);
   console.log("Migration complete.");
 }
 

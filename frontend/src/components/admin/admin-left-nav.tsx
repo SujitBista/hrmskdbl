@@ -50,9 +50,14 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
   const pathname = usePathname();
   const linkClass =
     "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition hover:bg-emerald-50 hover:text-[var(--brand-primary)]";
+  const subLinkClass =
+    "flex items-center rounded-lg py-2 pl-3 pr-3 text-sm font-medium transition hover:bg-emerald-50 hover:text-[var(--brand-primary)]";
   const linkInactive = "text-slate-700";
   const linkActive =
     "bg-emerald-50 text-[var(--brand-primary)] ring-1 ring-emerald-900/10";
+
+  const isGroupsPage = pathname === "/admin/dashboard/groups";
+  const isSubGroupsPage = pathname === "/admin/dashboard/groups/sub-groups";
 
   const nav = (
     <nav className="flex flex-col gap-1 p-3" aria-label="Admin">
@@ -66,18 +71,37 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
         <UserPlusIcon className="h-5 w-5 shrink-0 text-emerald-800/80" />
         Create user
       </Link>
-      <Link
-        href="/admin/dashboard/groups#create-group"
-        className={`${linkClass} ${
-          pathname?.startsWith("/admin/dashboard/groups")
-            ? linkActive
-            : linkInactive
-        }`}
-        onClick={onNavigate}
-      >
-        <UserGroupIcon className="h-5 w-5 shrink-0 text-emerald-800/80" />
-        Create group
-      </Link>
+
+      <div className="mt-1 flex flex-col gap-0.5">
+        <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <UserGroupIcon className="h-4 w-4 shrink-0 text-emerald-800/70" />
+          Group
+        </div>
+        <div
+          className="ml-1 flex flex-col gap-0.5 border-l border-emerald-900/15 pl-2"
+          role="group"
+          aria-label="Group"
+        >
+          <Link
+            href="/admin/dashboard/groups#create-group"
+            className={`${subLinkClass} ${
+              isGroupsPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Groups
+          </Link>
+          <Link
+            href="/admin/dashboard/groups/sub-groups#create-sub-group"
+            className={`${subLinkClass} ${
+              isSubGroupsPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Sub groups
+          </Link>
+        </div>
+      </div>
     </nav>
   );
 

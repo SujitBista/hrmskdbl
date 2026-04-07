@@ -1,4 +1,6 @@
+import { adminDashboardPageTitle } from "@/lib/admin-dashboard-page-title";
 import { getSession } from "@/lib/session";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AdminDashboardShell } from "./dashboard-shell";
 
@@ -12,7 +14,16 @@ export default async function AdminDashboardLayout({
     redirect("/admin");
   }
 
+  const headerList = await headers();
+  const pathnameFromMiddleware = headerList.get("x-pathname") ?? "/admin/dashboard";
+  const initialPageTitle = adminDashboardPageTitle(pathnameFromMiddleware);
+
   return (
-    <AdminDashboardShell email={session.email}>{children}</AdminDashboardShell>
+    <AdminDashboardShell
+      email={session.email}
+      initialPageTitle={initialPageTitle}
+    >
+      {children}
+    </AdminDashboardShell>
   );
 }

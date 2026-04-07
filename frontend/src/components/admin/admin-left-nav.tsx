@@ -58,6 +58,7 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
 
   const isGroupsPage = pathname === "/admin/dashboard/groups";
   const isSubGroupsPage = pathname === "/admin/dashboard/groups/sub-groups";
+  const isAssetRegisterPage = pathname === "/admin/dashboard/asset-register";
 
   const nav = (
     <nav className="flex flex-col gap-1 p-3" aria-label="Admin">
@@ -99,6 +100,15 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
             onClick={onNavigate}
           >
             Asset sub group
+          </Link>
+          <Link
+            href="/admin/dashboard/asset-register#asset-register"
+            className={`${subLinkClass} ${
+              isAssetRegisterPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Asset Register
           </Link>
         </div>
       </div>

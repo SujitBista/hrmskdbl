@@ -59,7 +59,11 @@ export async function middleware(request: NextRequest) {
       if (payload.role !== "admin") {
         return NextResponse.redirect(new URL("/admin", request.url));
       }
-      return NextResponse.next();
+      const requestHeaders = new Headers(request.headers);
+      requestHeaders.set("x-pathname", pathname);
+      return NextResponse.next({
+        request: { headers: requestHeaders },
+      });
     } catch {
       return NextResponse.redirect(new URL("/admin", request.url));
     }

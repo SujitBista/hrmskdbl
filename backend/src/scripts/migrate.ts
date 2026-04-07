@@ -71,6 +71,15 @@ async function migrate() {
   await query(`
     ALTER TABLE hrms_groups DROP COLUMN IF EXISTS class_name;
   `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_branches (
+      id SERIAL PRIMARY KEY,
+      branch_code VARCHAR(64) NOT NULL,
+      branch_name VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (branch_code)
+    );
+  `);
   console.log("Migration complete.");
 }
 

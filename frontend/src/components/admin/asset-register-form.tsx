@@ -1,6 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useMemo, useState } from "react";
+import { NepaliDatePicker } from "nepali-datepicker-reactjs";
+import "nepali-datepicker-reactjs/dist/index.css";
+
+import {
+  bsDateToPickerValue,
+  normalizeBsDateEnglish,
+} from "@/lib/bs-date-english";
 
 type GroupOption = { id: number; name: string; code?: string };
 
@@ -63,7 +70,9 @@ export function AssetRegisterForm() {
   const [branchId, setBranchId] = useState<number | "">("");
   const [departmentName, setDepartmentName] = useState("");
 
-  const [purchaseDate, setPurchaseDate] = useState("");
+  const [purchaseDateBs, setPurchaseDateBs] = useState("");
+  /** NepaliDatePicker is client-only — avoids SSR/client DOM mismatches. */
+  const [purchaseDatePickerReady, setPurchaseDatePickerReady] = useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
@@ -238,6 +247,10 @@ export function AssetRegisterForm() {
     }
   }, [groupId, subGroupId, subGroups]);
 
+  useEffect(() => {
+    setPurchaseDatePickerReady(true);
+  }, []);
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -272,7 +285,7 @@ export function AssetRegisterForm() {
       setWorkingStatus("");
       setBranchId(branches[0]?.id ?? "");
       setDepartmentName("");
-      setPurchaseDate("");
+      setPurchaseDateBs("");
       setPurchaseQty("");
       setUnitRate("");
       setPurchaseInvoiceNo("");
@@ -540,20 +553,54 @@ export function AssetRegisterForm() {
         <div className="space-y-4">
           <h3 className={sectionHeadingClass}>Purchase information</h3>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 sm:gap-6">
-            <div>
-              <label
-                htmlFor={`${formId}-purchase-date`}
+            <div className="sm:col-span-2 lg:col-span-3">
+              <span
+                id={`${formId}-purchase-bs-label`}
                 className="block text-sm font-medium text-slate-700"
               >
                 Purchase date
-              </label>
-              <input
-                id={`${formId}-purchase-date`}
-                type="date"
-                value={purchaseDate}
-                onChange={(ev) => setPurchaseDate(ev.target.value)}
-                className={inputClass}
-              />
+              </span>
+              <p
+                id={`${formId}-purchase-bs-hint`}
+                className="mt-0.5 text-xs text-slate-500"
+              >
+                Bikram Sambat — calendar in Nepali script; date below is stored
+                as English BS (YYYY/MM/DD).
+              </p>
+              <div
+                className="relative mt-1 w-full max-w-md"
+                aria-labelledby={`${formId}-purchase-bs-label`}
+                aria-describedby={`${formId}-purchase-bs-hint`}
+              >
+                <div
+                  className="pointer-events-none absolute inset-0 z-0 flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm tabular-nums"
+                >
+                  {purchaseDateBs ? (
+                    purchaseDateBs
+                  ) : (
+                    <span className="text-slate-400">Click to select date</span>
+                  )}
+                </div>
+                {purchaseDatePickerReady ? (
+                  <NepaliDatePicker
+                    value={bsDateToPickerValue(purchaseDateBs)}
+                    onChange={(value) =>
+                      setPurchaseDateBs(normalizeBsDateEnglish(value))
+                    }
+                    inputClassName={`${inputClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}
+                    className="w-full"
+                    options={{
+                      calenderLocale: "ne",
+                      valueLocale: "en",
+                      closeOnSelect: true,
+                    }}
+                  />
+                ) : (
+                  <div
+                    className={`${inputClass} relative z-10 bg-transparent`}
+                  />
+                )}
+              </div>
             </div>
             <div>
               <label

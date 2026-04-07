@@ -18,7 +18,7 @@ export type SubGroupRow = {
   created_at: string;
 };
 
-type GroupOption = { id: number; name: string };
+type GroupOption = { id: number; name: string; code?: string };
 
 type ListResponse = {
   subGroups: SubGroupRow[];
@@ -119,7 +119,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
       const res = await fetch(`/api/admin/sub-groups?${params.toString()}`);
       const json = (await res.json()) as ListResponse & { error?: string };
       if (!res.ok) {
-        setError(json.error ?? "Could not load sub groups.");
+        setError(json.error ?? "Could not load asset sub groups.");
         setData(null);
         return;
       }
@@ -166,7 +166,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
         const json = (await res.json().catch(() => ({}))) as {
           error?: string;
         };
-        setActionError(json.error ?? "Could not delete sub group.");
+        setActionError(json.error ?? "Could not delete asset sub group.");
         return;
       }
       setDeleteTarget(null);
@@ -194,7 +194,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setActionError(json.error ?? "Could not update sub group.");
+        setActionError(json.error ?? "Could not update asset sub group.");
         return;
       }
       setEditTarget(null);
@@ -217,10 +217,10 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
             id={`${searchId}-sub-groups-heading`}
             className="text-base font-semibold text-slate-900"
           >
-            Sub groups
+            Asset sub groups
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Sub groups listed under their parent group.
+            Asset sub groups listed under their parent asset group.
           </p>
         </div>
         <div className="w-full sm:max-w-xs">
@@ -233,7 +233,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
           <input
             id={`${searchId}-search`}
             type="search"
-            placeholder="Sub group or group name…"
+            placeholder="Asset sub group or asset group name…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
@@ -246,10 +246,10 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">
-                Group
+                Asset group
               </th>
               <th scope="col" className="px-4 py-3 font-medium">
-                Sub group name
+                Asset sub group name
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Created
@@ -289,8 +289,8 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
                   className="px-4 py-8 text-center text-slate-500"
                 >
                   {debouncedSearch
-                    ? "No sub groups match your search."
-                    : "No sub groups yet. Create one using the form above."}
+                    ? "No asset sub groups match your search."
+                    : "No asset sub groups yet. Create one using the form above."}
                 </td>
               </tr>
             ) : (
@@ -331,7 +331,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
       <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">
           {total === 0 ? (
-            "No sub groups yet."
+            "No asset sub groups yet."
           ) : (
             <>
               Showing{" "}
@@ -393,7 +393,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
       >
         <div className="p-6">
           <h3 className="text-base font-semibold text-slate-900">
-            Delete sub group?
+            Delete asset sub group?
           </h3>
           <p className="mt-2 text-sm text-slate-600">
             Are you sure you want to delete{" "}
@@ -440,10 +440,10 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
         <form onSubmit={onEditSubmit}>
           <div className="border-b border-slate-100 px-6 py-4">
             <h3 className="text-base font-semibold text-slate-900">
-              Edit sub group
+              Edit asset sub group
             </h3>
             <p className="mt-1 text-sm text-slate-600">
-              Update the group or sub group name.
+              Update the asset group or asset sub group name.
             </p>
           </div>
           <div className="flex flex-col gap-4 px-6 py-5">
@@ -452,7 +452,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
                 htmlFor={`${searchId}-edit-group`}
                 className="block text-sm font-medium text-slate-700"
               >
-                Group name
+                Asset group
               </label>
               <select
                 id={`${searchId}-edit-group`}
@@ -472,7 +472,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
                 ) : (
                   editGroups.map((g) => (
                     <option key={g.id} value={String(g.id)}>
-                      {g.name}
+                      {g.code ? `${g.code} — ${g.name}` : g.name}
                     </option>
                   ))
                 )}
@@ -483,7 +483,7 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
                 htmlFor={`${searchId}-edit-name`}
                 className="block text-sm font-medium text-slate-700"
               >
-                Sub group name
+                Asset sub group name
               </label>
               <input
                 id={`${searchId}-edit-name`}

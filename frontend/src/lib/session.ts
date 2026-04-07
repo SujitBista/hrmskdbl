@@ -25,6 +25,9 @@ export async function getSession(): Promise<AdminSession | null> {
       token,
       new TextEncoder().encode(secret)
     );
+    if (payload.role !== "admin") {
+      return null;
+    }
     const id = Number(payload.sub);
     const email = typeof payload.email === "string" ? payload.email : "";
     if (!Number.isFinite(id) || !email) {

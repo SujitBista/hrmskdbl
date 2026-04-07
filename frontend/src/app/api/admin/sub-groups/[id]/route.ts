@@ -40,7 +40,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error ?? "Could not update sub group." },
+      { error: data.error ?? "Could not update asset sub group." },
       { status: res.status }
     );
   }
@@ -73,7 +73,7 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
   const data = (await res.json().catch(() => ({}))) as { error?: string };
 
   return NextResponse.json(
-    { error: data.error ?? "Could not delete sub group." },
+    { error: data.error ?? "Could not delete asset sub group." },
     { status: res.status }
   );
 }

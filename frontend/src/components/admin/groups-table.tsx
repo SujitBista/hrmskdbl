@@ -12,7 +12,11 @@ import { formatAdminDateTime } from "@/lib/format-datetime";
 
 export type GroupRow = {
   id: number;
+  code: string;
   name: string;
+  dep_method: string | null;
+  dep_rate: number | null;
+  dep_rate_tax: number | null;
   created_at: string;
 };
 
@@ -25,6 +29,14 @@ type ListResponse = {
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
+
+const DEPRECIATION_METHODS = [
+  "Declining Balance",
+  "Straight Line",
+] as const;
+
+const editFieldClass =
+  "mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2";
 
 export function GroupsTable({ refreshKey }: { refreshKey: number }) {
   const searchId = useId();
@@ -42,7 +54,11 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const [editTarget, setEditTarget] = useState<GroupRow | null>(null);
+  const [editCode, setEditCode] = useState("");
   const [editName, setEditName] = useState("");
+  const [editDepMethod, setEditDepMethod] = useState("");
+  const [editDepRate, setEditDepRate] = useState("");
+  const [editDepRateTax, setEditDepRateTax] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -61,7 +77,15 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
     const el = editDialogRef.current;
     if (!el) return;
     if (editTarget) {
+      setEditCode(editTarget.code);
       setEditName(editTarget.name);
+      setEditDepMethod(editTarget.dep_method ?? "");
+      setEditDepRate(
+        editTarget.dep_rate != null ? String(editTarget.dep_rate) : ""
+      );
+      setEditDepRateTax(
+        editTarget.dep_rate_tax != null ? String(editTarget.dep_rate_tax) : ""
+      );
       setActionError(null);
       el.showModal();
     } else {
@@ -159,7 +183,14 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       const res = await fetch(`/api/admin/groups/${editTarget.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName }),
+        body: JSON.stringify({
+          code: editCode,
+          name: editName,
+          dep_method: editDepMethod === "" ? null : editDepMethod,
+          dep_rate: editDepRate.trim() === "" ? null : Number(editDepRate),
+          dep_rate_tax:
+            editDepRateTax.trim() === "" ? null : Number(editDepRateTax),
+        }),
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
@@ -186,10 +217,10 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             id={`${searchId}-groups-heading`}
             className="text-base font-semibold text-slate-900"
           >
-            Groups
+            Asset groups
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Named groups managed from this admin area.
+            Codes, names, and depreciation for each asset group.
           </p>
         </div>
         <div className="w-full sm:max-w-xs">
@@ -202,7 +233,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
           <input
             id={`${searchId}-search`}
             type="search"
-            placeholder="Group name…"
+            placeholder="Code or name…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
@@ -211,11 +242,26 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[480px] text-left text-sm">
+        <table className="w-full min-w-[820px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
+                ID
+              </th>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
+                Code
+              </th>
               <th scope="col" className="px-4 py-3 font-medium">
                 Name
+              </th>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
+                Dep method
+              </th>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap text-right">
+                Dep rate
+              </th>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap text-right">
+                Dep rate tax
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Created
@@ -232,7 +278,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             {loading ? (
               <tr>
                 <td
-                  colSpan={3}
+                  colSpan={8}
                   className="px-4 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -241,7 +287,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             ) : error ? (
               <tr>
                 <td
-                  colSpan={3}
+                  colSpan={8}
                   className="px-4 py-8 text-center text-red-600"
                   role="alert"
                 >
@@ -251,19 +297,34 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             ) : groups.length === 0 ? (
               <tr>
                 <td
-                  colSpan={3}
+                  colSpan={8}
                   className="px-4 py-8 text-center text-slate-500"
                 >
                   {debouncedSearch
-                    ? "No groups match your search."
-                    : "No groups yet. Create one using the form above."}
+                    ? "No asset groups match your search."
+                    : "No asset groups yet. Create one using the form above."}
                 </td>
               </tr>
             ) : (
               groups.map((g) => (
                 <tr key={g.id} className="bg-white hover:bg-slate-50/80">
+                  <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-600">
+                    {g.id}
+                  </td>
+                  <td className="px-4 py-3 font-medium whitespace-nowrap text-slate-900">
+                    {g.code}
+                  </td>
                   <td className="px-4 py-3 font-medium text-slate-900">
                     {g.name}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                    {g.dep_method ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                    {g.dep_rate != null ? g.dep_rate : "—"}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                    {g.dep_rate_tax != null ? g.dep_rate_tax : "—"}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                     {formatAdminDateTime(g.created_at)}
@@ -296,7 +357,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">
           {total === 0 ? (
-            "No groups yet."
+            "No asset groups yet."
           ) : (
             <>
               Showing{" "}
@@ -358,12 +419,14 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       >
         <div className="p-6">
           <h3 className="text-base font-semibold text-slate-900">
-            Delete group?
+            Delete asset group?
           </h3>
           <p className="mt-2 text-sm text-slate-600">
             Are you sure you want to delete{" "}
             <span className="font-medium text-slate-900">
-              {deleteTarget?.name}
+              {deleteTarget
+                ? `${deleteTarget.code} — ${deleteTarget.name}`
+                : ""}
             </span>
             ? This cannot be undone.
           </p>
@@ -395,33 +458,121 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
 
       <dialog
         ref={editDialogRef}
-        className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
+        className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
         onClose={() => setEditTarget(null)}
       >
         <form onSubmit={onEditSubmit}>
           <div className="border-b border-slate-100 px-6 py-4">
             <h3 className="text-base font-semibold text-slate-900">
-              Edit group
+              Edit asset group
             </h3>
-            <p className="mt-1 text-sm text-slate-600">Update the group name.</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Group ID{" "}
+              <span className="font-medium text-slate-800">
+                {editTarget?.id ?? "—"}
+              </span>
+              . Update code, name, and depreciation.
+            </p>
           </div>
-          <div className="flex flex-col gap-4 px-6 py-5">
-            <div>
-              <label
-                htmlFor={`${searchId}-edit-name`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Name
-              </label>
-              <input
-                id={`${searchId}-edit-name`}
-                type="text"
-                required
-                autoComplete="off"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
-              />
+          <div className="flex flex-col gap-6 px-6 py-5">
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-slate-800">Asset group</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor={`${searchId}-edit-code`}
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Group code
+                  </label>
+                  <input
+                    id={`${searchId}-edit-code`}
+                    type="text"
+                    required
+                    autoComplete="off"
+                    value={editCode}
+                    onChange={(e) => setEditCode(e.target.value)}
+                    className={editFieldClass}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor={`${searchId}-edit-name`}
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Group name
+                  </label>
+                  <input
+                    id={`${searchId}-edit-name`}
+                    type="text"
+                    required
+                    autoComplete="off"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className={editFieldClass}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-slate-800">Depreciation</p>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="sm:col-span-2 lg:col-span-1">
+                  <label
+                    htmlFor={`${searchId}-edit-dep-method`}
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Depreciation method
+                  </label>
+                  <select
+                    id={`${searchId}-edit-dep-method`}
+                    value={editDepMethod}
+                    onChange={(e) => setEditDepMethod(e.target.value)}
+                    className={editFieldClass}
+                  >
+                    <option value="">— Select —</option>
+                    {DEPRECIATION_METHODS.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label
+                    htmlFor={`${searchId}-edit-dep-rate`}
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Dep rate (%)
+                  </label>
+                  <input
+                    id={`${searchId}-edit-dep-rate`}
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={editDepRate}
+                    onChange={(e) => setEditDepRate(e.target.value)}
+                    className={editFieldClass}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor={`${searchId}-edit-dep-rate-tax`}
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Dep rate tax (%)
+                  </label>
+                  <input
+                    id={`${searchId}-edit-dep-rate-tax`}
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={editDepRateTax}
+                    onChange={(e) => setEditDepRateTax(e.target.value)}
+                    className={editFieldClass}
+                  />
+                </div>
+              </div>
             </div>
             {actionError && editTarget ? (
               <p className="text-sm text-red-600" role="alert">

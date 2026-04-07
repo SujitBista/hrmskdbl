@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-export default function AdminPage() {
+export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,7 +17,7 @@ export default function AdminPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch("/api/auth/user/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -27,7 +27,7 @@ export default function AdminPage() {
         setError(data.error ?? "Could not sign in.");
         return;
       }
-      router.replace("/admin/dashboard");
+      router.replace("/dashboard");
       router.refresh();
     } catch {
       setError("Something went wrong. Try again.");
@@ -43,10 +43,10 @@ export default function AdminPage() {
           <SaptakoshiLogo variant="hero" />
           <div className="text-center">
             <h1 className="text-lg font-semibold tracking-tight text-[var(--brand-primary)]">
-              HRMS — Admin
+              HRMS — Staff sign in
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Sign in with your administrator account.
+              Use the email and password from your account setup.
             </p>
           </div>
         </div>
@@ -102,10 +102,10 @@ export default function AdminPage() {
         </form>
         <p className="mt-6 text-center text-sm text-slate-600">
           <Link
-            href="/login"
+            href="/admin"
             className="font-medium text-[var(--brand-primary)] underline-offset-2 hover:underline"
           >
-            Staff sign in
+            Administrator sign in
           </Link>
         </p>
         <p className="mt-4 text-center text-xs text-slate-500">

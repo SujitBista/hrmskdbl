@@ -20,9 +20,9 @@ export function AdminDashboardShell({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const pageTitle =
     pathname === "/admin/dashboard/groups/sub-groups"
-      ? "Sub groups"
+      ? "Asset sub group"
       : pathname?.startsWith("/admin/dashboard/groups")
-        ? "Groups"
+        ? "Asset Groups"
         : "Dashboard";
 
   useEffect(() => {

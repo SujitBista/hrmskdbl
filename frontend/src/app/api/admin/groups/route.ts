@@ -51,23 +51,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const res = await fetch(`${backendUrl}/api/admin/groups`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/api/admin/groups`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend (e.g. npm run dev in backend) and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as {
-    group?: unknown;
-    error?: string;
-  };
+  let data = {} as { group?: unknown; error?: string };
+  try {
+    data = (await res.json()) as { group?: unknown; error?: string };
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error ?? "Could not create group." },
+      { error: data.error ?? "Could not create asset group." },
       { status: res.status }
     );
   }

@@ -11,6 +11,12 @@ type SubGroupRow = {
   name: string;
 };
 
+type BranchOption = {
+  id: number;
+  branch_code: string;
+  branch_name: string;
+};
+
 const OWNERSHIP_TYPES = [
   "Company owned",
   "Leased",
@@ -44,13 +50,17 @@ export function AssetRegisterForm() {
   const [subGroupsLoading, setSubGroupsLoading] = useState(true);
   const [subGroupsError, setSubGroupsError] = useState<string | null>(null);
 
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(true);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
+
   const [assetName, setAssetName] = useState("");
   const [assetCode, setAssetCode] = useState("");
   const [groupId, setGroupId] = useState<number | "">("");
   const [subGroupId, setSubGroupId] = useState<number | "">("");
   const [ownershipType, setOwnershipType] = useState<string>("");
   const [workingStatus, setWorkingStatus] = useState<string>("");
-  const [branchName, setBranchName] = useState("");
+  const [branchId, setBranchId] = useState<number | "">("");
   const [departmentName, setDepartmentName] = useState("");
 
   const [purchaseDate, setPurchaseDate] = useState("");
@@ -148,6 +158,55 @@ export function AssetRegisterForm() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadBranches() {
+      setBranchesLoading(true);
+      setBranchesError(null);
+      try {
+        const params = new URLSearchParams({ page: "1", pageSize: "100" });
+        const res = await fetch(`/api/admin/branches?${params.toString()}`);
+        const json = (await res.json()) as {
+          branches?: BranchOption[];
+          error?: string;
+        };
+        if (!res.ok) {
+          if (!cancelled) {
+            setBranchesError(json.error ?? "Could not load branches.");
+            setBranches([]);
+          }
+          return;
+        }
+        const list = json.branches ?? [];
+        if (!cancelled) {
+          setBranches(list);
+          setBranchId((prev) => {
+            if (prev === "" && list.length > 0) return list[0]!.id;
+            if (
+              typeof prev === "number" &&
+              !list.some((b) => b.id === prev) &&
+              list.length > 0
+            ) {
+              return list[0]!.id;
+            }
+            return prev;
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setBranchesError("Something went wrong.");
+          setBranches([]);
+        }
+      } finally {
+        if (!cancelled) setBranchesLoading(false);
+      }
+    }
+    void loadBranches();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const subGroupsForGroup = useMemo(() => {
     if (groupId === "") return [];
     return subGroups.filter((sg) => sg.group_id === groupId);
@@ -199,6 +258,10 @@ export function AssetRegisterForm() {
       setError("Select a working status.");
       return;
     }
+    if (branchId === "") {
+      setError("Select a branch.");
+      return;
+    }
     setSubmitting(true);
     try {
       setSuccess("Asset register entry saved.");
@@ -207,7 +270,7 @@ export function AssetRegisterForm() {
       setSubGroupId("");
       setOwnershipType("");
       setWorkingStatus("");
-      setBranchName("");
+      setBranchId(branches[0]?.id ?? "");
       setDepartmentName("");
       setPurchaseDate("");
       setPurchaseQty("");
@@ -220,8 +283,10 @@ export function AssetRegisterForm() {
     }
   }
 
-  const lookupsBusy = groupsLoading || subGroupsLoading;
+  const lookupsBusy =
+    groupsLoading || subGroupsLoading || branchesLoading;
   const noGroups = !groupsLoading && groups.length === 0;
+  const noBranches = !branchesLoading && branches.length === 0;
 
   return (
     <section
@@ -420,17 +485,36 @@ export function AssetRegisterForm() {
                 htmlFor={`${formId}-branch`}
                 className="block text-sm font-medium text-slate-700"
               >
-                Branch name
+                Branch
               </label>
-              <input
+              <select
                 id={`${formId}-branch`}
-                type="text"
-                autoComplete="organization"
-                value={branchName}
-                onChange={(ev) => setBranchName(ev.target.value)}
-                className={inputClass}
-                placeholder="e.g. Kathmandu"
-              />
+                required
+                disabled={branchesLoading || noBranches}
+                value={branchId === "" ? "" : String(branchId)}
+                onChange={(ev) => {
+                  const v = ev.target.value;
+                  setBranchId(v === "" ? "" : Number.parseInt(v, 10));
+                }}
+                className={`${inputClass} disabled:cursor-not-allowed disabled:bg-slate-50`}
+              >
+                {branchesLoading ? (
+                  <option value="">Loading…</option>
+                ) : noBranches ? (
+                  <option value="">No branches — add one under Branch first</option>
+                ) : (
+                  branches.map((b) => (
+                    <option key={b.id} value={String(b.id)}>
+                      {b.branch_code} — {b.branch_name}
+                    </option>
+                  ))
+                )}
+              </select>
+              {branchesError ? (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {branchesError}
+                </p>
+              ) : null}
             </div>
 
             <div>
@@ -601,7 +685,7 @@ export function AssetRegisterForm() {
 
         <button
           type="submit"
-          disabled={submitting || lookupsBusy || noGroups}
+          disabled={submitting || lookupsBusy || noGroups || noBranches}
           className="w-full max-w-lg rounded-lg bg-[var(--brand-primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--brand-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {submitting ? "Saving…" : "Save asset"}

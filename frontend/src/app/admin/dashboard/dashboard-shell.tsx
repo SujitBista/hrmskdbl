@@ -1,5 +1,6 @@
 "use client";
 
+import { adminDashboardPageTitle } from "@/lib/admin-dashboard-page-title";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SaptakoshiLogo } from "@/components/saptakoshi-logo";
@@ -12,18 +13,20 @@ import { LogoutButton } from "./logout-button";
 export function AdminDashboardShell({
   email,
   children,
+  initialPageTitle,
 }: {
   email: string;
   children: React.ReactNode;
+  /** From server (middleware + layout); matches SSR so hydration agrees with `usePathname()` after nav. */
+  initialPageTitle: string;
 }) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const pageTitle =
-    pathname === "/admin/dashboard/groups/sub-groups"
-      ? "Asset sub group"
-      : pathname?.startsWith("/admin/dashboard/groups")
-        ? "Asset Groups"
-        : "Dashboard";
+  const [pageTitle, setPageTitle] = useState(initialPageTitle);
+
+  useEffect(() => {
+    setPageTitle(adminDashboardPageTitle(pathname));
+  }, [pathname]);
 
   useEffect(() => {
     if (!mobileNavOpen) {

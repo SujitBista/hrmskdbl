@@ -41,6 +41,25 @@ function UserGroupIcon({ className }: { className?: string }) {
   );
 }
 
+function BuildingOfficeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"
+      />
+    </svg>
+  );
+}
+
 type Props = {
   mobileOpen: boolean;
   onNavigate: () => void;
@@ -56,8 +75,10 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
   const linkActive =
     "bg-emerald-50 text-[var(--brand-primary)] ring-1 ring-emerald-900/10";
 
+  const isBranchPage = pathname === "/admin/dashboard/branch";
   const isGroupsPage = pathname === "/admin/dashboard/groups";
   const isSubGroupsPage = pathname === "/admin/dashboard/groups/sub-groups";
+  const isAssetRegisterPage = pathname === "/admin/dashboard/asset-register";
 
   const nav = (
     <nav className="flex flex-col gap-1 p-3" aria-label="Admin">
@@ -71,6 +92,28 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
         <UserPlusIcon className="h-5 w-5 shrink-0 text-emerald-800/80" />
         Create user
       </Link>
+
+      <div className="mt-1 flex flex-col gap-0.5">
+        <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <BuildingOfficeIcon className="h-4 w-4 shrink-0 text-emerald-800/70" />
+          Branch
+        </div>
+        <div
+          className="ml-1 flex flex-col gap-0.5 border-l border-emerald-900/15 pl-2"
+          role="group"
+          aria-label="Branch"
+        >
+          <Link
+            href="/admin/dashboard/branch#add-branch"
+            className={`${subLinkClass} ${
+              isBranchPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Add Branch
+          </Link>
+        </div>
+      </div>
 
       <div className="mt-1 flex flex-col gap-0.5">
         <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -99,6 +142,15 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
             onClick={onNavigate}
           >
             Asset sub group
+          </Link>
+          <Link
+            href="/admin/dashboard/asset-register#asset-register"
+            className={`${subLinkClass} ${
+              isAssetRegisterPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Asset Register
           </Link>
         </div>
       </div>

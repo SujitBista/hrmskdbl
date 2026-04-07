@@ -75,12 +75,12 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
       <div className="mt-1 flex flex-col gap-0.5">
         <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <UserGroupIcon className="h-4 w-4 shrink-0 text-emerald-800/70" />
-          Group
+          Fixed asset
         </div>
         <div
           className="ml-1 flex flex-col gap-0.5 border-l border-emerald-900/15 pl-2"
           role="group"
-          aria-label="Group"
+          aria-label="Fixed asset"
         >
           <Link
             href="/admin/dashboard/groups#create-group"
@@ -89,7 +89,7 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
             }`}
             onClick={onNavigate}
           >
-            Groups
+            Asset Groups
           </Link>
           <Link
             href="/admin/dashboard/groups/sub-groups#create-sub-group"
@@ -98,7 +98,7 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
             }`}
             onClick={onNavigate}
           >
-            Sub groups
+            Asset sub group
           </Link>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useId, useState } from "react";
 
-type GroupOption = { id: number; name: string };
+type GroupOption = { id: number; name: string; code?: string };
 
 type Props = {
   groupsRefreshKey: number;
@@ -93,10 +93,10 @@ export function CreateSubGroupForm({ groupsRefreshKey, onCreated }: Props) {
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setError(data.error ?? "Could not create sub group.");
+        setError(data.error ?? "Could not create asset sub group.");
         return;
       }
-      setSuccess("Sub group created successfully.");
+      setSuccess("Asset sub group created successfully.");
       setName("");
       onCreated?.();
     } catch {
@@ -116,10 +116,10 @@ export function CreateSubGroupForm({ groupsRefreshKey, onCreated }: Props) {
         id={`${formId}-heading`}
         className="text-base font-semibold text-slate-900"
       >
-        Create sub group
+        Create asset sub group
       </h2>
       <p className="mt-1 text-sm text-slate-600">
-        Choose a group, then add a name for a sub group under it.
+        Choose an asset group, then add a name for an asset sub group under it.
       </p>
       <form className="mt-6 flex flex-col gap-5" onSubmit={onSubmit}>
         <div>
@@ -127,7 +127,7 @@ export function CreateSubGroupForm({ groupsRefreshKey, onCreated }: Props) {
             htmlFor={`${formId}-group`}
             className="block text-sm font-medium text-slate-700"
           >
-            Group name
+            Asset group
           </label>
           <select
             id={`${formId}-group`}
@@ -143,11 +143,11 @@ export function CreateSubGroupForm({ groupsRefreshKey, onCreated }: Props) {
             {groupsLoading ? (
               <option value="">Loading groups…</option>
             ) : groups.length === 0 ? (
-              <option value="">No groups yet — create a group first</option>
+              <option value="">No asset groups yet — create one first</option>
             ) : (
               groups.map((g) => (
                 <option key={g.id} value={String(g.id)}>
-                  {g.name}
+                  {g.code ? `${g.code} — ${g.name}` : g.name}
                 </option>
               ))
             )}
@@ -163,7 +163,7 @@ export function CreateSubGroupForm({ groupsRefreshKey, onCreated }: Props) {
             htmlFor={`${formId}-name`}
             className="block text-sm font-medium text-slate-700"
           >
-            Sub group name
+            Asset sub group name
           </label>
           <input
             id={`${formId}-name`}
@@ -193,7 +193,7 @@ export function CreateSubGroupForm({ groupsRefreshKey, onCreated }: Props) {
           }
           className="w-full max-w-lg rounded-lg bg-[var(--brand-primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--brand-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {submitting ? "Creating…" : "Create sub group"}
+          {submitting ? "Creating…" : "Create asset sub group"}
         </button>
       </form>
     </section>

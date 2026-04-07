@@ -1,13 +1,20 @@
 import "./loadEnv.js";
 import cors from "cors";
 import express from "express";
-import { signAdminToken, verifyAdminToken } from "./auth/jwt.js";
+import { resolveDbErrorMessage } from "./dbErrors.js";
+import {
+  signAdminToken,
+  signUserToken,
+  verifyAdminToken,
+  verifyUserToken,
+} from "./auth/jwt.js";
 import { getAdminByEmail, verifyPassword } from "./services/adminAuth.js";
 import {
   clampListParams as clampGroupListParams,
   createGroup,
   deleteGroup,
   listGroups,
+  parseGroupPayload,
   updateGroup,
 } from "./services/groups.js";
 import {
@@ -22,6 +29,7 @@ import {
   createUser,
   deleteUser,
   DUMMY_ROLES,
+  getUserByEmailForAuth,
   listUsers,
   normalizePermissions,
   updateUser,
@@ -74,6 +82,56 @@ app.post("/api/auth/login", async (req, res) => {
     res.json({
       token,
       admin: { id: admin.id, email: admin.email },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Login failed." });
+  }
+});
+
+app.post("/api/auth/user/login", async (req, res) => {
+  try {
+    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const password =
+      typeof req.body?.password === "string" ? req.body.password : "";
+
+    if (!email.trim() || !password) {
+      res.status(400).json({ error: "Email and password are required." });
+      return;
+    }
+
+    const user = await getUserByEmailForAuth(email);
+    if (!user) {
+      res.status(401).json({ error: "Invalid email or password." });
+      return;
+    }
+
+    const valid = await verifyPassword(password, user.password_hash);
+    if (!valid) {
+      res.status(401).json({ error: "Invalid email or password." });
+      return;
+    }
+
+    const token = signUserToken({
+      sub: user.id,
+      email: user.email,
+      role: "user",
+      jobRole: user.role,
+      perm_view: user.perm_view,
+      perm_edit: user.perm_edit,
+      perm_delete: user.perm_delete,
+    });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        perm_view: user.perm_view,
+        perm_edit: user.perm_edit,
+        perm_delete: user.perm_delete,
+      },
     });
   } catch (err) {
     console.error(err);
@@ -310,13 +368,16 @@ app.post("/api/admin/groups", async (req, res) => {
     }
     verifyAdminToken(token);
 
-    const name = typeof req.body?.name === "string" ? req.body.name : "";
-    if (!name.trim()) {
-      res.status(400).json({ error: "Name is required." });
+    let payload;
+    try {
+      payload = parseGroupPayload(req.body);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Invalid request.";
+      res.status(400).json({ error: msg });
       return;
     }
 
-    const group = await createGroup({ name });
+    const group = await createGroup(payload);
     res.status(201).json({ group });
   } catch (err) {
     if (
@@ -325,11 +386,18 @@ app.post("/api/admin/groups", async (req, res) => {
       "code" in err &&
       (err as { code?: string }).code === "23505"
     ) {
+      const detail = String((err as { detail?: string }).detail ?? "");
+      if (detail.includes("(code)") || detail.includes("hrms_groups_code")) {
+        res.status(409).json({ error: "A group with this code already exists." });
+        return;
+      }
       res.status(409).json({ error: "A group with this name already exists." });
       return;
     }
     console.error(err);
-    res.status(500).json({ error: "Could not create group." });
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not create asset group."),
+    });
   }
 });
 
@@ -349,13 +417,16 @@ app.patch("/api/admin/groups/:id", async (req, res) => {
       return;
     }
 
-    const name = typeof req.body?.name === "string" ? req.body.name : "";
-    if (!name.trim()) {
-      res.status(400).json({ error: "Name is required." });
+    let payload;
+    try {
+      payload = parseGroupPayload(req.body);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Invalid request.";
+      res.status(400).json({ error: msg });
       return;
     }
 
-    const group = await updateGroup(id, { name });
+    const group = await updateGroup(id, payload);
     if (!group) {
       res.status(404).json({ error: "Group not found." });
       return;
@@ -368,11 +439,18 @@ app.patch("/api/admin/groups/:id", async (req, res) => {
       "code" in err &&
       (err as { code?: string }).code === "23505"
     ) {
+      const detail = String((err as { detail?: string }).detail ?? "");
+      if (detail.includes("(code)") || detail.includes("hrms_groups_code")) {
+        res.status(409).json({ error: "A group with this code already exists." });
+        return;
+      }
       res.status(409).json({ error: "A group with this name already exists." });
       return;
     }
     console.error(err);
-    res.status(500).json({ error: "Could not update group." });
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not update asset group."),
+    });
   }
 });
 
@@ -637,6 +715,29 @@ app.get("/api/auth/me", (req, res) => {
     }
     const payload = verifyAdminToken(token);
     res.json({ admin: { id: payload.sub, email: payload.email } });
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+  }
+});
+
+app.get("/api/auth/user/me", (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    const payload = verifyUserToken(token);
+    res.json({
+      user: {
+        id: payload.sub,
+        email: payload.email,
+        role: payload.jobRole,
+        perm_view: payload.perm_view,
+        perm_edit: payload.perm_edit,
+        perm_delete: payload.perm_delete,
+      },
+    });
   } catch {
     res.status(401).json({ error: "Unauthorized." });
   }

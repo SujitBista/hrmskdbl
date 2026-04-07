@@ -9,6 +9,17 @@ export type AdminJwtPayload = {
   role: "admin";
 };
 
+export type UserJwtPayload = {
+  sub: number;
+  email: string;
+  role: "user";
+  /** maker | checker from users.role */
+  jobRole: string;
+  perm_view: boolean;
+  perm_edit: boolean;
+  perm_delete: boolean;
+};
+
 function requireSecret(): string {
   if (!JWT_SECRET) {
     throw new Error("JWT_SECRET is not set");
@@ -45,4 +56,49 @@ export function verifyAdminToken(token: string): AdminJwtPayload {
     throw new Error("Invalid token payload");
   }
   return { sub, email, role: "admin" };
+}
+
+export function signUserToken(payload: UserJwtPayload): string {
+  return jwt.sign(payload, requireSecret(), {
+    expiresIn: JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
+  });
+}
+
+function asBool(v: unknown): boolean {
+  return v === true || v === "true";
+}
+
+export function verifyUserToken(token: string): UserJwtPayload {
+  const decoded = jwt.verify(token, requireSecret());
+  if (typeof decoded !== "object" || decoded === null) {
+    throw new Error("Invalid token payload");
+  }
+  const o = decoded as Record<string, unknown>;
+  const subRaw = o.sub;
+  const sub =
+    typeof subRaw === "number"
+      ? subRaw
+      : typeof subRaw === "string"
+        ? Number(subRaw)
+        : NaN;
+  const email = o.email;
+  const role = o.role;
+  const jobRole = o.jobRole;
+  if (
+    !Number.isFinite(sub) ||
+    typeof email !== "string" ||
+    role !== "user" ||
+    typeof jobRole !== "string"
+  ) {
+    throw new Error("Invalid token payload");
+  }
+  return {
+    sub,
+    email,
+    role: "user",
+    jobRole,
+    perm_view: asBool(o.perm_view),
+    perm_edit: asBool(o.perm_edit),
+    perm_delete: asBool(o.perm_delete),
+  };
 }

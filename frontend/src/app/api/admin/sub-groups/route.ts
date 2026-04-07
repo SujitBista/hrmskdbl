@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error ?? "Could not load sub groups." },
+      { error: data.error ?? "Could not load asset sub groups." },
       { status: res.status }
     );
   }
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error ?? "Could not create sub group." },
+      { error: data.error ?? "Could not create asset sub group." },
       { status: res.status }
     );
   }

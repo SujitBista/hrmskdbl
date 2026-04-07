@@ -46,6 +46,31 @@ async function migrate() {
       UNIQUE (group_id, name)
     );
   `);
+  await query(`
+    ALTER TABLE hrms_groups ADD COLUMN IF NOT EXISTS code VARCHAR(64);
+  `);
+  await query(`
+    ALTER TABLE hrms_groups ADD COLUMN IF NOT EXISTS dep_method VARCHAR(128);
+  `);
+  await query(`
+    ALTER TABLE hrms_groups ADD COLUMN IF NOT EXISTS dep_rate NUMERIC(12, 4);
+  `);
+  await query(`
+    ALTER TABLE hrms_groups ADD COLUMN IF NOT EXISTS dep_rate_tax NUMERIC(12, 4);
+  `);
+  await query(`
+    UPDATE hrms_groups SET code = 'G' || id::text
+    WHERE code IS NULL OR TRIM(code) = '';
+  `);
+  await query(`
+    ALTER TABLE hrms_groups ALTER COLUMN code SET NOT NULL;
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_groups_code_key ON hrms_groups (code);
+  `);
+  await query(`
+    ALTER TABLE hrms_groups DROP COLUMN IF EXISTS class_name;
+  `);
   console.log("Migration complete.");
 }
 

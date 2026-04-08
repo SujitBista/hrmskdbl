@@ -76,6 +76,7 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
     "bg-emerald-50 text-[var(--brand-primary)] ring-1 ring-emerald-900/10";
 
   const isBranchPage = pathname === "/admin/dashboard/branch";
+  const isDepartmentPage = pathname === "/admin/dashboard/department";
   const isGroupsPage = pathname === "/admin/dashboard/groups";
   const isSubGroupsPage = pathname === "/admin/dashboard/groups/sub-groups";
   const isAssetRegisterPage = pathname === "/admin/dashboard/asset-register";
@@ -111,6 +112,15 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
             onClick={onNavigate}
           >
             Add Branch
+          </Link>
+          <Link
+            href="/admin/dashboard/department#add-department"
+            className={`${subLinkClass} ${
+              isDepartmentPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Department
           </Link>
         </div>
       </div>

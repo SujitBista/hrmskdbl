@@ -81,6 +81,13 @@ async function migrate() {
     );
   `);
   await query(`
+    CREATE TABLE IF NOT EXISTS hrms_departments (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS hrms_assets (
       id SERIAL PRIMARY KEY,
       asset_code VARCHAR(256),

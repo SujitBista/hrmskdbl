@@ -251,7 +251,7 @@ export function AssetRegisterForm() {
     setPurchaseDatePickerReady(true);
   }, []);
 
-  function onSubmit(e: FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
@@ -275,11 +275,58 @@ export function AssetRegisterForm() {
       setError("Select a branch.");
       return;
     }
+    if (!purchaseDateBs.trim()) {
+      setError("Select a purchase date.");
+      return;
+    }
     setSubmitting(true);
     try {
-      setSuccess("Asset register entry saved.");
+      const payload = {
+        asset_name: assetName.trim(),
+        group_id: groupId,
+        sub_group_id:
+          subGroupsForGroup.length > 0 ? subGroupId : null,
+        ownership_type: ownershipType,
+        working_status: workingStatus,
+        branch_id: branchId,
+        department_name:
+          departmentName.trim() === "" ? null : departmentName.trim(),
+        purchase_date_bs: purchaseDateBs.trim(),
+        purchase_qty:
+          purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
+        unit_rate:
+          unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
+        purchase_invoice_no:
+          purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
+        lifetime_years:
+          lifetimeYears.trim() === ""
+            ? null
+            : Number.parseInt(lifetimeYears, 10),
+        salvage_value:
+          salvageValue.trim() === "" ? null : Number.parseFloat(salvageValue),
+      };
+
+      const res = await fetch("/api/admin/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = (await res.json()) as {
+        asset?: { asset_code?: string };
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(json.error ?? "Could not save asset.");
+        return;
+      }
+      const code = json.asset?.asset_code ?? "";
+      setAssetCode(code);
+      setSuccess(
+        code
+          ? `Asset saved. Asset code: ${code}`
+          : "Asset register entry saved."
+      );
       setAssetName("");
-      setAssetCode("");
       setSubGroupId("");
       setOwnershipType("");
       setWorkingStatus("");
@@ -291,6 +338,8 @@ export function AssetRegisterForm() {
       setPurchaseInvoiceNo("");
       setLifetimeYears("");
       setSalvageValue("");
+    } catch {
+      setError("Something went wrong. Try again.");
     } finally {
       setSubmitting(false);
     }
@@ -347,15 +396,20 @@ export function AssetRegisterForm() {
               >
                 Asset code
               </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Assigned automatically after save (SKDBL / branch / group /
+                purchase date / sequential id).
+              </p>
               <input
                 id={`${formId}-asset-code`}
                 type="text"
                 autoComplete="off"
-                required
+                readOnly
+                tabIndex={-1}
                 value={assetCode}
-                onChange={(ev) => setAssetCode(ev.target.value)}
-                className={inputClass}
-                placeholder="e.g. FA-IT-001"
+                aria-readonly="true"
+                className={`${inputClass} cursor-default bg-slate-50 text-slate-800`}
+                placeholder="Generated when you save"
               />
             </div>
           </div>

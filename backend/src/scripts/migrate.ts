@@ -80,6 +80,31 @@ async function migrate() {
       UNIQUE (branch_code)
     );
   `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_assets (
+      id SERIAL PRIMARY KEY,
+      asset_code VARCHAR(256),
+      asset_name VARCHAR(255) NOT NULL,
+      group_id INTEGER NOT NULL REFERENCES hrms_groups(id) ON DELETE RESTRICT,
+      sub_group_id INTEGER REFERENCES hrms_sub_groups(id) ON DELETE SET NULL,
+      ownership_type VARCHAR(128) NOT NULL,
+      working_status VARCHAR(128) NOT NULL,
+      branch_id INTEGER NOT NULL REFERENCES hrms_branches(id) ON DELETE RESTRICT,
+      department_name VARCHAR(255),
+      purchase_date_bs VARCHAR(32) NOT NULL,
+      purchase_qty NUMERIC(18, 4),
+      unit_rate NUMERIC(18, 4),
+      purchase_invoice_no VARCHAR(255),
+      lifetime_years INTEGER,
+      salvage_value NUMERIC(18, 4),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_assets_asset_code_key
+    ON hrms_assets (asset_code)
+    WHERE asset_code IS NOT NULL;
+  `);
   console.log("Migration complete.");
 }
 

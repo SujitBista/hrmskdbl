@@ -32,6 +32,7 @@ import {
   parseBranchPayload,
   updateBranch,
 } from "./services/branches.js";
+import { createAsset, parseCreateAssetPayload } from "./services/assets.js";
 import {
   clampListParams,
   createUser,
@@ -837,6 +838,50 @@ app.delete("/api/admin/branches/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not delete branch." });
+  }
+});
+
+app.post("/api/admin/assets", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    let payload;
+    try {
+      payload = parseCreateAssetPayload(req.body);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Invalid request.";
+      res.status(400).json({ error: msg });
+      return;
+    }
+
+    const asset = await createAsset(payload);
+    res.status(201).json({ asset });
+  } catch (err) {
+    if (err instanceof Error) {
+      if (
+        err.message === "Branch not found." ||
+        err.message === "Asset group not found."
+      ) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      if (
+        err.message.includes("sub group") ||
+        err.message.includes("Sub group")
+      ) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+    }
+    console.error(err);
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not save asset."),
+    });
   }
 });
 

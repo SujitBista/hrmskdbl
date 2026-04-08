@@ -34,7 +34,22 @@ type BranchOption = {
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 14;
+const COL_COUNT = 15;
+
+function formatPurchaseAmount(
+  qty: string | null,
+  rate: string | null
+): string {
+  if (qty == null || rate == null) return "—";
+  const q = Number.parseFloat(qty);
+  const r = Number.parseFloat(rate);
+  if (!Number.isFinite(q) || !Number.isFinite(r)) return "—";
+  const amount = q * r;
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
 
 export function AssetRegisterAssetsTable({
   refreshKey,
@@ -223,7 +238,7 @@ export function AssetRegisterAssetsTable({
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[1240px] text-left text-sm">
+        <table className="w-full min-w-[1320px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
               <th
@@ -273,6 +288,12 @@ export function AssetRegisterAssetsTable({
                 className="px-4 py-3 font-medium whitespace-nowrap text-right"
               >
                 Unit rate
+              </th>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap text-right"
+              >
+                Purchase amount
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Saved
@@ -354,6 +375,9 @@ export function AssetRegisterAssetsTable({
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
                     {a.unit_rate ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                    {formatPurchaseAmount(a.purchase_qty, a.unit_rate)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                     {formatAdminDateTime(a.created_at)}

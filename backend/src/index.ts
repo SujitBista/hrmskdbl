@@ -32,7 +32,11 @@ import {
   parseBranchPayload,
   updateBranch,
 } from "./services/branches.js";
-import { createAsset, parseCreateAssetPayload } from "./services/assets.js";
+import {
+  createAsset,
+  listAssets,
+  parseCreateAssetPayload,
+} from "./services/assets.js";
 import {
   clampListParams,
   createUser,
@@ -838,6 +842,40 @@ app.delete("/api/admin/branches/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not delete branch." });
+  }
+});
+
+app.get("/api/admin/assets", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const result = await listAssets({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list assets." });
   }
 });
 

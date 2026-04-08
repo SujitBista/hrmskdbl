@@ -47,7 +47,11 @@ const inputClass =
 const sectionHeadingClass =
   "border-b border-emerald-900/10 pb-2 text-sm font-semibold text-slate-800";
 
-export function AssetRegisterForm() {
+export function AssetRegisterForm({
+  onSaved,
+}: {
+  onSaved?: () => void;
+} = {}) {
   const formId = useId();
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(true);
@@ -326,6 +330,7 @@ export function AssetRegisterForm() {
           ? `Asset saved. Asset code: ${code}`
           : "Asset register entry saved."
       );
+      onSaved?.();
       setAssetName("");
       setSubGroupId("");
       setOwnershipType("");

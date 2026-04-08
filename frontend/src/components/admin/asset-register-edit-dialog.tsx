@@ -24,14 +24,7 @@ type BranchOption = {
   branch_name: string;
 };
 
-const OWNERSHIP_TYPES = [
-  "Company owned",
-  "Leased",
-  "Rented",
-  "Financed",
-  "Donated",
-  "Other",
-] as const;
+const OWNERSHIP_TYPES = ["Owner", "Lease"] as const;
 
 const WORKING_STATUSES = [
   "In use",
@@ -117,6 +110,16 @@ export function AssetRegisterEditDialog({
     if (groupId === "") return [];
     return subGroups.filter((sg) => sg.group_id === groupId);
   }, [subGroups, groupId]);
+
+  /** Include current DB value if legacy (so the select stays controlled). */
+  const ownershipOptions = useMemo(() => {
+    const base = [...OWNERSHIP_TYPES] as string[];
+    const cur = asset?.ownership_type;
+    if (cur && !base.includes(cur)) {
+      return [cur, ...base];
+    }
+    return base;
+  }, [asset?.ownership_type]);
 
   useEffect(() => {
     if (subGroupId === "") return;
@@ -335,7 +338,7 @@ export function AssetRegisterEditDialog({
                 className={fieldClass}
               >
                 <option value="">— Select —</option>
-                {OWNERSHIP_TYPES.map((t) => (
+                {ownershipOptions.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>

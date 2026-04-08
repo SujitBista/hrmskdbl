@@ -1,4 +1,5 @@
 import { pool, query } from "../db.js";
+import { clampListParams } from "./groups.js";
 
 const ASSET_CODE_PREFIX = "SKDBL";
 
@@ -294,4 +295,117 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
   } finally {
     client.release();
   }
+}
+
+export type AssetListRow = {
+  id: number;
+  asset_code: string | null;
+  asset_name: string;
+  group_name: string;
+  group_code: string;
+  sub_group_name: string | null;
+  branch_code: string;
+  branch_name: string;
+  ownership_type: string;
+  working_status: string;
+  department_name: string | null;
+  purchase_date_bs: string;
+  purchase_qty: string | null;
+  unit_rate: string | null;
+  purchase_invoice_no: string | null;
+  lifetime_years: number | null;
+  salvage_value: string | null;
+  created_at: string;
+};
+
+export type ListAssetsParams = {
+  search?: string;
+  page: number;
+  pageSize: number;
+};
+
+export type ListAssetsResult = {
+  assets: AssetListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+const ASSET_LIST_SELECT = `
+  SELECT a.id,
+    a.asset_code,
+    a.asset_name,
+    g.name AS group_name,
+    g.code AS group_code,
+    sg.name AS sub_group_name,
+    b.branch_code,
+    b.branch_name,
+    a.ownership_type,
+    a.working_status,
+    a.department_name,
+    a.purchase_date_bs,
+    a.purchase_qty::text,
+    a.unit_rate::text,
+    a.purchase_invoice_no,
+    a.lifetime_years,
+    a.salvage_value::text,
+    a.created_at::text
+  FROM hrms_assets a
+  INNER JOIN hrms_groups g ON g.id = a.group_id
+  INNER JOIN hrms_branches b ON b.id = a.branch_id
+  LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+`;
+
+export async function listAssets(
+  params: ListAssetsParams
+): Promise<ListAssetsResult> {
+  const { page, pageSize } = clampListParams(params);
+  const search = params.search?.trim() ?? "";
+  const offset = (page - 1) * pageSize;
+
+  if (search === "") {
+    const countResult = await query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM hrms_assets`
+    );
+    const total = Number(countResult.rows[0]?.n ?? 0);
+    const list = await query<AssetListRow>(
+      `${ASSET_LIST_SELECT}
+       ORDER BY a.created_at DESC, a.id DESC
+       LIMIT $1 OFFSET $2`,
+      [pageSize, offset]
+    );
+    return { assets: list.rows, total, page, pageSize };
+  }
+
+  const pattern = `%${search}%`;
+  const countResult = await query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n
+     FROM hrms_assets a
+     INNER JOIN hrms_groups g ON g.id = a.group_id
+     INNER JOIN hrms_branches b ON b.id = a.branch_id
+     LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+     WHERE (
+       a.asset_name ILIKE $1 OR
+       COALESCE(a.asset_code, '') ILIKE $1 OR
+       g.name ILIKE $1 OR g.code ILIKE $1 OR
+       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
+       COALESCE(sg.name, '') ILIKE $1
+     )`,
+    [pattern]
+  );
+  const total = Number(countResult.rows[0]?.n ?? 0);
+  const list = await query<AssetListRow>(
+    `${ASSET_LIST_SELECT}
+     WHERE (
+       a.asset_name ILIKE $1 OR
+       COALESCE(a.asset_code, '') ILIKE $1 OR
+       g.name ILIKE $1 OR g.code ILIKE $1 OR
+       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
+       COALESCE(sg.name, '') ILIKE $1
+     )
+     ORDER BY a.created_at DESC, a.id DESC
+     LIMIT $2 OFFSET $3`,
+    [pattern, pageSize, offset]
+  );
+  return { assets: list.rows, total, page, pageSize };
 }

@@ -33,6 +33,14 @@ import {
   updateBranch,
 } from "./services/branches.js";
 import {
+  clampListParams as clampDepartmentListParams,
+  createDepartment,
+  deleteDepartment,
+  listDepartments,
+  parseDepartmentPayload,
+  updateDepartment,
+} from "./services/departments.js";
+import {
   createAsset,
   deleteAsset,
   listAssets,
@@ -844,6 +852,162 @@ app.delete("/api/admin/branches/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not delete branch." });
+  }
+});
+
+app.get("/api/admin/departments", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+
+    const { page: p, pageSize: ps } = clampDepartmentListParams({
+      page,
+      pageSize,
+    });
+    const result = await listDepartments({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not list departments."),
+    });
+  }
+});
+
+app.post("/api/admin/departments", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    let payload;
+    try {
+      payload = parseDepartmentPayload(req.body);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Invalid request.";
+      res.status(400).json({ error: msg });
+      return;
+    }
+
+    const department = await createDepartment(payload);
+    res.status(201).json({ department });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res
+        .status(409)
+        .json({ error: "A department with this name already exists." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not create department."),
+    });
+  }
+});
+
+app.patch("/api/admin/departments/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid department id." });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = parseDepartmentPayload(req.body);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Invalid request.";
+      res.status(400).json({ error: msg });
+      return;
+    }
+
+    const department = await updateDepartment(id, payload);
+    if (!department) {
+      res.status(404).json({ error: "Department not found." });
+      return;
+    }
+    res.json({ department });
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+    ) {
+      res
+        .status(409)
+        .json({ error: "A department with this name already exists." });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not update department."),
+    });
+  }
+});
+
+app.delete("/api/admin/departments/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid department id." });
+      return;
+    }
+
+    const deleted = await deleteDepartment(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Department not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not delete department." });
   }
 });
 

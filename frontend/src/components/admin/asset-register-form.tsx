@@ -25,14 +25,7 @@ type BranchOption = {
   branch_name: string;
 };
 
-const OWNERSHIP_TYPES = [
-  "Company owned",
-  "Leased",
-  "Rented",
-  "Financed",
-  "Donated",
-  "Other",
-] as const;
+const OWNERSHIP_TYPES = ["Owner", "Lease"] as const;
 
 const WORKING_STATUSES = [
   "In use",

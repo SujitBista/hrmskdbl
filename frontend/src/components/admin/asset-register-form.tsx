@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { NepaliDatePicker } from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 
+import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import {
   bsDateToPickerValue,
   normalizeBsDateEnglish,
@@ -323,11 +324,13 @@ export function AssetRegisterForm({
         setError(json.error ?? "Could not save asset.");
         return;
       }
-      const code = json.asset?.asset_code ?? "";
-      setAssetCode(code);
+      const rawCode = json.asset?.asset_code ?? "";
+      const displayCode =
+        rawCode === "" ? "" : formatAssetCodeForDisplay(rawCode);
+      setAssetCode(displayCode);
       setSuccess(
-        code
-          ? `Asset saved. Asset code: ${code}`
+        displayCode
+          ? `Asset saved. Asset code: ${displayCode}`
           : "Asset register entry saved."
       );
       onSaved?.();

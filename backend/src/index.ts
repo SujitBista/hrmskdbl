@@ -34,8 +34,10 @@ import {
 } from "./services/branches.js";
 import {
   createAsset,
+  deleteAsset,
   listAssets,
   parseCreateAssetPayload,
+  updateAsset,
 } from "./services/assets.js";
 import {
   clampListParams,
@@ -920,6 +922,89 @@ app.post("/api/admin/assets", async (req, res) => {
     res.status(500).json({
       error: resolveDbErrorMessage(err, "Could not save asset."),
     });
+  }
+});
+
+app.patch("/api/admin/assets/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid asset id." });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = parseCreateAssetPayload(req.body);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Invalid request.";
+      res.status(400).json({ error: msg });
+      return;
+    }
+
+    const asset = await updateAsset(id, payload);
+    if (!asset) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.json({ asset });
+  } catch (err) {
+    if (err instanceof Error) {
+      if (
+        err.message === "Branch not found." ||
+        err.message === "Asset group not found."
+      ) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      if (
+        err.message.includes("sub group") ||
+        err.message.includes("Sub group")
+      ) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+    }
+    console.error(err);
+    res.status(500).json({
+      error: resolveDbErrorMessage(err, "Could not update asset."),
+    });
+  }
+});
+
+app.delete("/api/admin/assets/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid asset id." });
+      return;
+    }
+
+    const deleted = await deleteAsset(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not delete asset." });
   }
 });
 

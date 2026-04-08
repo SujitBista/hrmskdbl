@@ -1,28 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
+import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatAdminDateTime } from "@/lib/format-datetime";
-
-export type AssetRegisterRow = {
-  id: number;
-  asset_code: string | null;
-  asset_name: string;
-  group_name: string;
-  group_code: string;
-  sub_group_name: string | null;
-  branch_code: string;
-  branch_name: string;
-  ownership_type: string;
-  working_status: string;
-  department_name: string | null;
-  purchase_date_bs: string;
-  purchase_qty: string | null;
-  unit_rate: string | null;
-  purchase_invoice_no: string | null;
-  lifetime_years: number | null;
-  salvage_value: string | null;
-  created_at: string;
-};
+import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
+import type { AssetRegisterRow } from "./asset-register-types";
 
 type ListResponse = {
   assets: AssetRegisterRow[];
@@ -31,9 +19,22 @@ type ListResponse = {
   pageSize: number;
 };
 
+type GroupOption = { id: number; name: string; code?: string };
+type SubGroupRow = {
+  id: number;
+  group_id: number;
+  group_name: string;
+  name: string;
+};
+type BranchOption = {
+  id: number;
+  branch_code: string;
+  branch_name: string;
+};
+
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 12;
+const COL_COUNT = 14;
 
 export function AssetRegisterAssetsTable({
   refreshKey,
@@ -41,6 +42,7 @@ export function AssetRegisterAssetsTable({
   refreshKey: number;
 }) {
   const tableId = useId();
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -48,6 +50,72 @@ export function AssetRegisterAssetsTable({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ListResponse | null>(null);
+
+  const [groups, setGroups] = useState<GroupOption[]>([]);
+  const [subGroups, setSubGroups] = useState<SubGroupRow[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [lookupsLoading, setLookupsLoading] = useState(true);
+
+  const [deleteTarget, setDeleteTarget] = useState<AssetRegisterRow | null>(
+    null
+  );
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [editTarget, setEditTarget] = useState<AssetRegisterRow | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLookups() {
+      setLookupsLoading(true);
+      try {
+        const [gRes, sgRes, bRes] = await Promise.all([
+          fetch(`/api/admin/groups?page=1&pageSize=100`),
+          fetch(`/api/admin/sub-groups?page=1&pageSize=100`),
+          fetch(`/api/admin/branches?page=1&pageSize=100`),
+        ]);
+        const gJson = (await gRes.json()) as {
+          groups?: GroupOption[];
+          error?: string;
+        };
+        const sgJson = (await sgRes.json()) as {
+          subGroups?: SubGroupRow[];
+          error?: string;
+        };
+        const bJson = (await bRes.json()) as {
+          branches?: BranchOption[];
+          error?: string;
+        };
+        if (!cancelled) {
+          setGroups(gRes.ok ? (gJson.groups ?? []) : []);
+          setSubGroups(sgRes.ok ? (sgJson.subGroups ?? []) : []);
+          setBranches(bRes.ok ? (bJson.branches ?? []) : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setGroups([]);
+          setSubGroups([]);
+          setBranches([]);
+        }
+      } finally {
+        if (!cancelled) setLookupsLoading(false);
+      }
+    }
+    void loadLookups();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = deleteDialogRef.current;
+    if (!el) return;
+    if (deleteTarget) {
+      setActionError(null);
+      el.showModal();
+    } else {
+      el.close();
+    }
+  }, [deleteTarget]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -93,6 +161,28 @@ export function AssetRegisterAssetsTable({
     void load();
   }, [load, refreshKey]);
 
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteSubmitting(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/admin/assets/${deleteTarget.id}`, {
+        method: "DELETE",
+      });
+      if (res.status === 204) {
+        setDeleteTarget(null);
+        await load();
+        return;
+      }
+      const json = (await res.json()) as { error?: string };
+      setActionError(json.error ?? "Could not delete asset.");
+    } catch {
+      setActionError("Something went wrong.");
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }
+
   const assets = data?.assets ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -133,9 +223,15 @@ export function AssetRegisterAssetsTable({
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[1100px] text-left text-sm">
+        <table className="w-full min-w-[1240px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap tabular-nums"
+              >
+                Asset Id
+              </th>
               <th
                 scope="col"
                 className="px-4 py-3 font-medium whitespace-nowrap"
@@ -181,6 +277,12 @@ export function AssetRegisterAssetsTable({
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Saved
               </th>
+              <th
+                scope="col"
+                className="px-4 py-3 text-right font-medium whitespace-nowrap"
+              >
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -217,8 +319,11 @@ export function AssetRegisterAssetsTable({
             ) : (
               assets.map((a) => (
                 <tr key={a.id} className="bg-white hover:bg-slate-50/80">
+                  <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
+                    {a.id}
+                  </td>
                   <td className="max-w-[200px] px-4 py-3 font-mono text-xs text-slate-900 break-all">
-                    {a.asset_code ?? "—"}
+                    {formatAssetCodeForDisplay(a.asset_code)}
                   </td>
                   <td className="px-4 py-3 font-medium text-slate-900">
                     {a.asset_name}
@@ -252,6 +357,24 @@ export function AssetRegisterAssetsTable({
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                     {formatAdminDateTime(a.created_at)}
+                  </td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditTarget(a)}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget(a)}
+                        className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 shadow-sm transition hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -307,6 +430,68 @@ export function AssetRegisterAssetsTable({
           </div>
         </div>
       </div>
+
+      <dialog
+        ref={deleteDialogRef}
+        className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
+        onClose={() => setDeleteTarget(null)}
+      >
+        <div className="p-6">
+          <h3 className="text-base font-semibold text-slate-900">
+            Delete asset?
+          </h3>
+          <p className="mt-2 text-sm text-slate-600">
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-slate-900">
+              {deleteTarget
+                ? deleteTarget.asset_name
+                : ""}
+            </span>
+            {deleteTarget?.asset_code ? (
+              <>
+                {" "}
+                <span className="font-mono text-xs text-slate-700">
+                  ({formatAssetCodeForDisplay(deleteTarget.asset_code)})
+                </span>
+              </>
+            ) : null}
+            ? This cannot be undone.
+          </p>
+          {actionError && deleteTarget ? (
+            <p className="mt-3 text-sm text-red-600" role="alert">
+              {actionError}
+            </p>
+          ) : null}
+          <div className="mt-6 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              disabled={deleteSubmitting}
+              onClick={() => setDeleteTarget(null)}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deleteSubmitting}
+              onClick={() => void confirmDelete()}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {deleteSubmitting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      </dialog>
+
+      <AssetRegisterEditDialog
+        asset={editTarget}
+        groups={groups}
+        subGroups={subGroups}
+        branches={branches}
+        lookupsBusy={lookupsLoading}
+        onClose={() => setEditTarget(null)}
+        onSaved={() => void load()}
+      />
     </section>
   );
 }

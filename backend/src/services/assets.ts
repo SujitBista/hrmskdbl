@@ -38,18 +38,37 @@ export type CreateAssetInput = {
   salvage_value: number | null;
 };
 
-/** Branch segment: 3-digit numeric style when possible (e.g. 021). */
+/**
+ * Branch segment for asset codes: strips wrapping `()`, `[]`, `{}` and `BC:` (any
+ * case), then uses the numeric part only (zero-padded to 3 digits when short).
+ * Non-BC branch codes that are not all-digits are returned without brackets.
+ */
 export function formatBranchCodeSegment(branchCode: string): string {
-  const t = branchCode.trim();
+  let t = branchCode
+    .trim()
+    .replace(/[()[\]{}]/g, "")
+    .trim();
+  if (/^BC\s*:/i.test(t)) {
+    const rest = t.replace(/^BC\s*:\s*/i, "").trim();
+    const m = rest.match(/\d+/);
+    if (m) {
+      return m[0]!.padStart(3, "0");
+    }
+    return rest.length > 0 ? rest : t;
+  }
   if (/^\d+$/.test(t)) {
     return t.padStart(3, "0");
   }
   return t;
 }
 
-/** Builds SKDBL/{branch}/{group}/{YYYY}/{MM}/{DD}/{000001} — asset id is 1…n, padded to 6 digits. */
+/**
+ * Builds SKDBL/{branch}/{group}/{YYYY}/{MM}/{DD}/{######}.
+ * The last segment is always `hrms_assets.id` (SERIAL primary key), zero-padded to 6 digits.
+ */
 export function buildAssetCode(params: {
-  assetId: number;
+  /** Primary key `hrms_assets.id` — must match the row this code is stored on. */
+  hrmsAssetId: number;
   branchCode: string;
   assetGroupCode: string;
   purchaseDateBs: string;
@@ -74,7 +93,7 @@ export function buildAssetCode(params: {
   const yy = String(yNum);
   const mm = String(mNum).padStart(2, "0");
   const dd = String(dNum).padStart(2, "0");
-  const idPart = String(params.assetId).padStart(6, "0");
+  const idPart = String(params.hrmsAssetId).padStart(6, "0");
   return `${ASSET_CODE_PREFIX}/${branch}/${group}/${yy}/${mm}/${dd}/${idPart}`;
 }
 
@@ -183,7 +202,9 @@ function parseOptionalInt(v: unknown): number | null {
   return Math.floor(n);
 }
 
-export async function createAsset(input: CreateAssetInput): Promise<Asset> {
+async function resolveAssetRefs(
+  input: CreateAssetInput
+): Promise<{ branch_code: string; group_code: string }> {
   const branchRow = await query<{ branch_code: string }>(
     `SELECT branch_code FROM hrms_branches WHERE id = $1`,
     [input.branch_id]
@@ -225,6 +246,12 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
     }
   }
 
+  return { branch_code: branch.branch_code, group_code: grp.code };
+}
+
+export async function createAsset(input: CreateAssetInput): Promise<Asset> {
+  const refs = await resolveAssetRefs(input);
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -263,9 +290,9 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
     }
 
     const asset_code = buildAssetCode({
-      assetId: row.id,
-      branchCode: branch.branch_code,
-      assetGroupCode: grp.code,
+      hrmsAssetId: row.id,
+      branchCode: refs.branch_code,
+      assetGroupCode: refs.group_code,
       purchaseDateBs: input.purchase_date_bs,
     });
 
@@ -297,8 +324,78 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
   }
 }
 
+export async function updateAsset(
+  id: number,
+  input: CreateAssetInput
+): Promise<Asset | null> {
+  const exists = await query<{ id: number }>(
+    `SELECT id FROM hrms_assets WHERE id = $1`,
+    [id]
+  );
+  if (!exists.rows[0]) {
+    return null;
+  }
+
+  const refs = await resolveAssetRefs(input);
+  const asset_code = buildAssetCode({
+    hrmsAssetId: id,
+    branchCode: refs.branch_code,
+    assetGroupCode: refs.group_code,
+    purchaseDateBs: input.purchase_date_bs,
+  });
+
+  const result = await query<Asset>(
+    `UPDATE hrms_assets SET
+      asset_code = $1,
+      asset_name = $2,
+      group_id = $3,
+      sub_group_id = $4,
+      ownership_type = $5,
+      working_status = $6,
+      branch_id = $7,
+      department_name = $8,
+      purchase_date_bs = $9,
+      purchase_qty = $10,
+      unit_rate = $11,
+      purchase_invoice_no = $12,
+      lifetime_years = $13,
+      salvage_value = $14
+    WHERE id = $15
+    RETURNING id, asset_code, asset_name, group_id, sub_group_id,
+      ownership_type, working_status, branch_id, department_name, purchase_date_bs,
+      purchase_qty::text, unit_rate::text, purchase_invoice_no, lifetime_years,
+      salvage_value::text, created_at::text`,
+    [
+      asset_code,
+      input.asset_name,
+      input.group_id,
+      input.sub_group_id,
+      input.ownership_type,
+      input.working_status,
+      input.branch_id,
+      input.department_name,
+      input.purchase_date_bs,
+      input.purchase_qty,
+      input.unit_rate,
+      input.purchase_invoice_no,
+      input.lifetime_years,
+      input.salvage_value,
+      id,
+    ]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function deleteAsset(id: number): Promise<boolean> {
+  const result = await query(`DELETE FROM hrms_assets WHERE id = $1`, [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
 export type AssetListRow = {
   id: number;
+  group_id: number;
+  sub_group_id: number | null;
+  branch_id: number;
   asset_code: string | null;
   asset_name: string;
   group_name: string;
@@ -333,6 +430,9 @@ export type ListAssetsResult = {
 
 const ASSET_LIST_SELECT = `
   SELECT a.id,
+    a.group_id,
+    a.sub_group_id,
+    a.branch_id,
     a.asset_code,
     a.asset_name,
     g.name AS group_name,

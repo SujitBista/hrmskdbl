@@ -429,6 +429,10 @@ export type AssetListRow = {
   asset_name: string;
   group_name: string;
   group_code: string;
+  /** From `hrms_groups.dep_method` (Straight Line / Declining Balance). */
+  group_dep_method: string | null;
+  /** From `hrms_groups.dep_rate` (%). */
+  group_dep_rate: string | null;
   sub_group_name: string | null;
   branch_code: string;
   branch_name: string;
@@ -467,6 +471,8 @@ const ASSET_LIST_SELECT = `
     a.asset_name,
     g.name AS group_name,
     g.code AS group_code,
+    g.dep_method AS group_dep_method,
+    g.dep_rate::text AS group_dep_rate,
     sg.name AS sub_group_name,
     b.branch_code,
     b.branch_name,

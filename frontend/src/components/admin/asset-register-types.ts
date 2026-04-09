@@ -8,6 +8,8 @@ export type AssetRegisterRow = {
   asset_name: string;
   group_name: string;
   group_code: string;
+  group_dep_method: string | null;
+  group_dep_rate: string | null;
   sub_group_name: string | null;
   branch_code: string;
   branch_name: string;

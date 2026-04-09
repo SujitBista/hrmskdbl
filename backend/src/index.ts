@@ -1069,7 +1069,8 @@ app.post("/api/admin/assets", async (req, res) => {
     if (err instanceof Error) {
       if (
         err.message === "Branch not found." ||
-        err.message === "Asset group not found."
+        err.message === "Asset group not found." ||
+        err.message === "Department not found."
       ) {
         res.status(400).json({ error: err.message });
         return;
@@ -1124,7 +1125,8 @@ app.patch("/api/admin/assets/:id", async (req, res) => {
     if (err instanceof Error) {
       if (
         err.message === "Branch not found." ||
-        err.message === "Asset group not found."
+        err.message === "Asset group not found." ||
+        err.message === "Department not found."
       ) {
         res.status(400).json({ error: err.message });
         return;

@@ -25,6 +25,8 @@ type BranchOption = {
   branch_name: string;
 };
 
+type DepartmentOption = { id: number; name: string };
+
 const OWNERSHIP_TYPES = ["Owner", "Lease"] as const;
 
 const WORKING_STATUSES = [
@@ -59,6 +61,10 @@ export function AssetRegisterForm({
   const [branchesLoading, setBranchesLoading] = useState(true);
   const [branchesError, setBranchesError] = useState<string | null>(null);
 
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [departmentsLoading, setDepartmentsLoading] = useState(true);
+  const [departmentsError, setDepartmentsError] = useState<string | null>(null);
+
   const [assetName, setAssetName] = useState("");
   const [assetCode, setAssetCode] = useState("");
   const [groupId, setGroupId] = useState<number | "">("");
@@ -66,7 +72,7 @@ export function AssetRegisterForm({
   const [ownershipType, setOwnershipType] = useState<string>("");
   const [workingStatus, setWorkingStatus] = useState<string>("");
   const [branchId, setBranchId] = useState<number | "">("");
-  const [departmentName, setDepartmentName] = useState("");
+  const [departmentId, setDepartmentId] = useState<number | "">("");
 
   const [purchaseDateBs, setPurchaseDateBs] = useState("");
   /** NepaliDatePicker is client-only — avoids SSR/client DOM mismatches. */
@@ -214,6 +220,41 @@ export function AssetRegisterForm({
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDepartments() {
+      setDepartmentsLoading(true);
+      setDepartmentsError(null);
+      try {
+        const params = new URLSearchParams({ page: "1", pageSize: "100" });
+        const res = await fetch(`/api/admin/departments?${params.toString()}`);
+        const json = (await res.json()) as {
+          departments?: DepartmentOption[];
+          error?: string;
+        };
+        if (!res.ok) {
+          if (!cancelled) {
+            setDepartmentsError(json.error ?? "Could not load departments.");
+            setDepartments([]);
+          }
+          return;
+        }
+        if (!cancelled) setDepartments(json.departments ?? []);
+      } catch {
+        if (!cancelled) {
+          setDepartmentsError("Something went wrong.");
+          setDepartments([]);
+        }
+      } finally {
+        if (!cancelled) setDepartmentsLoading(false);
+      }
+    }
+    void loadDepartments();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const subGroupsForGroup = useMemo(() => {
     if (groupId === "") return [];
     return subGroups.filter((sg) => sg.group_id === groupId);
@@ -287,8 +328,7 @@ export function AssetRegisterForm({
         ownership_type: ownershipType,
         working_status: workingStatus,
         branch_id: branchId,
-        department_name:
-          departmentName.trim() === "" ? null : departmentName.trim(),
+        department_id: departmentId === "" ? null : departmentId,
         purchase_date_bs: purchaseDateBs.trim(),
         purchase_qty:
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
@@ -332,7 +372,7 @@ export function AssetRegisterForm({
       setOwnershipType("");
       setWorkingStatus("");
       setBranchId(branches[0]?.id ?? "");
-      setDepartmentName("");
+      setDepartmentId("");
       setPurchaseDateBs("");
       setPurchaseQty("");
       setUnitRate("");
@@ -347,7 +387,7 @@ export function AssetRegisterForm({
   }
 
   const lookupsBusy =
-    groupsLoading || subGroupsLoading || branchesLoading;
+    groupsLoading || subGroupsLoading || branchesLoading || departmentsLoading;
   const noGroups = !groupsLoading && groups.length === 0;
   const noBranches = !branchesLoading && branches.length === 0;
 
@@ -590,17 +630,36 @@ export function AssetRegisterForm({
                 htmlFor={`${formId}-department`}
                 className="block text-sm font-medium text-slate-700"
               >
-                Department name
+                Department
               </label>
-              <input
+              <select
                 id={`${formId}-department`}
-                type="text"
-                autoComplete="off"
-                value={departmentName}
-                onChange={(ev) => setDepartmentName(ev.target.value)}
-                className={inputClass}
-                placeholder="e.g. IT"
-              />
+                disabled={departmentsLoading}
+                value={departmentId === "" ? "" : String(departmentId)}
+                onChange={(ev) => {
+                  const v = ev.target.value;
+                  setDepartmentId(v === "" ? "" : Number.parseInt(v, 10));
+                }}
+                className={`${inputClass} disabled:cursor-not-allowed disabled:bg-slate-50`}
+              >
+                {departmentsLoading ? (
+                  <option value="">Loading…</option>
+                ) : (
+                  <>
+                    <option value="">— None —</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={String(d.id)}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+              {departmentsError ? (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {departmentsError}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

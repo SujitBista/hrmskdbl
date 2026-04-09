@@ -24,6 +24,8 @@ type BranchOption = {
   branch_name: string;
 };
 
+type DepartmentOption = { id: number; name: string };
+
 const OWNERSHIP_TYPES = ["Owner", "Lease"] as const;
 
 const WORKING_STATUSES = [
@@ -42,6 +44,7 @@ export function AssetRegisterEditDialog({
   groups,
   subGroups,
   branches,
+  departments,
   lookupsBusy,
   onClose,
   onSaved,
@@ -50,6 +53,7 @@ export function AssetRegisterEditDialog({
   groups: GroupOption[];
   subGroups: SubGroupRow[];
   branches: BranchOption[];
+  departments: DepartmentOption[];
   lookupsBusy: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -63,7 +67,7 @@ export function AssetRegisterEditDialog({
   const [ownershipType, setOwnershipType] = useState("");
   const [workingStatus, setWorkingStatus] = useState("");
   const [branchId, setBranchId] = useState<number | "">("");
-  const [departmentName, setDepartmentName] = useState("");
+  const [departmentId, setDepartmentId] = useState<number | "">("");
   const [purchaseDateBs, setPurchaseDateBs] = useState("");
   const [purchaseDatePickerReady, setPurchaseDatePickerReady] =
     useState(false);
@@ -90,7 +94,9 @@ export function AssetRegisterEditDialog({
       setOwnershipType(asset.ownership_type);
       setWorkingStatus(asset.working_status);
       setBranchId(asset.branch_id);
-      setDepartmentName(asset.department_name ?? "");
+      setDepartmentId(
+        asset.department_id != null ? asset.department_id : ""
+      );
       setPurchaseDateBs(asset.purchase_date_bs);
       setPurchaseQty(asset.purchase_qty ?? "");
       setUnitRate(asset.unit_rate ?? "");
@@ -178,8 +184,7 @@ export function AssetRegisterEditDialog({
         ownership_type: ownershipType,
         working_status: workingStatus,
         branch_id: branchId,
-        department_name:
-          departmentName.trim() === "" ? null : departmentName.trim(),
+        department_id: departmentId === "" ? null : departmentId,
         purchase_date_bs: purchaseDateBs.trim(),
         purchase_qty:
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
@@ -403,16 +408,38 @@ export function AssetRegisterEditDialog({
                 htmlFor={`${formId}-dept`}
                 className="block text-sm font-medium text-slate-700"
               >
-                Department name
+                Department
               </label>
-              <input
+              <select
                 id={`${formId}-dept`}
-                type="text"
-                autoComplete="off"
-                value={departmentName}
-                onChange={(e) => setDepartmentName(e.target.value)}
-                className={fieldClass}
-              />
+                disabled={lookupsBusy}
+                value={departmentId === "" ? "" : String(departmentId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDepartmentId(v === "" ? "" : Number.parseInt(v, 10));
+                }}
+                className={`${fieldClass} disabled:cursor-not-allowed disabled:bg-slate-50`}
+              >
+                {lookupsBusy ? (
+                  <option value="">Loading…</option>
+                ) : (
+                  <>
+                    <option value="">— None —</option>
+                    {asset?.department_id != null &&
+                    !departments.some((d) => d.id === asset.department_id) ? (
+                      <option value={String(asset.department_id)}>
+                        {asset.department_name ?? `Department #${asset.department_id}`}{" "}
+                        (unavailable)
+                      </option>
+                    ) : null}
+                    {departments.map((d) => (
+                      <option key={d.id} value={String(d.id)}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
             </div>
           </div>
 

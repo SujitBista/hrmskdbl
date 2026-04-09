@@ -13,6 +13,7 @@ export type AssetRegisterRow = {
   branch_name: string;
   ownership_type: string;
   working_status: string;
+  department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
   purchase_qty: string | null;

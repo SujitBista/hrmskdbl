@@ -32,6 +32,8 @@ type BranchOption = {
   branch_name: string;
 };
 
+type DepartmentOption = { id: number; name: string };
+
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
 const COL_COUNT = 15;
@@ -69,6 +71,7 @@ export function AssetRegisterAssetsTable({
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [subGroups, setSubGroups] = useState<SubGroupRow[]>([]);
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(true);
 
   const [deleteTarget, setDeleteTarget] = useState<AssetRegisterRow | null>(
@@ -83,10 +86,11 @@ export function AssetRegisterAssetsTable({
     async function loadLookups() {
       setLookupsLoading(true);
       try {
-        const [gRes, sgRes, bRes] = await Promise.all([
+        const [gRes, sgRes, bRes, dRes] = await Promise.all([
           fetch(`/api/admin/groups?page=1&pageSize=100`),
           fetch(`/api/admin/sub-groups?page=1&pageSize=100`),
           fetch(`/api/admin/branches?page=1&pageSize=100`),
+          fetch(`/api/admin/departments?page=1&pageSize=100`),
         ]);
         const gJson = (await gRes.json()) as {
           groups?: GroupOption[];
@@ -100,16 +104,22 @@ export function AssetRegisterAssetsTable({
           branches?: BranchOption[];
           error?: string;
         };
+        const dJson = (await dRes.json()) as {
+          departments?: DepartmentOption[];
+          error?: string;
+        };
         if (!cancelled) {
           setGroups(gRes.ok ? (gJson.groups ?? []) : []);
           setSubGroups(sgRes.ok ? (sgJson.subGroups ?? []) : []);
           setBranches(bRes.ok ? (bJson.branches ?? []) : []);
+          setDepartments(dRes.ok ? (dJson.departments ?? []) : []);
         }
       } catch {
         if (!cancelled) {
           setGroups([]);
           setSubGroups([]);
           setBranches([]);
+          setDepartments([]);
         }
       } finally {
         if (!cancelled) setLookupsLoading(false);
@@ -512,6 +522,7 @@ export function AssetRegisterAssetsTable({
         groups={groups}
         subGroups={subGroups}
         branches={branches}
+        departments={departments}
         lookupsBusy={lookupsLoading}
         onClose={() => setEditTarget(null)}
         onSaved={() => void load()}

@@ -12,6 +12,7 @@ export type Asset = {
   ownership_type: string;
   working_status: string;
   branch_id: number;
+  department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
   purchase_qty: string | null;
@@ -29,7 +30,7 @@ export type CreateAssetInput = {
   ownership_type: string;
   working_status: string;
   branch_id: number;
-  department_name: string | null;
+  department_id: number | null;
   purchase_date_bs: string;
   purchase_qty: number | null;
   unit_rate: number | null;
@@ -121,10 +122,17 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
   const branch_id = Number.isFinite(Number(b.branch_id))
     ? Math.floor(Number(b.branch_id))
     : NaN;
-  const department_name =
-    typeof b.department_name === "string" && b.department_name.trim() !== ""
-      ? b.department_name.trim()
-      : null;
+  let department_id: number | null = null;
+  if (b.department_id !== null && b.department_id !== undefined && b.department_id !== "") {
+    const raw =
+      typeof b.department_id === "number"
+        ? b.department_id
+        : Number(b.department_id);
+    if (!Number.isFinite(raw) || raw < 1) {
+      throw new Error("Invalid department.");
+    }
+    department_id = Math.floor(raw);
+  }
   const purchase_date_bs =
     typeof b.purchase_date_bs === "string" ? b.purchase_date_bs.trim() : "";
 
@@ -170,7 +178,7 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     ownership_type,
     working_status,
     branch_id,
-    department_name,
+    department_id,
     purchase_date_bs,
     purchase_qty,
     unit_rate,
@@ -249,7 +257,23 @@ async function resolveAssetRefs(
   return { branch_code: branch.branch_code, group_code: grp.code };
 }
 
+async function assertDepartmentExists(
+  department_id: number | null
+): Promise<void> {
+  if (department_id === null) {
+    return;
+  }
+  const r = await query<{ id: number }>(
+    `SELECT id FROM hrms_departments WHERE id = $1`,
+    [department_id]
+  );
+  if (!r.rows[0]) {
+    throw new Error("Department not found.");
+  }
+}
+
 export async function createAsset(input: CreateAssetInput): Promise<Asset> {
+  await assertDepartmentExists(input.department_id);
   const refs = await resolveAssetRefs(input);
 
   const client = await pool.connect();
@@ -262,7 +286,7 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
     }>(
       `INSERT INTO hrms_assets (
         asset_name, group_id, sub_group_id, ownership_type, working_status,
-        branch_id, department_name, purchase_date_bs, purchase_qty, unit_rate,
+        branch_id, department_id, purchase_date_bs, purchase_qty, unit_rate,
         purchase_invoice_no, lifetime_years, salvage_value
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -274,7 +298,7 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
         input.ownership_type,
         input.working_status,
         input.branch_id,
-        input.department_name,
+        input.department_id,
         input.purchase_date_bs,
         input.purchase_qty,
         input.unit_rate,
@@ -297,11 +321,13 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
     });
 
     const updated = await client.query<Asset>(
-      `UPDATE hrms_assets SET asset_code = $1 WHERE id = $2
-       RETURNING id, asset_code, asset_name, group_id, sub_group_id,
-         ownership_type, working_status, branch_id, department_name, purchase_date_bs,
-         purchase_qty::text, unit_rate::text, purchase_invoice_no, lifetime_years,
-         salvage_value::text, created_at::text`,
+      `UPDATE hrms_assets AS a SET asset_code = $1 WHERE a.id = $2
+       RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
+         a.ownership_type, a.working_status, a.branch_id, a.department_id,
+         (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
+         a.purchase_date_bs,
+         a.purchase_qty::text, a.unit_rate::text, a.purchase_invoice_no, a.lifetime_years,
+         a.salvage_value::text, a.created_at::text`,
       [asset_code, row.id]
     );
 
@@ -336,6 +362,7 @@ export async function updateAsset(
     return null;
   }
 
+  await assertDepartmentExists(input.department_id);
   const refs = await resolveAssetRefs(input);
   const asset_code = buildAssetCode({
     hrmsAssetId: id,
@@ -345,7 +372,7 @@ export async function updateAsset(
   });
 
   const result = await query<Asset>(
-    `UPDATE hrms_assets SET
+    `UPDATE hrms_assets AS a SET
       asset_code = $1,
       asset_name = $2,
       group_id = $3,
@@ -353,18 +380,20 @@ export async function updateAsset(
       ownership_type = $5,
       working_status = $6,
       branch_id = $7,
-      department_name = $8,
+      department_id = $8,
       purchase_date_bs = $9,
       purchase_qty = $10,
       unit_rate = $11,
       purchase_invoice_no = $12,
       lifetime_years = $13,
       salvage_value = $14
-    WHERE id = $15
-    RETURNING id, asset_code, asset_name, group_id, sub_group_id,
-      ownership_type, working_status, branch_id, department_name, purchase_date_bs,
-      purchase_qty::text, unit_rate::text, purchase_invoice_no, lifetime_years,
-      salvage_value::text, created_at::text`,
+    WHERE a.id = $15
+    RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
+      a.ownership_type, a.working_status, a.branch_id, a.department_id,
+      (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
+      a.purchase_date_bs,
+      a.purchase_qty::text, a.unit_rate::text, a.purchase_invoice_no, a.lifetime_years,
+      a.salvage_value::text, a.created_at::text`,
     [
       asset_code,
       input.asset_name,
@@ -373,7 +402,7 @@ export async function updateAsset(
       input.ownership_type,
       input.working_status,
       input.branch_id,
-      input.department_name,
+      input.department_id,
       input.purchase_date_bs,
       input.purchase_qty,
       input.unit_rate,
@@ -405,6 +434,7 @@ export type AssetListRow = {
   branch_name: string;
   ownership_type: string;
   working_status: string;
+  department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
   purchase_qty: string | null;
@@ -442,7 +472,8 @@ const ASSET_LIST_SELECT = `
     b.branch_name,
     a.ownership_type,
     a.working_status,
-    a.department_name,
+    a.department_id,
+    d.name AS department_name,
     a.purchase_date_bs,
     a.purchase_qty::text,
     a.unit_rate::text,
@@ -454,6 +485,7 @@ const ASSET_LIST_SELECT = `
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+  LEFT JOIN hrms_departments d ON d.id = a.department_id
 `;
 
 export async function listAssets(
@@ -484,12 +516,14 @@ export async function listAssets(
      INNER JOIN hrms_groups g ON g.id = a.group_id
      INNER JOIN hrms_branches b ON b.id = a.branch_id
      LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+     LEFT JOIN hrms_departments d ON d.id = a.department_id
      WHERE (
        a.asset_name ILIKE $1 OR
        COALESCE(a.asset_code, '') ILIKE $1 OR
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
-       COALESCE(sg.name, '') ILIKE $1
+       COALESCE(sg.name, '') ILIKE $1 OR
+       COALESCE(d.name, '') ILIKE $1
      )`,
     [pattern]
   );
@@ -501,7 +535,8 @@ export async function listAssets(
        COALESCE(a.asset_code, '') ILIKE $1 OR
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
-       COALESCE(sg.name, '') ILIKE $1
+       COALESCE(sg.name, '') ILIKE $1 OR
+       COALESCE(d.name, '') ILIKE $1
      )
      ORDER BY a.created_at DESC, a.id DESC
      LIMIT $2 OFFSET $3`,

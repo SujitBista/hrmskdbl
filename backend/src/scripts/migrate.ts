@@ -97,7 +97,7 @@ async function migrate() {
       ownership_type VARCHAR(128) NOT NULL,
       working_status VARCHAR(128) NOT NULL,
       branch_id INTEGER NOT NULL REFERENCES hrms_branches(id) ON DELETE RESTRICT,
-      department_name VARCHAR(255),
+      department_id INTEGER REFERENCES hrms_departments(id) ON DELETE SET NULL,
       purchase_date_bs VARCHAR(32) NOT NULL,
       purchase_qty NUMERIC(18, 4),
       unit_rate NUMERIC(18, 4),
@@ -111,6 +111,33 @@ async function migrate() {
     CREATE UNIQUE INDEX IF NOT EXISTS hrms_assets_asset_code_key
     ON hrms_assets (asset_code)
     WHERE asset_code IS NOT NULL;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS department_id INTEGER
+    REFERENCES hrms_departments(id) ON DELETE SET NULL;
+  `);
+  await query(`
+    DO $migrate$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'hrms_assets'
+          AND column_name = 'department_name'
+      ) THEN
+        UPDATE hrms_assets a
+        SET department_id = d.id
+        FROM hrms_departments d
+        WHERE a.department_name IS NOT NULL
+          AND TRIM(a.department_name) <> ''
+          AND LOWER(TRIM(a.department_name)) = LOWER(TRIM(d.name));
+      END IF;
+    END
+    $migrate$;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets DROP COLUMN IF EXISTS department_name;
   `);
   console.log("Migration complete.");
 }

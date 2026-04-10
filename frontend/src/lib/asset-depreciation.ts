@@ -1,16 +1,17 @@
 /**
  * Year-one depreciation projection (Straight Line vs Declining Balance).
- * Formula per period: (base × dep rate) × (working days in month / 365).
- * Default 30 working days per month matches the spreadsheet reference.
+ * Delegates period math to {@link computeScheduleFromPeriods} for consistency with the full schedule.
  */
 
-const DEFAULT_WORKING_DAYS_PER_MONTH = 30;
-const DAYS_IN_YEAR = 365;
-const DEFAULT_PROJECTION_MONTHS = 12;
+import {
+  computeScheduleFromPeriods,
+  parseDepreciationMethod,
+  type DepreciationMethodCode,
+  type DepreciationPeriodSlice,
+} from "@/lib/depreciation-schedule";
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+const DEFAULT_WORKING_DAYS_PER_MONTH = 30;
+const DEFAULT_PROJECTION_MONTHS = 12;
 
 export function parsePurchaseAmount(
   qty: string | null,
@@ -31,13 +32,13 @@ export function parseDepRatePercent(rate: string | null): number | null {
   return n;
 }
 
+/** @deprecated Use {@link parseDepreciationMethod} from depreciation-schedule for new code. */
 export function normalizeDepreciationMethod(
   method: string | null | undefined
 ): "straight_line" | "declining_balance" | null {
-  if (method == null || typeof method !== "string") return null;
-  const t = method.trim().toLowerCase();
-  if (t === "straight line") return "straight_line";
-  if (t === "declining balance") return "declining_balance";
+  const code = parseDepreciationMethod(method);
+  if (code === "STRAIGHT_LINE") return "straight_line";
+  if (code === "DECLINING_BALANCE") return "declining_balance";
   return null;
 }
 
@@ -49,6 +50,22 @@ export type YearOneDepreciationSummary = {
   workingDaysPerMonth: number;
 };
 
+function toSyntheticPeriods(
+  months: number,
+  workingDaysPerMonth: number
+): DepreciationPeriodSlice[] {
+  const periods: DepreciationPeriodSlice[] = [];
+  for (let i = 0; i < months; i++) {
+    periods.push({
+      period: i + 1,
+      startBs: "—",
+      endBs: "—",
+      workingDays: workingDaysPerMonth,
+    });
+  }
+  return periods;
+}
+
 export function computeYearOneDepreciation(params: {
   purchaseAmount: number;
   depRatePercent: number;
@@ -59,27 +76,25 @@ export function computeYearOneDepreciation(params: {
   const workingDaysPerMonth =
     params.workingDaysPerMonth ?? DEFAULT_WORKING_DAYS_PER_MONTH;
   const months = params.months ?? DEFAULT_PROJECTION_MONTHS;
-  const rateDecimal = params.depRatePercent / 100;
+  const code: DepreciationMethodCode =
+    params.method === "straight_line" ? "STRAIGHT_LINE" : "DECLINING_BALANCE";
 
-  let book = params.purchaseAmount;
-  let firstMonth = 0;
-  let yearOneTotal = 0;
+  const rows = computeScheduleFromPeriods({
+    purchaseAmount: params.purchaseAmount,
+    depRatePercent: params.depRatePercent,
+    method: code,
+    periods: toSyntheticPeriods(months, workingDaysPerMonth),
+  });
 
-  for (let i = 0; i < months; i++) {
-    const base =
-      params.method === "straight_line" ? params.purchaseAmount : book;
-    const dep = round2(
-      base * rateDecimal * (workingDaysPerMonth / DAYS_IN_YEAR)
-    );
-    if (i === 0) firstMonth = dep;
-    yearOneTotal = round2(yearOneTotal + dep);
-    book = round2(book - dep);
-  }
+  const firstMonth = rows[0]?.depAmount ?? 0;
+  const last = rows[rows.length - 1];
+  const yearOneTotal = last?.totalDepAmount ?? 0;
+  const bookAfter = last?.closingBookValue ?? params.purchaseAmount;
 
   return {
     firstMonthDepreciation: firstMonth,
     yearOneTotalDepreciation: yearOneTotal,
-    bookValueAfterYearOne: round2(params.purchaseAmount - yearOneTotal),
+    bookValueAfterYearOne: bookAfter,
     months,
     workingDaysPerMonth,
   };
@@ -96,15 +111,18 @@ export function tryComputeYearOneDepreciation(params: {
     params.unitRate
   );
   const depRatePercent = parseDepRatePercent(params.groupDepRate);
-  const method = normalizeDepreciationMethod(params.groupDepMethod);
+  const methodCode = parseDepreciationMethod(params.groupDepMethod);
   if (
     purchaseAmount === null ||
     depRatePercent === null ||
-    method === null ||
-    purchaseAmount <= 0
+    methodCode === null ||
+    purchaseAmount <= 0 ||
+    depRatePercent <= 0
   ) {
     return null;
   }
+  const method =
+    methodCode === "STRAIGHT_LINE" ? "straight_line" : "declining_balance";
   return computeYearOneDepreciation({
     purchaseAmount,
     depRatePercent,

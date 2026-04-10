@@ -80,6 +80,8 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
   const isGroupsPage = pathname === "/admin/dashboard/groups";
   const isSubGroupsPage = pathname === "/admin/dashboard/groups/sub-groups";
   const isAssetRegisterPage = pathname === "/admin/dashboard/asset-register";
+  const isDepreciationPage =
+    pathname === "/admin/dashboard/asset-register/depreciation";
 
   const nav = (
     <nav className="flex flex-col gap-1 p-3" aria-label="Admin">
@@ -156,11 +158,20 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
           <Link
             href="/admin/dashboard/asset-register#asset-register"
             className={`${subLinkClass} ${
-              isAssetRegisterPage ? linkActive : linkInactive
+              isAssetRegisterPage && !isDepreciationPage ? linkActive : linkInactive
             }`}
             onClick={onNavigate}
           >
             Asset Register
+          </Link>
+          <Link
+            href="/admin/dashboard/asset-register/depreciation"
+            className={`${subLinkClass} ${
+              isDepreciationPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Depreciation schedule
           </Link>
         </div>
       </div>

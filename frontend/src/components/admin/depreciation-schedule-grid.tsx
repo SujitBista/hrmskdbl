@@ -17,7 +17,7 @@ export function DepreciationScheduleGrid({
   if (result === null) {
     return (
       <p className="text-sm text-slate-500">
-        Select an asset and dates to build the schedule.
+        Select an asset to see the first-year projected schedule.
       </p>
     );
   }
@@ -42,6 +42,22 @@ export function DepreciationScheduleGrid({
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 sm:flex-row sm:items-start sm:justify-between">
+        <span className="inline-flex w-fit shrink-0 items-center rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-800">
+          Mode: {summary.calculationModeLabel}
+        </span>
+        <div className="min-w-0 space-y-1 text-xs text-slate-600">
+          <p>
+            <span className="font-medium text-slate-700">ERP Accurate:</span>{" "}
+            uses actual date ranges and is preferred for accounting accuracy.
+          </p>
+          <p>
+            <span className="font-medium text-slate-700">Excel Fixed:</span>{" "}
+            is a simplified spreadsheet-style approximation.
+          </p>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
         <p className="mb-3 text-sm font-semibold text-slate-800">Summary</p>
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3 text-sm">
@@ -58,19 +74,25 @@ export function DepreciationScheduleGrid({
             </dd>
           </div>
           <div>
+            <dt className="text-slate-500">Calculation mode</dt>
+            <dd className="font-medium text-slate-900">
+              {summary.calculationModeLabel}
+            </dd>
+          </div>
+          <div>
             <dt className="text-slate-500">Dep rate</dt>
             <dd className="font-medium tabular-nums text-slate-900">
               {summary.depRatePercent}%
             </dd>
           </div>
           <div>
-            <dt className="text-slate-500">Calculation from</dt>
+            <dt className="text-slate-500">First year from (purchase date)</dt>
             <dd className="font-mono text-slate-900">
               {summary.calculationFromBs}
             </dd>
           </div>
           <div>
-            <dt className="text-slate-500">Calculation to</dt>
+            <dt className="text-slate-500">First year through</dt>
             <dd className="font-mono text-slate-900">
               {summary.calculationToBs}
             </dd>
@@ -82,19 +104,13 @@ export function DepreciationScheduleGrid({
             </dd>
           </div>
           <div>
-            <dt className="text-slate-500">This period depreciation (last row)</dt>
-            <dd className="font-medium tabular-nums text-slate-900">
-              {formatMoney(summary.thisPeriodDepreciation)}
-            </dd>
-          </div>
-          <div>
             <dt className="text-slate-500">Total depreciation</dt>
             <dd className="font-medium tabular-nums text-slate-900">
               {formatMoney(summary.totalDepreciation)}
             </dd>
           </div>
           <div>
-            <dt className="text-slate-500">Current book value</dt>
+            <dt className="text-slate-500">Book value (end of schedule)</dt>
             <dd className="font-semibold tabular-nums text-emerald-900">
               {formatMoney(summary.currentBookValue)}
             </dd>
@@ -103,37 +119,78 @@ export function DepreciationScheduleGrid({
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm">
-        <table className="min-w-[1100px] border-collapse text-sm">
+        <table className="min-w-[1180px] border-collapse text-sm">
+          <caption className="caption-bottom px-2 py-2 text-left text-xs text-slate-600">
+            Book value after each period: opening book value minus period
+            depreciation equals closing book value (straight line uses purchase
+            as the dep base; declining balance uses opening book value).
+          </caption>
           <thead>
             <tr className="bg-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-800">
-              <th className="border border-slate-300 px-2 py-2">Period</th>
-              <th className="border border-slate-300 px-2 py-2">Start date</th>
-              <th className="border border-slate-300 px-2 py-2">End date</th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
-                Opening BV
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2"
+              >
+                Period
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2"
+              >
+                Start date
+              </th>
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2"
+              >
+                End date
+              </th>
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2 text-right"
+              >
+                Opening book value
+              </th>
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2 text-right"
+              >
                 Dep base
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2 text-right"
+              >
                 Dep rate %
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2 text-right"
+              >
                 Working days
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2 text-right"
+              >
                 Dep amount
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th
+                scope="col"
+                className="border border-slate-300 px-2 py-2 text-right"
+              >
                 Total dep
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
-                Closing BV
+              <th
+                scope="col"
+                className="sticky right-0 z-10 border border-slate-300 border-l-slate-400 bg-slate-200 px-2 py-2 text-right shadow-[-4px_0_8px_-2px_rgba(15,23,42,0.12)]"
+              >
+                Book value (closing)
               </th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {rows.map((r, rowIdx) => (
               <tr
                 key={`${r.period}-${r.startDateBs}`}
                 className="bg-white odd:bg-slate-50/90"
@@ -165,7 +222,11 @@ export function DepreciationScheduleGrid({
                 <td className="border border-slate-300 px-2 py-1.5 text-right tabular-nums">
                   {formatMoney(r.totalDepAmount)}
                 </td>
-                <td className="border border-slate-300 px-2 py-1.5 text-right font-medium tabular-nums text-emerald-900">
+                <td
+                  className={`sticky right-0 z-10 border border-slate-300 border-l-slate-400 px-2 py-1.5 text-right font-semibold tabular-nums text-emerald-900 shadow-[-4px_0_8px_-2px_rgba(15,23,42,0.08)] ${
+                    rowIdx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
+                  }`}
+                >
                   {formatMoney(r.closingBookValue)}
                 </td>
               </tr>

@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "npm run build --prefix ../packages/depreciation-core && tsc",
     "start": "node dist/index.js",
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/scripts/seed.ts"
   },
   "dependencies": {
+    "@hrmskdbl/depreciation-core": "file:../packages/depreciation-core",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

@@ -1,17 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import NepaliDate from "nepali-date-converter";
-import { NepaliDatePicker } from "nepali-datepicker-reactjs";
-import "nepali-datepicker-reactjs/dist/index.css";
 
-import { normalizeBsDateEnglish, bsDateToPickerValue } from "@/lib/bs-date-english";
+import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
 import {
-  computeDepreciationSchedule,
+  computeOneYearDepreciationSchedule,
   depreciationMethodLabel,
   parseDepreciationMethod,
+  type DepreciationCalculationMode,
   type DepreciationMethodCode,
-  type DepreciationPeriodMode,
   type DepreciationScheduleResult,
 } from "@/lib/depreciation-schedule";
 import { DepreciationScheduleGrid } from "./depreciation-schedule-grid";
@@ -39,13 +36,8 @@ export function DepreciationScheduleScreen() {
   const [assetsError, setAssetsError] = useState<string | null>(null);
 
   const [selectedAssetId, setSelectedAssetId] = useState<number | "">("");
-  const [calcFromBs, setCalcFromBs] = useState("");
-  const [calcToBs, setCalcToBs] = useState("");
-  const [rangePickersReady, setRangePickersReady] = useState(false);
-
-  const [periodMode, setPeriodMode] =
-    useState<DepreciationPeriodMode>("monthly");
-  const [customDays, setCustomDays] = useState(30);
+  const [calculationMode, setCalculationMode] =
+    useState<DepreciationCalculationMode>("ERP_ACCURATE");
 
   const [result, setResult] = useState<DepreciationScheduleResult | null>(null);
 
@@ -85,25 +77,6 @@ export function DepreciationScheduleScreen() {
     [assets, selectedAssetId]
   );
 
-  const applyAssetDefaults = useCallback((row: AssetRegisterRow) => {
-    const purchaseBs = normalizeBsDateEnglish(row.purchase_date_bs);
-    setCalcFromBs(purchaseBs);
-    try {
-      const p = new NepaliDate(purchaseBs.replace(/\//g, "-"));
-      const end = new NepaliDate(p.toJsDate());
-      end.setMonth(end.getMonth() + 2);
-      setCalcToBs(end.format("YYYY/MM/DD"));
-    } catch {
-      setCalcToBs(purchaseBs);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (selectedAssetId === "") return;
-    const row = assets.find((a) => a.id === selectedAssetId);
-    if (row) applyAssetDefaults(row);
-  }, [selectedAssetId, assets, applyAssetDefaults]);
-
   const runCalculation = useCallback(() => {
     if (!selectedAsset) {
       setResult(null);
@@ -132,40 +105,56 @@ export function DepreciationScheduleScreen() {
       return;
     }
 
-    const r = computeDepreciationSchedule({
+    const r = computeOneYearDepreciationSchedule({
       purchaseAmount,
       purchaseDateBs: normalizeBsDateEnglish(selectedAsset.purchase_date_bs),
       depRatePercent: depRate,
       method: method as DepreciationMethodCode,
-      calculationFromBs: calcFromBs,
-      calculationToBs: calcToBs,
-      periodMode,
-      customDaysPerPeriod:
-        periodMode === "custom_days" ? customDays : undefined,
+      calculationMode,
     });
     setResult(r);
-  }, [selectedAsset, calcFromBs, calcToBs, periodMode, customDays]);
+  }, [selectedAsset, calculationMode]);
 
   useEffect(() => {
-    if (selectedAsset && calcFromBs && calcToBs) {
+    if (selectedAsset) {
       runCalculation();
     }
-  }, [
-    selectedAsset,
-    calcFromBs,
-    calcToBs,
-    periodMode,
-    customDays,
-    runCalculation,
-  ]);
-
-  useEffect(() => {
-    setRangePickersReady(true);
-  }, []);
+  }, [selectedAsset, calculationMode, runCalculation]);
 
   const methodCode = selectedAsset
     ? parseDepreciationMethod(selectedAsset.group_dep_method)
     : null;
+
+  const formulaCard = useMemo(() => {
+    if (!methodCode) return null;
+    const isErp = calculationMode === "ERP_ACCURATE";
+    const daysLabel = isErp
+      ? "WorkingDays: actual calendar days in each BS month slice"
+      : "FixedDays: 30 per month (spreadsheet style)";
+
+    if (methodCode === "STRAIGHT_LINE") {
+      return {
+        title: "Straight line",
+        tint: "blue" as const,
+        body: "The schedule always covers 12 projected monthly periods from the asset purchase date through the end of the 12th BS month, even if the asset is newer than one year. Each period uses the original purchase amount as the depreciation base.",
+        lines: [
+          `DepAmount = (PurchaseAmount × DepRate × ${isErp ? "WorkingDays" : "FixedDays"}) ÷ 365`,
+          "BookValue = PurchaseAmount − TotalDepreciation (cumulative)",
+          daysLabel + ".",
+        ],
+      };
+    }
+    return {
+      title: "Declining balance",
+      tint: "amber" as const,
+      body: "Twelve projected monthly periods from purchase through the end of the 12th BS month. Each period uses that row’s opening book value as the base.",
+      lines: [
+        `DepAmount = (OpeningBookValue × DepRate × ${isErp ? "WorkingDays" : "FixedDays"}) ÷ 365`,
+        "BookValue = OpeningBookValue − DepAmount",
+        daysLabel + ".",
+      ],
+    };
+  }, [methodCode, calculationMode]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -174,9 +163,9 @@ export function DepreciationScheduleScreen() {
           Book value depreciation schedule
         </h2>
         <p className="mt-1 text-sm text-slate-600">
-          Carrying value after accumulated depreciation (not market value). Rates
-          and method come from the asset group; cost and purchase date from the
-          register.
+          First-year projected depreciation from the register purchase date (12
+          BS months). Rates and method come from the asset group; cost and
+          purchase date from the register.
         </p>
       </div>
 
@@ -226,116 +215,67 @@ export function DepreciationScheduleScreen() {
                 <span className="font-medium text-slate-800">Dep rate:</span>{" "}
                 {selectedAsset.group_dep_rate ?? "—"}%
               </p>
+              <p className="mt-0.5 font-mono text-slate-800">
+                <span className="font-sans font-medium">Purchase date (BS):</span>{" "}
+                {normalizeBsDateEnglish(selectedAsset.purchase_date_bs) || "—"}
+              </p>
             </div>
           ) : null}
 
           <div>
-            <label className={labelClass} htmlFor={`${formId}-from`}>
-              Calculation from (BS)
-            </label>
-            {rangePickersReady ? (
-              <NepaliDatePicker
-                value={bsDateToPickerValue(calcFromBs)}
-                onChange={(value) =>
-                  setCalcFromBs(normalizeBsDateEnglish(value))
-                }
-                className="mt-1 w-full"
-              />
-            ) : (
-              <input
-                id={`${formId}-from`}
-                type="text"
-                className={inputClass}
-                readOnly
-                value="Loading calendar…"
-              />
-            )}
-          </div>
-          <div>
-            <label className={labelClass} htmlFor={`${formId}-to`}>
-              Calculation to (BS)
-            </label>
-            {rangePickersReady ? (
-              <NepaliDatePicker
-                value={bsDateToPickerValue(calcToBs)}
-                onChange={(value) =>
-                  setCalcToBs(normalizeBsDateEnglish(value))
-                }
-                className="mt-1 w-full"
-              />
-            ) : (
-              <input
-                id={`${formId}-to`}
-                type="text"
-                className={inputClass}
-                readOnly
-                value="Loading calendar…"
-              />
-            )}
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor={`${formId}-mode`}>
-              Period mode
+            <label className={labelClass} htmlFor={`${formId}-calc-mode`}>
+              Calculation mode
             </label>
             <select
-              id={`${formId}-mode`}
+              id={`${formId}-calc-mode`}
               className={inputClass}
-              value={periodMode}
+              value={calculationMode}
               onChange={(e) =>
-                setPeriodMode(e.target.value as DepreciationPeriodMode)
+                setCalculationMode(
+                  e.target.value as DepreciationCalculationMode
+                )
               }
             >
-              <option value="monthly">Monthly (BS calendar months)</option>
-              <option value="yearly">Yearly (BS years)</option>
-              <option value="custom_days">Custom (fixed calendar days)</option>
+              <option value="ERP_ACCURATE">
+                ERP Accurate (actual days, opening book value)
+              </option>
+              <option value="EXCEL_FIXED">
+                Excel Fixed (30-day monthly / fixed yearly style)
+              </option>
             </select>
+            <p className="mt-1 text-xs text-slate-500">
+              {calculationMode === "ERP_ACCURATE"
+                ? "Uses actual days per BS month slice."
+                : "Uses 30 days per month for each row, like many spreadsheets."}
+            </p>
           </div>
-
-          {periodMode === "custom_days" ? (
-            <div>
-              <label className={labelClass} htmlFor={`${formId}-cd`}>
-                Days per period
-              </label>
-              <input
-                id={`${formId}-cd`}
-                type="number"
-                min={1}
-                className={inputClass}
-                value={customDays}
-                onChange={(e) =>
-                  setCustomDays(Number.parseInt(e.target.value, 10) || 1)
-                }
-              />
-            </div>
-          ) : null}
         </form>
       </div>
 
-      {methodCode === "STRAIGHT_LINE" ? (
+      {formulaCard && formulaCard.tint === "blue" ? (
         <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-3 text-sm text-blue-950">
-          <p className="font-medium">Straight line</p>
-          <p className="mt-1">
-            Depreciation for each period uses the <strong>original purchase
-            amount</strong> as the base (not prior book value).
-          </p>
+          <p className="font-medium">{formulaCard.title}</p>
+          <p className="mt-1">{formulaCard.body}</p>
           <p className="mt-2 font-mono text-xs leading-relaxed">
-            DepAmount = (PurchaseAmount × DepRate × WorkingDays) ÷ 365<br />
-            BookValue = PurchaseAmount − TotalDepAmount
+            {formulaCard.lines.map((line) => (
+              <span key={line} className="block">
+                {line}
+              </span>
+            ))}
           </p>
         </div>
       ) : null}
 
-      {methodCode === "DECLINING_BALANCE" ? (
+      {formulaCard && formulaCard.tint === "amber" ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-          <p className="font-medium">Declining balance</p>
-          <p className="mt-1">
-            Each period&rsquo;s depreciation uses the <strong>opening book value
-            </strong> for that period as the base.
-          </p>
+          <p className="font-medium">{formulaCard.title}</p>
+          <p className="mt-1">{formulaCard.body}</p>
           <p className="mt-2 font-mono text-xs leading-relaxed">
-            DepAmount = (OpeningBookValue × DepRate × WorkingDays) ÷ 365<br />
-            BookValue = OpeningBookValue − DepAmount
+            {formulaCard.lines.map((line) => (
+              <span key={line} className="block">
+                {line}
+              </span>
+            ))}
           </p>
         </div>
       ) : null}

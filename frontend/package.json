@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hrmskdbl/depreciation-core": "file:../packages/depreciation-core",
     "jose": "^6.2.2",
     "nepali-date-converter": "^3.4.0",
     "nepali-datepicker-reactjs": "^1.1.9",

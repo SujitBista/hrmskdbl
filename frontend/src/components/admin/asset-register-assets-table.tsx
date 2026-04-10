@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { tryComputeYearOneDepreciation } from "@/lib/asset-depreciation";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatAdminDateTime } from "@/lib/format-datetime";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
@@ -36,7 +37,7 @@ type DepartmentOption = { id: number; name: string };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 15;
+const COL_COUNT = 20;
 
 function formatPurchaseAmount(
   qty: string | null,
@@ -47,6 +48,10 @@ function formatPurchaseAmount(
   const r = Number.parseFloat(rate);
   if (!Number.isFinite(q) || !Number.isFinite(r)) return "—";
   const amount = q * r;
+  return formatMoney(amount);
+}
+
+function formatMoney(amount: number): string {
   return new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
@@ -248,7 +253,7 @@ export function AssetRegisterAssetsTable({
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[1320px] text-left text-sm">
+        <table className="w-full min-w-[1880px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
               <th
@@ -305,6 +310,41 @@ export function AssetRegisterAssetsTable({
               >
                 Purchase amount
               </th>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap"
+                title="From asset group"
+              >
+                Dep. method
+              </th>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
+                title="From asset group (%)"
+              >
+                Dep. rate
+              </th>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
+                title="(Purchase × rate %) × (30 days / 365); first month"
+              >
+                1st month dep.
+              </th>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
+                title="Sum of 12 months at 30 days/month"
+              >
+                Y1 total dep.
+              </th>
+              <th
+                scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
+                title="Purchase amount minus Y1 total depreciation"
+              >
+                Book value (Y1)
+              </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Saved
               </th>
@@ -348,74 +388,120 @@ export function AssetRegisterAssetsTable({
                 </td>
               </tr>
             ) : (
-              assets.map((a) => (
-                <tr key={a.id} className="bg-white hover:bg-slate-50/80">
-                  <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
-                    {a.id}
-                  </td>
-                  <td className="max-w-[200px] px-4 py-3 font-mono text-xs text-slate-900 break-all">
-                    {formatAssetCodeForDisplay(a.asset_code)}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-slate-900">
-                    {a.asset_name}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                    {a.group_code ? `${a.group_code} — ${a.group_name}` : a.group_name}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                    {a.sub_group_name ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                    {a.branch_code} — {a.branch_name}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                    {a.ownership_type}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                    {a.working_status}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                    {a.department_name ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
-                    {a.purchase_date_bs}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                    {a.purchase_qty ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                    {a.unit_rate ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                    {formatPurchaseAmount(a.purchase_qty, a.unit_rate)}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-slate-600">
-                    {formatAdminDateTime(a.created_at)}
-                  </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap">
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditTarget(a)}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(a)}
-                        className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 shadow-sm transition hover:bg-red-50"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+              assets.map((a) => {
+                const depProjection = tryComputeYearOneDepreciation({
+                  purchaseQty: a.purchase_qty,
+                  unitRate: a.unit_rate,
+                  groupDepRate: a.group_dep_rate,
+                  groupDepMethod: a.group_dep_method,
+                });
+                const depRateNum = Number.parseFloat(a.group_dep_rate ?? "");
+                const depRateDisplay =
+                  a.group_dep_rate != null &&
+                  a.group_dep_rate !== "" &&
+                  Number.isFinite(depRateNum)
+                    ? `${formatMoney(depRateNum)}%`
+                    : "—";
+
+                return (
+                  <tr key={a.id} className="bg-white hover:bg-slate-50/80">
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
+                      {a.id}
+                    </td>
+                    <td className="max-w-[200px] px-4 py-3 font-mono text-xs text-slate-900 break-all">
+                      {formatAssetCodeForDisplay(a.asset_code)}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {a.asset_name}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {a.group_code
+                        ? `${a.group_code} — ${a.group_name}`
+                        : a.group_name}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {a.sub_group_name ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {a.branch_code} — {a.branch_name}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {a.ownership_type}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {a.working_status}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {a.department_name ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
+                      {a.purchase_date_bs}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {a.purchase_qty ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {a.unit_rate ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {formatPurchaseAmount(a.purchase_qty, a.unit_rate)}
+                    </td>
+                    <td className="max-w-[140px] px-4 py-3 whitespace-normal text-slate-700">
+                      {a.group_dep_method?.trim() ? a.group_dep_method : "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {depRateDisplay}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {depProjection
+                        ? formatMoney(depProjection.firstMonthDepreciation)
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {depProjection
+                        ? formatMoney(depProjection.yearOneTotalDepreciation)
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {depProjection
+                        ? formatMoney(depProjection.bookValueAfterYearOne)
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-600">
+                      {formatAdminDateTime(a.created_at)}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditTarget(a)}
+                          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTarget(a)}
+                          className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 shadow-sm transition hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
+
+      <p className="mt-3 text-xs text-slate-500">
+        Depreciation uses the group&rsquo;s method and rate; purchase amount is
+        qty × unit rate. Projection: 12 months at 30 working days per month and a
+        365-day year (same convention as the straight-line and declining-balance
+        worksheet).
+      </p>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">

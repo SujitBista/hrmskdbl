@@ -6,6 +6,9 @@ export function adminDashboardPageTitle(pathname: string): string {
   if (pathname === "/admin/dashboard/department") {
     return "Department";
   }
+  if (pathname === "/admin/dashboard/asset-register/depreciation") {
+    return "Depreciation schedule";
+  }
   if (pathname === "/admin/dashboard/asset-register") {
     return "Asset Register";
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import type { DepreciationRunListRow } from "./depreciation-master-screen";
@@ -54,7 +54,11 @@ function formatAmount(value: string): string {
   }).format(n);
 }
 
+const DEPRECIATION_HUB =
+  "/admin/dashboard/asset-register/depreciation";
+
 export function DepreciationRunDetailScreen() {
+  const router = useRouter();
   const params = useParams();
   const runIdRaw = params.runId;
   const runId =
@@ -80,15 +84,23 @@ export function DepreciationRunDetailScreen() {
     }
     setLoading(true);
     setError(null);
+    let endLoading = true;
     try {
       const res = await fetch(`/api/admin/depreciation-runs/${runId}`, {
         cache: "no-store",
+        credentials: "same-origin",
       });
       const json = (await res.json()) as {
         run?: DepreciationRunListRow;
         details?: DetailRow[];
         error?: string;
       };
+      if (res.status === 404) {
+        // FY runs are replaced on recalculation; old bookmarked IDs disappear.
+        endLoading = false;
+        router.replace(DEPRECIATION_HUB);
+        return;
+      }
       if (!res.ok) {
         setError(json.error ?? "Could not load run.");
         setRun(null);
@@ -102,9 +114,11 @@ export function DepreciationRunDetailScreen() {
       setRun(null);
       setDetails([]);
     } finally {
-      setLoading(false);
+      if (endLoading) {
+        setLoading(false);
+      }
     }
-  }, [runId]);
+  }, [runId, router]);
 
   useEffect(() => {
     void load();

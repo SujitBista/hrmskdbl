@@ -2,6 +2,7 @@ import "./loadEnv.js";
 import cors from "cors";
 import express from "express";
 import { resolveDbErrorMessage } from "./dbErrors.js";
+import { createLogger } from "./logger.js";
 import {
   signAdminToken,
   signUserToken,
@@ -70,6 +71,8 @@ import {
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
+
+const logDepreciationEnsure = createLogger("api.depreciation.ensureCurrent");
 
 app.use(
   cors({
@@ -1224,10 +1227,11 @@ app.post("/api/admin/depreciation-runs/ensure-current", async (req, res) => {
       m.includes("quarter must") ||
       m.includes("fiscal progress date");
     if (isClientError) {
+      logDepreciationEnsure.warn("ensure-current rejected", { message: msg });
       res.status(400).json({ error: msg });
       return;
     }
-    console.error(err);
+    logDepreciationEnsure.error("ensure-current failed", err);
     res.status(500).json({ error: resolveDbErrorMessage(err, msg) });
   }
 });

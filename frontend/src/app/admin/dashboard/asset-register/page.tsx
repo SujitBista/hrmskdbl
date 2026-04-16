@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { AssetRegisterAssetsTable } from "@/components/admin/asset-register-assets-table";
 import { AssetRegisterForm } from "@/components/admin/asset-register-form";
+import { FixedAssetSectionTabs } from "@/components/admin/fixed-asset-section-tabs";
 
 export default function AdminAssetRegisterPage() {
   const [assetsRefreshKey, setAssetsRefreshKey] = useState(0);
@@ -12,6 +13,7 @@ export default function AdminAssetRegisterPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <FixedAssetSectionTabs />
       <AssetRegisterForm onSaved={onAssetSaved} />
       <AssetRegisterAssetsTable refreshKey={assetsRefreshKey} />
     </div>

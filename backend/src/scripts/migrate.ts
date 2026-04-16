@@ -139,6 +139,70 @@ async function migrate() {
   await query(`
     ALTER TABLE hrms_assets DROP COLUMN IF EXISTS department_name;
   `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS depreciation_start_date_bs VARCHAR(32);
+  `);
+  await query(`
+    UPDATE hrms_assets
+    SET depreciation_start_date_bs = purchase_date_bs
+    WHERE depreciation_start_date_bs IS NULL;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ALTER COLUMN depreciation_start_date_bs SET NOT NULL;
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_depreciation_runs (
+      id SERIAL PRIMARY KEY,
+      fiscal_year_start INTEGER NOT NULL,
+      dep_title VARCHAR(255) NOT NULL,
+      quarter_no SMALLINT NOT NULL CHECK (quarter_no >= 1 AND quarter_no <= 4),
+      months_covered SMALLINT NOT NULL CHECK (months_covered IN (3, 6, 9, 12)),
+      calculation_date_ad TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      calculation_date_bs VARCHAR(32) NOT NULL,
+      remarks TEXT,
+      is_final_for_fy BOOLEAN NOT NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'posted',
+      branch_id INTEGER REFERENCES hrms_branches(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_fy_quarter_branch
+    ON hrms_depreciation_runs (fiscal_year_start, quarter_no, COALESCE(branch_id, -1));
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_one_final_per_fy_branch
+    ON hrms_depreciation_runs (fiscal_year_start, COALESCE(branch_id, -1))
+    WHERE is_final_for_fy = true;
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_depreciation_run_details (
+      id SERIAL PRIMARY KEY,
+      depreciation_run_id INTEGER NOT NULL REFERENCES hrms_depreciation_runs(id) ON DELETE CASCADE,
+      asset_id INTEGER NOT NULL REFERENCES hrms_assets(id) ON DELETE RESTRICT,
+      fiscal_year INTEGER NOT NULL,
+      asset_name VARCHAR(255) NOT NULL,
+      dep_rate NUMERIC(12, 4) NOT NULL,
+      dep_days INTEGER NOT NULL,
+      dep_amount NUMERIC(18, 4) NOT NULL,
+      group_name VARCHAR(255) NOT NULL,
+      sub_group_name VARCHAR(255),
+      branch_name VARCHAR(255) NOT NULL,
+      book_value NUMERIC(18, 4) NOT NULL,
+      accumulate_dep NUMERIC(18, 4) NOT NULL,
+      dep_formula TEXT NOT NULL,
+      dep_start_date_bs VARCHAR(32) NOT NULL,
+      balance_amount NUMERIC(18, 4) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_depreciation_run_details_run_id
+    ON hrms_depreciation_run_details (depreciation_run_id);
+  `);
   console.log("Migration complete.");
 }
 

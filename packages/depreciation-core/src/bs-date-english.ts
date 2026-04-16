@@ -4,7 +4,8 @@ import { nepaliToEnglishNumber } from "nepali-number";
  * Normalizes a BS date string to `YYYY/MM/DD` with Arabic numerals (English BS).
  */
 export function normalizeBsDateEnglish(raw: string): string {
-  const t = raw.trim();
+  /** NFKC maps fullwidth digits/slashes (e.g. ２０８２／１２／０３) to ASCII so we split/pad correctly. */
+  const t = raw.trim().normalize("NFKC");
   if (!t) return "";
   const ascii = nepaliToEnglishNumber(t);
   const withSlashes = ascii.replace(/-/g, "/");

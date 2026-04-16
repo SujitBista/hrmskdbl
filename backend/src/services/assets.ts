@@ -15,6 +15,7 @@ export type Asset = {
   department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
+  depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
   purchase_invoice_no: string | null;
@@ -32,11 +33,10 @@ export type CreateAssetInput = {
   branch_id: number;
   department_id: number | null;
   purchase_date_bs: string;
+  depreciation_start_date_bs: string;
   purchase_qty: number | null;
   unit_rate: number | null;
   purchase_invoice_no: string | null;
-  lifetime_years: number | null;
-  salvage_value: number | null;
 };
 
 /**
@@ -135,6 +135,10 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
   }
   const purchase_date_bs =
     typeof b.purchase_date_bs === "string" ? b.purchase_date_bs.trim() : "";
+  const depreciation_start_date_bs =
+    typeof b.depreciation_start_date_bs === "string"
+      ? b.depreciation_start_date_bs.trim()
+      : "";
 
   const purchase_qty = parseOptionalNumber(b.purchase_qty);
   const unit_rate = parseOptionalNumber(b.unit_rate);
@@ -143,8 +147,6 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     b.purchase_invoice_no.trim() !== ""
       ? b.purchase_invoice_no.trim()
       : null;
-  const lifetime_years = parseOptionalInt(b.lifetime_years);
-  const salvage_value = parseOptionalNumber(b.salvage_value);
 
   if (!asset_name) {
     throw new Error("Asset name is required.");
@@ -170,6 +172,14 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
   if (!/^\d{4}\/\d{2}\/\d{2}$/.test(purchase_date_bs)) {
     throw new Error("Purchase date must be YYYY/MM/DD (Bikram Sambat).");
   }
+  if (!depreciation_start_date_bs) {
+    throw new Error("Depreciation start date is required.");
+  }
+  if (!/^\d{4}\/\d{2}\/\d{2}$/.test(depreciation_start_date_bs)) {
+    throw new Error(
+      "Depreciation start date must be YYYY/MM/DD (Bikram Sambat)."
+    );
+  }
 
   return {
     asset_name,
@@ -180,11 +190,10 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     branch_id,
     department_id,
     purchase_date_bs,
+    depreciation_start_date_bs,
     purchase_qty,
     unit_rate,
     purchase_invoice_no,
-    lifetime_years,
-    salvage_value,
   };
 }
 
@@ -197,17 +206,6 @@ function parseOptionalNumber(v: unknown): number | null {
     throw new Error("Invalid numeric value.");
   }
   return n;
-}
-
-function parseOptionalInt(v: unknown): number | null {
-  if (v === null || v === undefined || v === "") {
-    return null;
-  }
-  const n = typeof v === "number" ? v : Number.parseInt(String(v), 10);
-  if (!Number.isFinite(n)) {
-    throw new Error("Invalid integer value.");
-  }
-  return Math.floor(n);
 }
 
 async function resolveAssetRefs(
@@ -286,10 +284,10 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
     }>(
       `INSERT INTO hrms_assets (
         asset_name, group_id, sub_group_id, ownership_type, working_status,
-        branch_id, department_id, purchase_date_bs, purchase_qty, unit_rate,
-        purchase_invoice_no, lifetime_years, salvage_value
+        branch_id, department_id, purchase_date_bs, depreciation_start_date_bs,
+        purchase_qty, unit_rate, purchase_invoice_no
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, created_at::text`,
       [
         input.asset_name,
@@ -300,11 +298,10 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
         input.branch_id,
         input.department_id,
         input.purchase_date_bs,
+        input.depreciation_start_date_bs,
         input.purchase_qty,
         input.unit_rate,
         input.purchase_invoice_no,
-        input.lifetime_years,
-        input.salvage_value,
       ]
     );
 
@@ -326,6 +323,7 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
          a.ownership_type, a.working_status, a.branch_id, a.department_id,
          (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
          a.purchase_date_bs,
+         a.depreciation_start_date_bs,
          a.purchase_qty::text, a.unit_rate::text, a.purchase_invoice_no, a.lifetime_years,
          a.salvage_value::text, a.created_at::text`,
       [asset_code, row.id]
@@ -382,16 +380,16 @@ export async function updateAsset(
       branch_id = $7,
       department_id = $8,
       purchase_date_bs = $9,
-      purchase_qty = $10,
-      unit_rate = $11,
-      purchase_invoice_no = $12,
-      lifetime_years = $13,
-      salvage_value = $14
-    WHERE a.id = $15
+      depreciation_start_date_bs = $10,
+      purchase_qty = $11,
+      unit_rate = $12,
+      purchase_invoice_no = $13
+    WHERE a.id = $14
     RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
       a.ownership_type, a.working_status, a.branch_id, a.department_id,
       (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
       a.purchase_date_bs,
+      a.depreciation_start_date_bs,
       a.purchase_qty::text, a.unit_rate::text, a.purchase_invoice_no, a.lifetime_years,
       a.salvage_value::text, a.created_at::text`,
     [
@@ -404,11 +402,10 @@ export async function updateAsset(
       input.branch_id,
       input.department_id,
       input.purchase_date_bs,
+      input.depreciation_start_date_bs,
       input.purchase_qty,
       input.unit_rate,
       input.purchase_invoice_no,
-      input.lifetime_years,
-      input.salvage_value,
       id,
     ]
   );
@@ -441,6 +438,7 @@ export type AssetListRow = {
   department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
+  depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
   purchase_invoice_no: string | null;
@@ -481,6 +479,7 @@ const ASSET_LIST_SELECT = `
     a.department_id,
     d.name AS department_name,
     a.purchase_date_bs,
+    a.depreciation_start_date_bs,
     a.purchase_qty::text,
     a.unit_rate::text,
     a.purchase_invoice_no,

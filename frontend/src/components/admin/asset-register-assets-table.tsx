@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { tryComputeYearOneDepreciation } from "@/lib/asset-depreciation";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatAdminDateTime } from "@/lib/format-datetime";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
@@ -37,7 +36,7 @@ type DepartmentOption = { id: number; name: string };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 20;
+const COL_COUNT = 17;
 
 function formatPurchaseAmount(
   qty: string | null,
@@ -253,7 +252,7 @@ export function AssetRegisterAssetsTable({
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[1880px] text-left text-sm">
+        <table className="w-full min-w-[1400px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
               <th
@@ -294,6 +293,13 @@ export function AssetRegisterAssetsTable({
               </th>
               <th
                 scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap"
+                title="Used for depreciation schedules"
+              >
+                Dep. start (BS)
+              </th>
+              <th
+                scope="col"
                 className="px-4 py-3 font-medium whitespace-nowrap text-right"
               >
                 Qty
@@ -316,34 +322,6 @@ export function AssetRegisterAssetsTable({
                 title="From asset group"
               >
                 Dep. method
-              </th>
-              <th
-                scope="col"
-                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
-                title="From asset group (%)"
-              >
-                Dep. rate
-              </th>
-              <th
-                scope="col"
-                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
-                title="(Purchase × rate %) × (30 days / 365); first month"
-              >
-                1st month dep.
-              </th>
-              <th
-                scope="col"
-                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
-                title="Sum of 12 months at 30 days/month"
-              >
-                Y1 total dep.
-              </th>
-              <th
-                scope="col"
-                className="px-4 py-3 font-medium whitespace-nowrap text-right tabular-nums"
-                title="Purchase amount minus Y1 total depreciation"
-              >
-                Book value (Y1)
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Saved
@@ -389,20 +367,6 @@ export function AssetRegisterAssetsTable({
               </tr>
             ) : (
               assets.map((a) => {
-                const depProjection = tryComputeYearOneDepreciation({
-                  purchaseQty: a.purchase_qty,
-                  unitRate: a.unit_rate,
-                  groupDepRate: a.group_dep_rate,
-                  groupDepMethod: a.group_dep_method,
-                });
-                const depRateNum = Number.parseFloat(a.group_dep_rate ?? "");
-                const depRateDisplay =
-                  a.group_dep_rate != null &&
-                  a.group_dep_rate !== "" &&
-                  Number.isFinite(depRateNum)
-                    ? `${formatMoney(depRateNum)}%`
-                    : "—";
-
                 return (
                   <tr key={a.id} className="bg-white hover:bg-slate-50/80">
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
@@ -437,6 +401,9 @@ export function AssetRegisterAssetsTable({
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
                       {a.purchase_date_bs}
                     </td>
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
+                      {a.depreciation_start_date_bs ?? "—"}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
                       {a.purchase_qty ?? "—"}
                     </td>
@@ -448,24 +415,6 @@ export function AssetRegisterAssetsTable({
                     </td>
                     <td className="max-w-[140px] px-4 py-3 whitespace-normal text-slate-700">
                       {a.group_dep_method?.trim() ? a.group_dep_method : "—"}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {depRateDisplay}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {depProjection
-                        ? formatMoney(depProjection.firstMonthDepreciation)
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {depProjection
-                        ? formatMoney(depProjection.yearOneTotalDepreciation)
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {depProjection
-                        ? formatMoney(depProjection.bookValueAfterYearOne)
-                        : "—"}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                       {formatAdminDateTime(a.created_at)}
@@ -495,13 +444,6 @@ export function AssetRegisterAssetsTable({
           </tbody>
         </table>
       </div>
-
-      <p className="mt-3 text-xs text-slate-500">
-        Depreciation uses the group&rsquo;s method and rate; purchase amount is
-        qty × unit rate. Projection: 12 months at 30 working days per month and a
-        365-day year (same convention as the straight-line and declining-balance
-        worksheet).
-      </p>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">

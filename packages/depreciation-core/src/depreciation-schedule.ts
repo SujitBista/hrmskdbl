@@ -6,7 +6,10 @@
  * EXCEL_FIXED: spreadsheet-style fixed day counts (30 / 90 / 365 rules).
  */
 
-import NepaliDate from "nepali-date-converter";
+import {
+  NepaliDateCtor,
+  type NepaliDate,
+} from "./nepali-date-import.js";
 import { normalizeBsDateEnglish } from "./bs-date-english.js";
 
 const DAYS_IN_YEAR = 365;
@@ -130,7 +133,7 @@ function parseBsToNepaliDate(raw: string): NepaliDate | null {
   const n = normalizeBsDateEnglish(raw);
   if (!n) return null;
   try {
-    return new NepaliDate(n.replace(/\//g, "-"));
+    return new NepaliDateCtor(n.replace(/\//g, "-"));
   } catch {
     return null;
   }
@@ -157,29 +160,29 @@ function maxBs(a: NepaliDate, b: NepaliDate): NepaliDate {
 }
 
 function startOfMonth(nd: NepaliDate): NepaliDate {
-  return new NepaliDate(nd.getYear(), nd.getMonth(), 1);
+  return new NepaliDateCtor(nd.getYear(), nd.getMonth(), 1);
 }
 
 function endOfMonth(nd: NepaliDate): NepaliDate {
   const s = startOfMonth(nd);
-  const e = new NepaliDate(s.getYear(), s.getMonth(), 1);
+  const e = new NepaliDateCtor(s.getYear(), s.getMonth(), 1);
   e.setMonth(e.getMonth() + 1);
   e.setDate(e.getDate() - 1);
   return e;
 }
 
 function startOfBsYear(year: number): NepaliDate {
-  return new NepaliDate(year, 0, 1);
+  return new NepaliDateCtor(year, 0, 1);
 }
 
 function endOfBsYear(year: number): NepaliDate {
-  return endOfMonth(new NepaliDate(year, 11, 1));
+  return endOfMonth(new NepaliDateCtor(year, 11, 1));
 }
 
 function startOfQuarter(nd: NepaliDate): NepaliDate {
   const m = nd.getMonth();
   const qStartMonth = Math.floor(m / 3) * 3;
-  return new NepaliDate(nd.getYear(), qStartMonth, 1);
+  return new NepaliDateCtor(nd.getYear(), qStartMonth, 1);
 }
 
 /** Inclusive calendar days between two BS dates. */
@@ -192,15 +195,26 @@ export function inclusiveCalendarDays(
   return Math.floor(ms / 86400000) + 1;
 }
 
+/** Inclusive calendar days between two English BS strings (`YYYY/MM/DD`). */
+export function inclusiveCalendarDaysBetweenBs(
+  startBs: string,
+  endBs: string
+): number {
+  const start = parseBsToNepaliDate(startBs);
+  const end = parseBsToNepaliDate(endBs);
+  if (!start || !end) return 0;
+  return inclusiveCalendarDays(start, end);
+}
+
 function addDays(nd: NepaliDate, days: number): NepaliDate {
   const d = nd.toJsDate();
   d.setDate(d.getDate() + days);
-  return NepaliDate.fromAD(d);
+  return NepaliDateCtor.fromAD(d);
 }
 
 /** Add whole BS months (NepaliDate month index, same as `setMonth` delta). */
 function addBsMonths(nd: NepaliDate, delta: number): NepaliDate {
-  const x = new NepaliDate(nd.toJsDate());
+  const x = new NepaliDateCtor(nd.toJsDate());
   x.setMonth(x.getMonth() + delta);
   return x;
 }
@@ -220,7 +234,7 @@ export function firstProjectedYearEndBs(purchaseDateBs: string): string | null {
 function endOfQuarter(nd: NepaliDate): NepaliDate {
   const m = nd.getMonth();
   const qEndMonth = Math.floor(m / 3) * 3 + 2;
-  return endOfMonth(new NepaliDate(nd.getYear(), qEndMonth, 1));
+  return endOfMonth(new NepaliDateCtor(nd.getYear(), qEndMonth, 1));
 }
 
 function isFullBsQuarterSlice(
@@ -257,7 +271,7 @@ export function buildMonthlyPeriods(
   if (compareBs(from, to) > 0) return [];
 
   const periods: DepreciationPeriodSlice[] = [];
-  let periodStart = new NepaliDate(from.toJsDate());
+  let periodStart = new NepaliDateCtor(from.toJsDate());
   let idx = 1;
 
   while (compareBs(periodStart, to) <= 0) {
@@ -293,7 +307,7 @@ export function buildQuarterlyPeriods(
   if (compareBs(from, to) > 0) return [];
 
   const periods: DepreciationPeriodSlice[] = [];
-  let periodStart = new NepaliDate(from.toJsDate());
+  let periodStart = new NepaliDateCtor(from.toJsDate());
   let idx = 1;
 
   while (compareBs(periodStart, to) <= 0) {
@@ -363,7 +377,7 @@ export function buildCustomDayPeriods(
   if (compareBs(from, to) > 0) return [];
 
   const periods: DepreciationPeriodSlice[] = [];
-  let periodStart = new NepaliDate(from.toJsDate());
+  let periodStart = new NepaliDateCtor(from.toJsDate());
   let idx = 1;
 
   while (compareBs(periodStart, to) <= 0) {
@@ -427,9 +441,11 @@ export type ScheduleFromPeriodsInput = {
 /**
  * Core engine: given pre-built periods and amounts, produce rows + running book value.
  *
- * Declining balance: each period’s depreciation rate is applied only to that period’s
- * opening book value (prior period’s closing). Purchase amount is not reused after period 1.
- * Straight line: rate base is always purchase amount; carrying amount still flows opening → closing.
+ * Declining balance: period depreciation applies to the **prior period’s closing book value**
+ * (written-down value). The first period uses purchase cost as that base. Purchase cost is
+ * not reused as the dep base after period 1.
+ * Straight line: rate base is always purchase amount; closing book value is always
+ * purchase amount minus **accumulated** depreciation to date.
  */
 export function computeScheduleFromPeriods(
   input: ScheduleFromPeriodsInput
@@ -438,14 +454,17 @@ export function computeScheduleFromPeriods(
   const rateDec = depRatePercent / 100;
   const rows: DepreciationScheduleRow[] = [];
 
-  let priorClosingBookValue = roundMoney(purchaseAmount);
-  let totalDepreciation = 0;
+  const cost = roundMoney(purchaseAmount);
+  /** Closing book value carried into the next period (equals prior row’s closing). */
+  let priorPeriodClosingBookValue = cost;
+  let accumulatedDepreciation = 0;
 
   for (let i = 0; i < periods.length; i++) {
     const slice = periods[i]!;
     const wd = slice.workingDays;
 
-    const openingBookValue = priorClosingBookValue;
+    /** Book value at period start — same as prior period’s closing (for period 1, equals cost). */
+    const openingBookValue = priorPeriodClosingBookValue;
 
     if (openingBookValue <= 0) {
       rows.push({
@@ -457,17 +476,17 @@ export function computeScheduleFromPeriods(
         depRatePercent,
         workingDays: wd,
         depAmount: 0,
-        totalDepAmount: totalDepreciation,
-        closingBookValue: 0,
+        totalDepAmount: accumulatedDepreciation,
+        closingBookValue: roundMoney(Math.max(0, cost - accumulatedDepreciation)),
       });
-      priorClosingBookValue = 0;
+      priorPeriodClosingBookValue = 0;
       continue;
     }
 
     const isStraightLine = method === "STRAIGHT_LINE";
     const depBaseForFormula = isStraightLine
-      ? purchaseAmount
-      : openingBookValue;
+      ? cost
+      : priorPeriodClosingBookValue;
 
     const rawDep = (depBaseForFormula * rateDec * wd) / DAYS_IN_YEAR;
     let depAmount = roundMoney(rawDep);
@@ -475,14 +494,15 @@ export function computeScheduleFromPeriods(
       depAmount = openingBookValue;
     }
 
+    accumulatedDepreciation = roundMoney(accumulatedDepreciation + depAmount);
+
     const closingBookValue = roundMoney(
-      Math.max(0, openingBookValue - depAmount)
+      Math.max(0, cost - accumulatedDepreciation)
     );
-    totalDepreciation = roundMoney(totalDepreciation + depAmount);
 
     const depBaseAmount = isStraightLine
-      ? roundMoney(purchaseAmount)
-      : openingBookValue;
+      ? cost
+      : priorPeriodClosingBookValue;
 
     rows.push({
       period: slice.period,
@@ -493,11 +513,11 @@ export function computeScheduleFromPeriods(
       depRatePercent,
       workingDays: wd,
       depAmount,
-      totalDepAmount: totalDepreciation,
+      totalDepAmount: accumulatedDepreciation,
       closingBookValue,
     });
 
-    priorClosingBookValue = closingBookValue;
+    priorPeriodClosingBookValue = closingBookValue;
   }
 
   return rows;

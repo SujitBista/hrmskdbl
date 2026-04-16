@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
+
+import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 
 import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
 import {
@@ -77,6 +80,15 @@ export function DepreciationScheduleScreen() {
     [assets, selectedAssetId]
   );
 
+  /** Depreciation schedules use the register depreciation start date (falls back to purchase for legacy rows). */
+  const scheduleStartDateBs = useMemo(() => {
+    if (!selectedAsset) return "";
+    const raw =
+      selectedAsset.depreciation_start_date_bs?.trim() ||
+      selectedAsset.purchase_date_bs;
+    return normalizeBsDateEnglish(raw);
+  }, [selectedAsset]);
+
   const runCalculation = useCallback(() => {
     if (!selectedAsset) {
       setResult(null);
@@ -107,19 +119,19 @@ export function DepreciationScheduleScreen() {
 
     const r = computeOneYearDepreciationSchedule({
       purchaseAmount,
-      purchaseDateBs: normalizeBsDateEnglish(selectedAsset.purchase_date_bs),
+      purchaseDateBs: scheduleStartDateBs,
       depRatePercent: depRate,
       method: method as DepreciationMethodCode,
       calculationMode,
     });
     setResult(r);
-  }, [selectedAsset, calculationMode]);
+  }, [selectedAsset, calculationMode, scheduleStartDateBs]);
 
   useEffect(() => {
     if (selectedAsset) {
       runCalculation();
     }
-  }, [selectedAsset, calculationMode, runCalculation]);
+  }, [selectedAsset, calculationMode, scheduleStartDateBs, runCalculation]);
 
   const methodCode = selectedAsset
     ? parseDepreciationMethod(selectedAsset.group_dep_method)
@@ -136,7 +148,7 @@ export function DepreciationScheduleScreen() {
       return {
         title: "Straight line",
         tint: "blue" as const,
-        body: "The schedule always covers 12 projected monthly periods from the asset purchase date through the end of the 12th BS month, even if the asset is newer than one year. Each period uses the original purchase amount as the depreciation base.",
+        body: "The schedule always covers 12 projected monthly periods from the depreciation start date through the end of the 12th BS month, even if the asset is newer than one year. Each period uses the original purchase amount as the depreciation base.",
         lines: [
           `DepAmount = (PurchaseAmount × DepRate × ${isErp ? "WorkingDays" : "FixedDays"}) ÷ 365`,
           "BookValue = PurchaseAmount − TotalDepreciation (cumulative)",
@@ -147,7 +159,7 @@ export function DepreciationScheduleScreen() {
     return {
       title: "Declining balance",
       tint: "amber" as const,
-      body: "Twelve projected monthly periods from purchase through the end of the 12th BS month. Each period uses that row’s opening book value as the base.",
+      body: "Twelve projected monthly periods from the depreciation start date through the end of the 12th BS month. Each period uses that row’s opening book value as the base.",
       lines: [
         `DepAmount = (OpeningBookValue × DepRate × ${isErp ? "WorkingDays" : "FixedDays"}) ÷ 365`,
         "BookValue = OpeningBookValue − DepAmount",
@@ -158,14 +170,21 @@ export function DepreciationScheduleScreen() {
 
   return (
     <div className="flex flex-col gap-6">
+      <FixedAssetSectionTabs />
       <div>
-        <h2 className="text-lg font-semibold text-slate-900">
-          Book value depreciation schedule
+        <Link
+          href="/admin/dashboard/asset-register/depreciation"
+          className="text-sm font-medium text-emerald-800 hover:underline"
+        >
+          ← Depreciation master list
+        </Link>
+        <h2 className="mt-2 text-lg font-semibold text-slate-900">
+          Book value depreciation schedule (preview)
         </h2>
         <p className="mt-1 text-sm text-slate-600">
-          First-year projected depreciation from the register purchase date (12
-          BS months). Rates and method come from the asset group; cost and
-          purchase date from the register.
+          First-year projected depreciation from the register depreciation start
+          date (12 BS months). Rates and method come from the asset group; cost
+          and dates from the register.
         </p>
       </div>
 
@@ -218,6 +237,12 @@ export function DepreciationScheduleScreen() {
               <p className="mt-0.5 font-mono text-slate-800">
                 <span className="font-sans font-medium">Purchase date (BS):</span>{" "}
                 {normalizeBsDateEnglish(selectedAsset.purchase_date_bs) || "—"}
+              </p>
+              <p className="mt-0.5 font-mono text-slate-800">
+                <span className="font-sans font-medium">
+                  Depreciation start (BS):
+                </span>{" "}
+                {scheduleStartDateBs || "—"}
               </p>
             </div>
           ) : null}

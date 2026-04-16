@@ -48,6 +48,16 @@ import {
   updateAsset,
 } from "./services/assets.js";
 import {
+  createDepreciationRun,
+  createDepreciationRunFromMasterForm,
+  ensureDepreciationRunForCurrentFiscalYear,
+  deleteDepreciationRun,
+  getDepreciationRunById,
+  listDepreciationRuns,
+  listDetailsForRun,
+  updateDepreciationRunRemarks,
+} from "./services/depreciationRuns.js";
+import {
   clampListParams,
   createUser,
   deleteUser,
@@ -1171,6 +1181,329 @@ app.delete("/api/admin/assets/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not delete asset." });
+  }
+});
+
+app.post("/api/admin/depreciation-runs/ensure-current", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const { run, detailsInserted, skippedAssets } =
+      await ensureDepreciationRunForCurrentFiscalYear();
+    res.status(201).json({ run, detailsInserted, skippedAssets });
+  } catch (err) {
+    const msg =
+      err instanceof Error ? err.message : "Could not ensure current run.";
+    const m = msg.toLowerCase();
+    const isClientError =
+      m.includes("already exists") ||
+      m.includes("not eligible") ||
+      m.includes("books closed") ||
+      m.includes("no depreciation rows") ||
+      m.includes("invalid fiscal year") ||
+      m.includes("invalid branch") ||
+      m.includes("invalid nepali month index") ||
+      m.includes("invalid calculation date") ||
+      m.includes("calculation date (bs) is required") ||
+      m.includes("required") ||
+      m.includes("select a valid") ||
+      m.includes("does not match") ||
+      m.includes("could not derive") ||
+      m.includes("could not convert the server date") ||
+      m.includes("branch not found") ||
+      m.includes("quarter must") ||
+      m.includes("fiscal progress date");
+    if (isClientError) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: resolveDbErrorMessage(err, msg) });
+  }
+});
+
+app.get("/api/admin/depreciation-runs", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const fyRaw = req.query.fiscalYearStart;
+    const fiscalYearStart =
+      typeof fyRaw === "string" && fyRaw.trim() !== ""
+        ? Number.parseInt(fyRaw, 10)
+        : undefined;
+    const runs = await listDepreciationRuns({
+      fiscalYearStart:
+        fiscalYearStart !== undefined && Number.isFinite(fiscalYearStart)
+          ? fiscalYearStart
+          : undefined,
+    });
+    res.json({ runs });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list depreciation runs." });
+  }
+});
+
+app.post("/api/admin/depreciation-runs", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const body = req.body as Record<string, unknown> | undefined;
+
+    const nepaliMonthRaw = body?.nepaliMonth;
+    const hasNepaliMonth =
+      typeof nepaliMonthRaw === "string" && nepaliMonthRaw.trim() !== "";
+    const fiscalYearStartRaw = body?.fiscalYearStart;
+    const hasLegacyFiscal =
+      fiscalYearStartRaw !== undefined &&
+      fiscalYearStartRaw !== null &&
+      fiscalYearStartRaw !== "";
+
+    if (hasNepaliMonth && !hasLegacyFiscal) {
+      const calculationDateBs =
+        typeof body?.calculationDateBs === "string"
+          ? body.calculationDateBs
+          : "";
+      const remarks =
+        body?.remarks === null || body?.remarks === undefined
+          ? null
+          : typeof body?.remarks === "string"
+            ? body.remarks
+            : null;
+      const depTitle =
+        body?.depTitle === null || body?.depTitle === undefined
+          ? null
+          : typeof body?.depTitle === "string"
+            ? body.depTitle
+            : null;
+
+      try {
+        const { run, detailsInserted, skippedAssets } =
+          await createDepreciationRunFromMasterForm({
+            calculationDateBs,
+            nepaliMonth: String(nepaliMonthRaw).trim(),
+            depTitle,
+            remarks,
+          });
+        res.status(201).json({ run, detailsInserted, skippedAssets });
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Could not create run.";
+        if (
+          msg.includes("already exists") ||
+          msg.includes("not eligible") ||
+          msg.includes("Books closed") ||
+          msg.includes("No depreciation rows") ||
+          msg.includes("Invalid") ||
+          msg.includes("required") ||
+          msg.includes("Select") ||
+          msg.includes("does not match")
+        ) {
+          res.status(400).json({ error: msg });
+          return;
+        }
+        console.error(err);
+        res.status(500).json({ error: "Could not create depreciation run." });
+      }
+      return;
+    }
+
+    const fiscalYearStart = Number(body?.fiscalYearStart);
+    const quarterNo = Number(body?.quarterNo);
+    const fiscalProgressBs =
+      typeof body?.fiscalProgressBs === "string" ? body.fiscalProgressBs : "";
+    const remarks =
+      body?.remarks === null || body?.remarks === undefined
+        ? null
+        : typeof body?.remarks === "string"
+          ? body.remarks
+          : null;
+    let branchId: number | null | undefined;
+    if (body?.branchId === null || body?.branchId === "") {
+      branchId = null;
+    } else if (body?.branchId !== undefined) {
+      const b = Number(body.branchId);
+      branchId = Number.isFinite(b) ? Math.floor(b) : undefined;
+    }
+    const calculationMode =
+      typeof body?.calculationMode === "string"
+        ? body.calculationMode
+        : undefined;
+    const calculationDateBs =
+      typeof body?.calculationDateBs === "string"
+        ? body.calculationDateBs
+        : undefined;
+    const depTitle =
+      body?.depTitle === null || body?.depTitle === undefined
+        ? null
+        : typeof body?.depTitle === "string"
+          ? body.depTitle
+          : null;
+
+    if (!Number.isFinite(fiscalYearStart) || fiscalYearStart < 2000) {
+      res.status(400).json({ error: "A valid fiscal year start is required." });
+      return;
+    }
+    if (![1, 2, 3, 4].includes(quarterNo)) {
+      res.status(400).json({ error: "Quarter must be 1, 2, 3, or 4." });
+      return;
+    }
+
+    const { run, detailsInserted, skippedAssets } = await createDepreciationRun({
+      fiscalYearStart,
+      quarterNo: quarterNo as 1 | 2 | 3 | 4,
+      fiscalProgressBs,
+      remarks,
+      depTitle,
+      branchId,
+      calculationMode:
+        calculationMode === "ERP_ACCURATE" || calculationMode === "EXCEL_FIXED"
+          ? calculationMode
+          : undefined,
+      calculationDateBs,
+    });
+    res.status(201).json({ run, detailsInserted, skippedAssets });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Could not create run.";
+    if (
+      msg.includes("already exists") ||
+      msg.includes("not eligible") ||
+      msg.includes("Books closed") ||
+      msg.includes("No depreciation rows") ||
+      msg.includes("Invalid") ||
+      msg.includes("not found")
+    ) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not create depreciation run." });
+  }
+});
+
+app.get("/api/admin/depreciation-runs/:id", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+
+  try {
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid run id." });
+      return;
+    }
+    const run = await getDepreciationRunById(id);
+    if (!run) {
+      res.status(404).json({ error: "Depreciation run not found." });
+      return;
+    }
+    const details = await listDetailsForRun(id);
+    res.json({ run, details });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not load depreciation run." });
+  }
+});
+
+app.patch("/api/admin/depreciation-runs/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid run id." });
+      return;
+    }
+
+    const remarksRaw = req.body?.remarks;
+    const remarks =
+      remarksRaw === null || remarksRaw === undefined
+        ? null
+        : typeof remarksRaw === "string"
+          ? remarksRaw
+          : undefined;
+    if (remarks === undefined) {
+      res.status(400).json({ error: "Remarks field is required (or null)." });
+      return;
+    }
+
+    const run = await updateDepreciationRunRemarks(id, remarks);
+    if (!run) {
+      res.status(404).json({ error: "Depreciation run not found." });
+      return;
+    }
+    res.json({ run });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not update depreciation run." });
+  }
+});
+
+app.delete("/api/admin/depreciation-runs/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid run id." });
+      return;
+    }
+
+    const deleted = await deleteDepreciationRun(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Depreciation run not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not delete depreciation run." });
   }
 });
 

@@ -21,3 +21,32 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+/* nepali-datepicker-reactjs — align popup with app emerald chrome */
+.nepali-date-picker .calender {
+  border: 1px solid rgb(15 81 50 / 0.18);
+  border-radius: 0.75rem;
+  box-shadow:
+    0 10px 15px -3px rgb(15 23 42 / 0.08),
+    0 4px 6px -4px rgb(15 23 42 / 0.06);
+  padding: 0.75rem 0.875rem;
+}
+
+.nepali-date-picker .calender .calendar-controller .control.month,
+.nepali-date-picker .calender .calendar-controller .control.year {
+  border-color: rgb(15 81 50 / 0.12);
+  border-radius: 0.375rem;
+}
+
+.nepali-date-picker .calender .calendar-controller .control .drop-down li.active {
+  background: var(--brand-primary);
+  color: #fff;
+}
+
+.nepali-date-picker .calender td.month-day.today::before {
+  background-color: var(--brand-primary);
+}
+
+.nepali-date-picker .calender td.month-day.selected::after {
+  background: var(--brand-primary);
+}

@@ -75,13 +75,12 @@ export function AssetRegisterForm({
   const [departmentId, setDepartmentId] = useState<number | "">("");
 
   const [purchaseDateBs, setPurchaseDateBs] = useState("");
+  const [depreciationStartDateBs, setDepreciationStartDateBs] = useState("");
   /** NepaliDatePicker is client-only — avoids SSR/client DOM mismatches. */
   const [purchaseDatePickerReady, setPurchaseDatePickerReady] = useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
-  const [lifetimeYears, setLifetimeYears] = useState("");
-  const [salvageValue, setSalvageValue] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -318,6 +317,10 @@ export function AssetRegisterForm({
       setError("Select a purchase date.");
       return;
     }
+    if (!depreciationStartDateBs.trim()) {
+      setError("Select a depreciation start date.");
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = {
@@ -330,18 +333,13 @@ export function AssetRegisterForm({
         branch_id: branchId,
         department_id: departmentId === "" ? null : departmentId,
         purchase_date_bs: purchaseDateBs.trim(),
+        depreciation_start_date_bs: depreciationStartDateBs.trim(),
         purchase_qty:
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
         unit_rate:
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
-        lifetime_years:
-          lifetimeYears.trim() === ""
-            ? null
-            : Number.parseInt(lifetimeYears, 10),
-        salvage_value:
-          salvageValue.trim() === "" ? null : Number.parseFloat(salvageValue),
       };
 
       const res = await fetch("/api/admin/assets", {
@@ -374,11 +372,10 @@ export function AssetRegisterForm({
       setBranchId(branches[0]?.id ?? "");
       setDepartmentId("");
       setPurchaseDateBs("");
+      setDepreciationStartDateBs("");
       setPurchaseQty("");
       setUnitRate("");
       setPurchaseInvoiceNo("");
-      setLifetimeYears("");
-      setSalvageValue("");
     } catch {
       setError("Something went wrong. Try again.");
     } finally {
@@ -698,8 +695,62 @@ export function AssetRegisterForm({
                 {purchaseDatePickerReady ? (
                   <NepaliDatePicker
                     value={bsDateToPickerValue(purchaseDateBs)}
+                    onChange={(value) => {
+                      const next = normalizeBsDateEnglish(value);
+                      setPurchaseDateBs(next);
+                      setDepreciationStartDateBs((prev) =>
+                        prev.trim() === "" ? next : prev
+                      );
+                    }}
+                    inputClassName={`${inputClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}
+                    className="w-full"
+                    options={{
+                      calenderLocale: "ne",
+                      valueLocale: "en",
+                      closeOnSelect: true,
+                    }}
+                  />
+                ) : (
+                  <div
+                    className={`${inputClass} relative z-10 bg-transparent`}
+                  />
+                )}
+              </div>
+            </div>
+            <div className="sm:col-span-2 lg:col-span-3">
+              <span
+                id={`${formId}-depreciation-bs-label`}
+                className="block text-sm font-medium text-slate-700"
+              >
+                Depreciation start date
+              </span>
+              <p
+                id={`${formId}-depreciation-bs-hint`}
+                className="mt-0.5 text-xs text-slate-500"
+              >
+                Bikram Sambat — used for depreciation schedules (defaults to
+                purchase date when you first select purchase date; adjust if
+                different).
+              </p>
+              <div
+                className="relative mt-1 w-full max-w-md"
+                aria-labelledby={`${formId}-depreciation-bs-label`}
+                aria-describedby={`${formId}-depreciation-bs-hint`}
+              >
+                <div
+                  className="pointer-events-none absolute inset-0 z-0 flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm tabular-nums"
+                >
+                  {depreciationStartDateBs ? (
+                    depreciationStartDateBs
+                  ) : (
+                    <span className="text-slate-400">Click to select date</span>
+                  )}
+                </div>
+                {purchaseDatePickerReady ? (
+                  <NepaliDatePicker
+                    value={bsDateToPickerValue(depreciationStartDateBs)}
                     onChange={(value) =>
-                      setPurchaseDateBs(normalizeBsDateEnglish(value))
+                      setDepreciationStartDateBs(normalizeBsDateEnglish(value))
                     }
                     inputClassName={`${inputClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}
                     className="w-full"
@@ -790,44 +841,6 @@ export function AssetRegisterForm({
                 onChange={(ev) => setPurchaseInvoiceNo(ev.target.value)}
                 className={inputClass}
                 placeholder="e.g. INV-2024-0142"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor={`${formId}-lifetime-years`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Useful life (years)
-              </label>
-              <input
-                id={`${formId}-lifetime-years`}
-                type="number"
-                min={0}
-                step="1"
-                inputMode="numeric"
-                value={lifetimeYears}
-                onChange={(ev) => setLifetimeYears(ev.target.value)}
-                className={inputClass}
-                placeholder="e.g. 5"
-              />
-            </div>
-            <div className="sm:col-span-2 lg:col-span-1">
-              <label
-                htmlFor={`${formId}-salvage-value`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Salvage value
-              </label>
-              <input
-                id={`${formId}-salvage-value`}
-                type="number"
-                min={0}
-                step="0.01"
-                inputMode="decimal"
-                value={salvageValue}
-                onChange={(ev) => setSalvageValue(ev.target.value)}
-                className={inputClass}
-                placeholder="Estimated residual value"
               />
             </div>
           </div>

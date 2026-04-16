@@ -18,6 +18,7 @@ export type AssetRegisterRow = {
   department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
+  depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
   purchase_invoice_no: string | null;

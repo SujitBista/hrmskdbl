@@ -86,7 +86,7 @@ export function DepreciationScheduleGrid({
             </dd>
           </div>
           <div>
-            <dt className="text-slate-500">First year from (purchase date)</dt>
+            <dt className="text-slate-500">First year from (depreciation start)</dt>
             <dd className="font-mono text-slate-900">
               {summary.calculationFromBs}
             </dd>
@@ -120,10 +120,22 @@ export function DepreciationScheduleGrid({
 
       <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm">
         <table className="min-w-[1180px] border-collapse text-sm">
-          <caption className="caption-bottom px-2 py-2 text-left text-xs text-slate-600">
-            Book value after each period: opening book value minus period
-            depreciation equals closing book value (straight line uses purchase
-            as the dep base; declining balance uses opening book value).
+          <caption className="caption-bottom space-y-1 px-2 py-2 text-left text-xs text-slate-600">
+            <p>
+              <span className="font-medium text-slate-700">Closing</span> ={" "}
+              <span className="font-medium text-slate-700">purchase amount</span>{" "}
+              − <span className="font-medium text-slate-700">total dep</span> (same
+              as opening − dep amount for this row only). Declining balance: dep
+              base is prior closing (period 1 uses cost).
+            </p>
+            <p>
+              Period 2+ <span className="font-medium text-slate-700">opening</span>{" "}
+              already includes prior depreciation (it is the previous
+              closing). Closing is{" "}
+              <span className="font-medium text-slate-700">not</span> opening −
+              total dep — that would remove earlier months twice. Use opening −
+              this row&rsquo;s dep only, or purchase amount − total dep.
+            </p>
           </caption>
           <thead>
             <tr className="bg-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-800">
@@ -148,8 +160,9 @@ export function DepreciationScheduleGrid({
               <th
                 scope="col"
                 className="border border-slate-300 px-2 py-2 text-right"
+                title="Written-down value at the start of this period. From period 2 onward, this equals the previous row’s closing (already net of earlier depreciation)."
               >
-                Opening book value
+                Opening (WDV)
               </th>
               <th
                 scope="col"
@@ -178,6 +191,7 @@ export function DepreciationScheduleGrid({
               <th
                 scope="col"
                 className="border border-slate-300 px-2 py-2 text-right"
+                title="Cumulative depreciation from period 1 through this row. Compare to purchase amount in the summary — purchase minus this total equals closing."
               >
                 Total dep
               </th>

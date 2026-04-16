@@ -69,13 +69,12 @@ export function AssetRegisterEditDialog({
   const [branchId, setBranchId] = useState<number | "">("");
   const [departmentId, setDepartmentId] = useState<number | "">("");
   const [purchaseDateBs, setPurchaseDateBs] = useState("");
+  const [depreciationStartDateBs, setDepreciationStartDateBs] = useState("");
   const [purchaseDatePickerReady, setPurchaseDatePickerReady] =
     useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
-  const [lifetimeYears, setLifetimeYears] = useState("");
-  const [salvageValue, setSalvageValue] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,13 +97,12 @@ export function AssetRegisterEditDialog({
         asset.department_id != null ? asset.department_id : ""
       );
       setPurchaseDateBs(asset.purchase_date_bs);
+      setDepreciationStartDateBs(
+        asset.depreciation_start_date_bs ?? asset.purchase_date_bs
+      );
       setPurchaseQty(asset.purchase_qty ?? "");
       setUnitRate(asset.unit_rate ?? "");
       setPurchaseInvoiceNo(asset.purchase_invoice_no ?? "");
-      setLifetimeYears(
-        asset.lifetime_years != null ? String(asset.lifetime_years) : ""
-      );
-      setSalvageValue(asset.salvage_value ?? "");
       setError(null);
       el.showModal();
     } else {
@@ -173,6 +171,10 @@ export function AssetRegisterEditDialog({
       setError("Select a purchase date.");
       return;
     }
+    if (!depreciationStartDateBs.trim()) {
+      setError("Select a depreciation start date.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -186,18 +188,13 @@ export function AssetRegisterEditDialog({
         branch_id: branchId,
         department_id: departmentId === "" ? null : departmentId,
         purchase_date_bs: purchaseDateBs.trim(),
+        depreciation_start_date_bs: depreciationStartDateBs.trim(),
         purchase_qty:
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
         unit_rate:
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
-        lifetime_years:
-          lifetimeYears.trim() === ""
-            ? null
-            : Number.parseInt(lifetimeYears, 10),
-        salvage_value:
-          salvageValue.trim() === "" ? null : Number.parseFloat(salvageValue),
       };
 
       const res = await fetch(`/api/admin/assets/${asset.id}`, {
@@ -461,8 +458,48 @@ export function AssetRegisterEditDialog({
               {purchaseDatePickerReady ? (
                 <NepaliDatePicker
                   value={bsDateToPickerValue(purchaseDateBs)}
+                  onChange={(value) => {
+                    const next = normalizeBsDateEnglish(value);
+                    setPurchaseDateBs(next);
+                    setDepreciationStartDateBs((prev) =>
+                      prev.trim() === "" ? next : prev
+                    );
+                  }}
+                  inputClassName={`${fieldClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}
+                  className="w-full"
+                  options={{
+                    calenderLocale: "ne",
+                    valueLocale: "en",
+                    closeOnSelect: true,
+                  }}
+                />
+              ) : (
+                <div className={`${fieldClass} relative z-10 bg-transparent`} />
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <span className="block text-sm font-medium text-slate-700">
+              Depreciation start date (Bikram Sambat)
+            </span>
+            <p className="text-xs text-slate-500">
+              Used for depreciation schedules. Defaults when purchase date changes
+              only if this field is empty.
+            </p>
+            <div className="relative mt-1 w-full max-w-md">
+              <div className="pointer-events-none absolute inset-0 z-0 flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm tabular-nums">
+                {depreciationStartDateBs ? (
+                  depreciationStartDateBs
+                ) : (
+                  <span className="text-slate-400">Click to select date</span>
+                )}
+              </div>
+              {purchaseDatePickerReady ? (
+                <NepaliDatePicker
+                  value={bsDateToPickerValue(depreciationStartDateBs)}
                   onChange={(value) =>
-                    setPurchaseDateBs(normalizeBsDateEnglish(value))
+                    setDepreciationStartDateBs(normalizeBsDateEnglish(value))
                   }
                   inputClassName={`${fieldClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}
                   className="w-full"
@@ -547,42 +584,6 @@ export function AssetRegisterEditDialog({
                 autoComplete="off"
                 value={purchaseInvoiceNo}
                 onChange={(e) => setPurchaseInvoiceNo(e.target.value)}
-                className={fieldClass}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor={`${formId}-life`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Useful life (years)
-              </label>
-              <input
-                id={`${formId}-life`}
-                type="number"
-                min={0}
-                step="1"
-                inputMode="numeric"
-                value={lifetimeYears}
-                onChange={(e) => setLifetimeYears(e.target.value)}
-                className={fieldClass}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor={`${formId}-salv`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Salvage value
-              </label>
-              <input
-                id={`${formId}-salv`}
-                type="number"
-                min={0}
-                step="0.01"
-                inputMode="decimal"
-                value={salvageValue}
-                onChange={(e) => setSalvageValue(e.target.value)}
                 className={fieldClass}
               />
             </div>

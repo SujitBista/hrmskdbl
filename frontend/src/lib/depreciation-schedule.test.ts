@@ -6,6 +6,7 @@ import {
   buildExcelFixedDecliningSchedule,
   buildExcelFixedStraightLineSchedule,
   buildQuarterlyPeriods,
+  computeAssetQuarterCumulative,
   computeDepreciationSchedule,
   computeOneYearDepreciationSchedule,
   computeScheduleFromPeriods,
@@ -357,5 +358,59 @@ describe("calculation modes (100,500 @ 25%, first-year projection)", () => {
       const drift = Math.abs(purchaseAmount - (totalDepreciation + currentBookValue));
       expect(drift).toBeLessThanOrEqual(0.02);
     }
+  });
+});
+
+describe("computeAssetQuarterCumulative", () => {
+  /** Shrawan 1 FY 2082 — cumulative DepDays match fiscal quarter ends. */
+  const depStart = "2082/04/01";
+
+  it("uses inclusive cumulative calendar days through each quarter end", () => {
+    const base = {
+      purchaseAmount: 100_000,
+      depreciationStartBs: depStart,
+      depRatePercent: 10,
+      method: "STRAIGHT_LINE" as const,
+      fiscalYearStart: 2082,
+    };
+
+    const d1 = computeAssetQuarterCumulative({ ...base, quarter: 1 });
+    const d2 = computeAssetQuarterCumulative({ ...base, quarter: 2 });
+    const d3 = computeAssetQuarterCumulative({ ...base, quarter: 3 });
+    const d4 = computeAssetQuarterCumulative({ ...base, quarter: 4 });
+
+    expect(d1.ok && d2.ok && d3.ok && d4.ok).toBe(true);
+    if (!d1.ok || !d2.ok || !d3.ok || !d4.ok) return;
+
+    expect(d1.detail.depDays).toBe(93);
+    expect(d2.detail.depDays).toBe(182);
+    expect(d3.detail.depDays).toBe(271);
+    expect(d4.detail.depDays).toBe(365);
+
+    expect(d1.detail.accumulateDep).toBeGreaterThan(0);
+    expect(d2.detail.accumulateDep).toBeGreaterThan(d1.detail.accumulateDep);
+    expect(d3.detail.accumulateDep).toBeGreaterThan(d2.detail.accumulateDep);
+    expect(d4.detail.accumulateDep).toBeGreaterThan(d3.detail.accumulateDep);
+
+    expect(d1.detail.depAmount).toBe(d1.detail.accumulateDep);
+    expect(d2.detail.depAmount).toBeCloseTo(
+      d2.detail.accumulateDep - d1.detail.accumulateDep,
+      2
+    );
+  });
+
+  it("returns zero days when depreciation starts after quarter end", () => {
+    const r = computeAssetQuarterCumulative({
+      purchaseAmount: 50_000,
+      depreciationStartBs: "2083/04/01",
+      depRatePercent: 10,
+      method: "STRAIGHT_LINE",
+      fiscalYearStart: 2082,
+      quarter: 1,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.detail.depDays).toBe(0);
+    expect(r.detail.accumulateDep).toBe(0);
   });
 });

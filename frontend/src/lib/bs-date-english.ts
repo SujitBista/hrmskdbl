@@ -5,7 +5,8 @@ import { nepaliToEnglishNumber } from "nepali-number";
  * Accepts values from the Nepali datepicker (`-` separator) or Nepali digits.
  */
 export function normalizeBsDateEnglish(raw: string): string {
-  const t = raw.trim();
+  /** NFKC maps fullwidth digits/slashes (e.g. ２０８２／１２／０３) to ASCII so we split/pad correctly. */
+  const t = raw.trim().normalize("NFKC");
   if (!t) return "";
   const ascii = nepaliToEnglishNumber(t);
   const withSlashes = ascii.replace(/-/g, "/");

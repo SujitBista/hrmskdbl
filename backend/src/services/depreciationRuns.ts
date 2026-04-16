@@ -1,4 +1,7 @@
 import { pool, query } from "../db.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("depreciationRuns");
 import {
   bsDateFromJsDate,
   compareBsDateString,
@@ -277,6 +280,15 @@ export async function createDepreciationRun(
   const assets = await loadAssetsForRun(branchId);
   const skippedAssets: DepreciationSkippedAsset[] = [];
 
+  log.debug("createDepreciationRun start", {
+    fiscalYearStart: fy,
+    quarterNo,
+    branchId,
+    assetCount: assets.length,
+    calculationDateBs,
+    fiscalProgressBs: progressBs,
+  });
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -419,6 +431,11 @@ export async function createDepreciationRun(
     }
 
     await client.query("COMMIT");
+    log.info("createDepreciationRun committed", {
+      runId: run.id,
+      detailsInserted,
+      skippedCount: skippedAssets.length,
+    });
     return { run, detailsInserted, skippedAssets };
   } catch (err) {
     try {
@@ -426,6 +443,11 @@ export async function createDepreciationRun(
     } catch {
       /* ignore */
     }
+    log.error("createDepreciationRun failed (rolled back)", err, {
+      fiscalYearStart: fy,
+      quarterNo,
+      branchId,
+    });
     throw err;
   } finally {
     client.release();
@@ -514,6 +536,10 @@ export async function ensureDepreciationRunForCurrentFiscalYear(): Promise<{
   if (nepaliMonth === undefined) {
     throw new Error("Invalid Nepali month index for today’s date.");
   }
+  log.debug("ensureDepreciationRunForCurrentFiscalYear", {
+    calculationDateBs: calcBs,
+    nepaliMonth,
+  });
   return createDepreciationRunFromMasterForm({
     calculationDateBs: calcBs,
     nepaliMonth,

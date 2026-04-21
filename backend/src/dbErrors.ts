@@ -28,6 +28,13 @@ export function resolveDbErrorMessage(err: unknown, fallback: string): string {
   if (code === "3D000") {
     return "Database does not exist. Create it or fix DATABASE_URL.";
   }
+  if (
+    code === "23505" &&
+    (/hrms_assets_asset_code|asset_code/i.test(msg) ||
+      /duplicate key.*asset_code/i.test(msg))
+  ) {
+    return "This asset code is already in use.";
+  }
 
   return fallback;
 }

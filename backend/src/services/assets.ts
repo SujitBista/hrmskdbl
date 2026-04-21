@@ -37,6 +37,8 @@ export type CreateAssetInput = {
   purchase_qty: number | null;
   unit_rate: number | null;
   purchase_invoice_no: string | null;
+  /** Legacy / manual code; omit or null to auto-generate SKDBL/… */
+  asset_code: string | null;
 };
 
 /**
@@ -148,6 +150,20 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
       ? b.purchase_invoice_no.trim()
       : null;
 
+  let asset_code: string | null = null;
+  if (b.asset_code !== null && b.asset_code !== undefined && b.asset_code !== "") {
+    if (typeof b.asset_code !== "string") {
+      throw new Error("Invalid asset code.");
+    }
+    const t = b.asset_code.trim();
+    if (t !== "") {
+      if (t.length > 256) {
+        throw new Error("Asset code must be at most 256 characters.");
+      }
+      asset_code = t;
+    }
+  }
+
   if (!asset_name) {
     throw new Error("Asset name is required.");
   }
@@ -194,7 +210,24 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     purchase_qty,
     unit_rate,
     purchase_invoice_no,
+    asset_code,
   };
+}
+
+function resolveAssetCodeForRow(
+  input: CreateAssetInput,
+  hrmsAssetId: number,
+  refs: { branch_code: string; group_code: string }
+): string {
+  if (input.asset_code != null) {
+    return input.asset_code;
+  }
+  return buildAssetCode({
+    hrmsAssetId,
+    branchCode: refs.branch_code,
+    assetGroupCode: refs.group_code,
+    purchaseDateBs: input.purchase_date_bs,
+  });
 }
 
 function parseOptionalNumber(v: unknown): number | null {
@@ -310,12 +343,7 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
       throw new Error("Failed to create asset.");
     }
 
-    const asset_code = buildAssetCode({
-      hrmsAssetId: row.id,
-      branchCode: refs.branch_code,
-      assetGroupCode: refs.group_code,
-      purchaseDateBs: input.purchase_date_bs,
-    });
+    const asset_code = resolveAssetCodeForRow(input, row.id, refs);
 
     const updated = await client.query<Asset>(
       `UPDATE hrms_assets AS a SET asset_code = $1 WHERE a.id = $2
@@ -362,12 +390,7 @@ export async function updateAsset(
 
   await assertDepartmentExists(input.department_id);
   const refs = await resolveAssetRefs(input);
-  const asset_code = buildAssetCode({
-    hrmsAssetId: id,
-    branchCode: refs.branch_code,
-    assetGroupCode: refs.group_code,
-    purchaseDateBs: input.purchase_date_bs,
-  });
+  const asset_code = resolveAssetCodeForRow(input, id, refs);
 
   const result = await query<Asset>(
     `UPDATE hrms_assets AS a SET

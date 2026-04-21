@@ -4,6 +4,7 @@
  * Monetary amounts use the same monthly ERP (actual calendar days) engine as the register.
  */
 
+import { normalizeBsDateEnglish } from "./bs-date-english.js";
 import {
   computeDepreciationSchedule,
   depreciationMethodLabel,
@@ -15,9 +16,52 @@ import {
 import { NepaliDateCtor } from "./nepali-date-import.js";
 import {
   compareBsDateString,
+  fiscalQuarterEndBs,
   fiscalYearEndBs,
   fiscalYearStartBs,
 } from "./fiscal-nepal.js";
+
+/** How far into the fiscal year depreciation is measured (stored on each run). */
+export type DepreciationScopeMode = "FY_END" | "AS_OF_DATE";
+
+export function parseDepreciationScopeMode(
+  raw: string | null | undefined
+): DepreciationScopeMode | null {
+  if (raw == null || String(raw).trim() === "") return null;
+  const u = String(raw).trim().toUpperCase().replace(/-/g, "_");
+  if (u === "FY_END" || u === "FULL_FISCAL_YEAR") return "FY_END";
+  if (u === "AS_OF_DATE" || u === "ASOFDATE" || u === "AS_OF_TODAY") {
+    return "AS_OF_DATE";
+  }
+  return null;
+}
+
+function minBsDate(a: string, b: string): string {
+  return compareBsDateString(a, b) <= 0 ? a : b;
+}
+
+function maxBsDate(a: string, b: string): string {
+  return compareBsDateString(a, b) >= 0 ? a : b;
+}
+
+function isValidBsDateString(bs: string): boolean {
+  const n = normalizeBsDateEnglish(bs.trim());
+  if (!n) return false;
+  try {
+    void new NepaliDateCtor(n.replace(/\//g, "-"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type LifetimeDepreciationTimeline = {
+  openingBookValueOfFY: number;
+  priorYearsDepAmount: number;
+  thisYearDepAmount: number;
+  accumulatedDep: number;
+  closingBookValue: number;
+};
 
 export type ComputedQuarterAssetDetail = {
   depDays: number;
@@ -26,6 +70,8 @@ export type ComputedQuarterAssetDetail = {
   bookValue: number;
   balanceAmount: number;
   depFormula: string;
+  /** Prior FY + selected FY slice; matches `depAmount` / `accumulateDep` / `bookValue`. */
+  erpTimeline: LifetimeDepreciationTimeline;
 };
 
 function cumulativeDepThrough(
@@ -96,12 +142,168 @@ function dayBeforeBs(bs: string): string | null {
   }
 }
 
+function clampDepreciationAmounts(
+  purchaseAmount: number,
+  priorYearsDepAmount: number,
+  thisYearDepAmount: number
+): LifetimeDepreciationTimeline {
+  const cost = roundMoney(purchaseAmount);
+  const priorClamped = roundMoney(Math.min(Math.max(priorYearsDepAmount, 0), cost));
+  const openingBookValueOfFY = roundMoney(Math.max(0, cost - priorClamped));
+  const thisYearClamped = roundMoney(
+    Math.min(Math.max(thisYearDepAmount, 0), openingBookValueOfFY)
+  );
+  const accumulatedDep = roundMoney(
+    Math.min(cost, priorClamped + thisYearClamped)
+  );
+  const closingBookValue = roundMoney(Math.max(0, cost - accumulatedDep));
+  return {
+    openingBookValueOfFY,
+    priorYearsDepAmount: priorClamped,
+    thisYearDepAmount: thisYearClamped,
+    accumulatedDep,
+    closingBookValue,
+  };
+}
+
 /**
- * Fiscal-year DepDays = inclusive days from max(depreciation start, FY Shrawan 1) to fiscal year end.
- * dep_amount = current fiscal-year depreciation only. For declining-balance, this
- * uses opening WDV carried from previous years (no fiscal-year reset to original cost).
- * accumulate_dep = lifetime depreciation from depreciation start through fiscal year end.
- * Book value = cost minus lifetime accumulated depreciation. Always uses actual calendar days (ERP_ACCURATE); `calculationMode` is ignored.
+ * Lifetime depreciation through an inclusive BS end date within the active fiscal year
+ * (quarter end, fiscal year end, or an as-of date capped to fiscal year end).
+ */
+export function buildDepreciationTimelineToPeriodEnd(params: {
+  purchaseAmount: number;
+  depreciationStartBs: string;
+  depRatePercent: number;
+  method: DepreciationMethodCode;
+  fiscalYearStart: number;
+  /** Inclusive end of the depreciation window for this run (ERP slice). */
+  selectedPeriodEndBs: string;
+}):
+  | { ok: true; timeline: LifetimeDepreciationTimeline }
+  | { ok: false; errors: string[] } {
+  const depStart =
+    normalizeBsDateEnglish(params.depreciationStartBs.trim()) ?? "";
+  if (!depStart || !isValidBsDateString(depStart)) {
+    return {
+      ok: false,
+      errors: ["Depreciation start date is not a valid Bikram Sambat date."],
+    };
+  }
+  const fyStartBs = fiscalYearStartBs(params.fiscalYearStart);
+  const selectedPeriodEndBs = params.selectedPeriodEndBs.trim();
+
+  if (compareBsDateString(depStart, selectedPeriodEndBs) > 0) {
+    return {
+      ok: true,
+      timeline: clampDepreciationAmounts(params.purchaseAmount, 0, 0),
+    };
+  }
+
+  /**
+   * As-of date strictly before Shrawan 1: no depreciation falls in this FY slice;
+   * lifetime through that date is entirely “prior” to the active FY.
+   */
+  if (compareBsDateString(selectedPeriodEndBs, fyStartBs) < 0) {
+    const lifetimeThrough = cumulativeDepThrough({
+      purchaseAmount: params.purchaseAmount,
+      depreciationStartBs: depStart,
+      depRatePercent: params.depRatePercent,
+      method: params.method,
+      effectiveFromBs: depStart,
+      toBs: selectedPeriodEndBs,
+    });
+    if (!lifetimeThrough.ok) {
+      return { ok: false, errors: lifetimeThrough.errors };
+    }
+    const acc = roundMoney(lifetimeThrough.totalDep);
+    return {
+      ok: true,
+      timeline: clampDepreciationAmounts(params.purchaseAmount, acc, 0),
+    };
+  }
+
+  let priorYearsDepAmount = 0;
+  if (compareBsDateString(depStart, fyStartBs) < 0) {
+    const priorYearsEndBs = dayBeforeBs(fyStartBs);
+    if (priorYearsEndBs !== null) {
+      const priorYears = cumulativeDepThrough({
+        purchaseAmount: params.purchaseAmount,
+        depreciationStartBs: depStart,
+        depRatePercent: params.depRatePercent,
+        method: params.method,
+        effectiveFromBs: depStart,
+        toBs: priorYearsEndBs,
+      });
+      if (!priorYears.ok) {
+        return { ok: false, errors: priorYears.errors };
+      }
+      priorYearsDepAmount = roundMoney(priorYears.totalDep);
+    }
+  }
+
+  const lifetimeThroughSelected = cumulativeDepThrough({
+    purchaseAmount: params.purchaseAmount,
+    depreciationStartBs: depStart,
+    depRatePercent: params.depRatePercent,
+    method: params.method,
+    effectiveFromBs: depStart,
+    toBs: selectedPeriodEndBs,
+  });
+  if (!lifetimeThroughSelected.ok) {
+    return { ok: false, errors: lifetimeThroughSelected.errors };
+  }
+
+  const thisYearDepAmount = roundMoney(
+    lifetimeThroughSelected.totalDep - priorYearsDepAmount
+  );
+  return {
+    ok: true,
+    timeline: clampDepreciationAmounts(
+      params.purchaseAmount,
+      priorYearsDepAmount,
+      thisYearDepAmount
+    ),
+  };
+}
+
+export function buildDepreciationTimeline(params: {
+  purchaseAmount: number;
+  depreciationStartBs: string;
+  depRatePercent: number;
+  method: DepreciationMethodCode;
+  fiscalYearStart: number;
+  quarter: 1 | 2 | 3 | 4;
+}):
+  | { ok: true; timeline: LifetimeDepreciationTimeline }
+  | { ok: false; errors: string[] } {
+  const selectedPeriodEndBs =
+    params.quarter === 4
+      ? fiscalYearEndBs(params.fiscalYearStart)
+      : fiscalQuarterEndBs(params.fiscalYearStart, params.quarter);
+  return buildDepreciationTimelineToPeriodEnd({
+    purchaseAmount: params.purchaseAmount,
+    depreciationStartBs: params.depreciationStartBs,
+    depRatePercent: params.depRatePercent,
+    method: params.method,
+    fiscalYearStart: params.fiscalYearStart,
+    selectedPeriodEndBs,
+  });
+}
+
+/**
+ * Alias of {@link buildDepreciationTimeline} for ERP “lifetime through selected FY/quarter end”.
+ */
+export const calculateLifetimeDepreciationUpToFY = buildDepreciationTimeline;
+
+/**
+ * Fiscal-year DepDays = inclusive calendar days from max(depreciation start, FY Shrawan 1)
+ * through the run’s depreciation end date (quarter end, FY end, or as-of date capped to FY end).
+ *
+ * dep_amount = current fiscal-year depreciation only through that end date. For declining-balance,
+ * opening WDV is carried from previous years.
+ * accumulate_dep = lifetime depreciation from depreciation start through that same end date.
+ * Book value = cost minus lifetime accumulated depreciation (clamped). ERP calendar days;
+ * `calculationMode` is ignored.
  */
 export function computeAssetQuarterCumulative(params: {
   purchaseAmount: number;
@@ -112,15 +314,64 @@ export function computeAssetQuarterCumulative(params: {
   calculationMode?: DepreciationCalculationMode;
   fiscalYearStart: number;
   quarter: 1 | 2 | 3 | 4;
+  /**
+   * FY_END: same as before — period end is the selected fiscal quarter’s end (Q4 = fiscal year end).
+   * AS_OF_DATE: period end is min(calculation date, fiscal year end); `asOfDateBs` is required.
+   */
+  depreciationScopeMode?: DepreciationScopeMode;
+  /** Required when `depreciationScopeMode` is AS_OF_DATE (English BS YYYY/MM/DD). */
+  asOfDateBs?: string | null;
 }): { ok: true; detail: ComputedQuarterAssetDetail } | { ok: false; errors: string[] } {
   void params.calculationMode;
 
-  const fiscalEndBs = fiscalYearEndBs(params.fiscalYearStart);
+  const scopeMode: DepreciationScopeMode =
+    params.depreciationScopeMode ?? "FY_END";
   const fyStartBs = fiscalYearStartBs(params.fiscalYearStart);
-  const depStart = params.depreciationStartBs.trim();
+  const fyEndBs = fiscalYearEndBs(params.fiscalYearStart);
+  const depStart =
+    normalizeBsDateEnglish(params.depreciationStartBs.trim()) ?? "";
+  if (!depStart || !isValidBsDateString(depStart)) {
+    return {
+      ok: false,
+      errors: ["Depreciation start date is not a valid Bikram Sambat date."],
+    };
+  }
 
-  if (compareBsDateString(depStart, fiscalEndBs) > 0) {
+  let selectedPeriodEndBs: string;
+  if (scopeMode === "AS_OF_DATE") {
+    const rawAsOf = params.asOfDateBs;
+    if (rawAsOf == null || String(rawAsOf).trim() === "") {
+      return {
+        ok: false,
+        errors: [
+          "As-of calculation date (BS) is required for AS_OF_DATE depreciation scope.",
+        ],
+      };
+    }
+    const asOfNorm = normalizeBsDateEnglish(String(rawAsOf).trim());
+    if (!asOfNorm || !isValidBsDateString(asOfNorm)) {
+      return {
+        ok: false,
+        errors: ["As-of calculation date is not a valid Bikram Sambat date."],
+      };
+    }
+    selectedPeriodEndBs = minBsDate(asOfNorm, fyEndBs);
+  } else {
+    selectedPeriodEndBs =
+      params.quarter === 4
+        ? fyEndBs
+        : fiscalQuarterEndBs(params.fiscalYearStart, params.quarter);
+  }
+
+  if (compareBsDateString(depStart, selectedPeriodEndBs) > 0) {
     const cost = roundMoney(params.purchaseAmount);
+    const idleTimeline: LifetimeDepreciationTimeline = {
+      openingBookValueOfFY: cost,
+      priorYearsDepAmount: 0,
+      thisYearDepAmount: 0,
+      accumulatedDep: 0,
+      closingBookValue: cost,
+    };
     return {
       ok: true,
       detail: {
@@ -130,74 +381,43 @@ export function computeAssetQuarterCumulative(params: {
         bookValue: cost,
         balanceAmount: cost,
         depFormula: formatDepFormula(params.method, params.depRatePercent),
+        erpTimeline: idleTimeline,
       },
     };
   }
 
-  const effectiveFromBs =
-    compareBsDateString(depStart, fyStartBs) > 0 ? depStart : fyStartBs;
+  const effectiveFromBs = maxBsDate(depStart, fyStartBs);
 
-  const depDays = inclusiveCalendarDaysBetweenBs(effectiveFromBs, fiscalEndBs);
+  let depDays = 0;
+  if (compareBsDateString(effectiveFromBs, selectedPeriodEndBs) <= 0) {
+    depDays = inclusiveCalendarDaysBetweenBs(
+      effectiveFromBs,
+      selectedPeriodEndBs
+    );
+  }
 
-  const currentFiscalYear = cumulativeDepThrough({
+  const timeline = buildDepreciationTimelineToPeriodEnd({
     purchaseAmount: params.purchaseAmount,
     depreciationStartBs: depStart,
     depRatePercent: params.depRatePercent,
     method: params.method,
-    effectiveFromBs,
-    toBs: fiscalEndBs,
+    fiscalYearStart: params.fiscalYearStart,
+    selectedPeriodEndBs,
   });
-
-  if (!currentFiscalYear.ok) {
-    return { ok: false, errors: currentFiscalYear.errors };
+  if (!timeline.ok) {
+    return { ok: false, errors: timeline.errors };
   }
-
-  const lifetimeDepreciation = cumulativeDepThrough({
-    purchaseAmount: params.purchaseAmount,
-    depreciationStartBs: depStart,
-    depRatePercent: params.depRatePercent,
-    method: params.method,
-    effectiveFromBs: depStart,
-    toBs: fiscalEndBs,
-  });
-
-  if (!lifetimeDepreciation.ok) {
-    return { ok: false, errors: lifetimeDepreciation.errors };
-  }
-
-  const accumulateDep = lifetimeDepreciation.totalDep;
-  let depAmount = currentFiscalYear.totalDep;
-  if (
-    params.method === "DECLINING_BALANCE" &&
-    compareBsDateString(depStart, fyStartBs) < 0
-  ) {
-    const priorDay = dayBeforeBs(fyStartBs);
-    if (priorDay !== null) {
-      const lifetimeBeforeFy = cumulativeDepThrough({
-        purchaseAmount: params.purchaseAmount,
-        depreciationStartBs: depStart,
-        depRatePercent: params.depRatePercent,
-        method: params.method,
-        effectiveFromBs: depStart,
-        toBs: priorDay,
-      });
-      if (!lifetimeBeforeFy.ok) {
-        return { ok: false, errors: lifetimeBeforeFy.errors };
-      }
-      depAmount = roundMoney(accumulateDep - lifetimeBeforeFy.totalDep);
-    }
-  }
-  const bookValue = lifetimeDepreciation.closingBookValue;
 
   return {
     ok: true,
     detail: {
       depDays,
-      depAmount,
-      accumulateDep,
-      bookValue,
-      balanceAmount: bookValue,
+      depAmount: timeline.timeline.thisYearDepAmount,
+      accumulateDep: timeline.timeline.accumulatedDep,
+      bookValue: timeline.timeline.closingBookValue,
+      balanceAmount: timeline.timeline.closingBookValue,
       depFormula: formatDepFormula(params.method, params.depRatePercent),
+      erpTimeline: timeline.timeline,
     },
   };
 }

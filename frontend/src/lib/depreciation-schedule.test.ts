@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildErpAccurateDecliningSchedule,
   buildErpAccurateStraightLineSchedule,
+  buildDepreciationTimeline,
+  calculateLifetimeDepreciationUpToFY,
   buildExcelFixedDecliningSchedule,
   buildExcelFixedStraightLineSchedule,
   buildQuarterlyPeriods,
@@ -10,10 +12,28 @@ import {
   computeDepreciationSchedule,
   computeOneYearDepreciationSchedule,
   computeScheduleFromPeriods,
+  depreciationCommencementFromRegister,
   firstProjectedYearEndBs,
   parseCalculationMode,
   parseDepreciationMethod,
 } from "./depreciation-schedule";
+
+describe("depreciationCommencementFromRegister", () => {
+  it("uses the later of purchase and depreciation start", () => {
+    expect(
+      depreciationCommencementFromRegister("2080/06/01", "2080/01/01")
+    ).toBe("2080/06/01");
+    expect(
+      depreciationCommencementFromRegister("2080/01/01", "2080/06/01")
+    ).toBe("2080/06/01");
+  });
+
+  it("falls back to purchase when depreciation start is missing", () => {
+    expect(depreciationCommencementFromRegister("2080/03/15", null)).toBe(
+      "2080/03/15"
+    );
+  });
+});
 
 describe("parseCalculationMode", () => {
   it("maps common labels", () => {
@@ -392,11 +412,35 @@ describe("computeAssetQuarterCumulative", () => {
     expect(d3.detail.accumulateDep).toBeGreaterThan(d2.detail.accumulateDep);
     expect(d4.detail.accumulateDep).toBeGreaterThan(d3.detail.accumulateDep);
 
+    // First fiscal year of the asset (dep start = FY Shrawan 1): no prior FY
+    // depreciation, so lifetime-to-date equals this-FY-to-date only.
     expect(d1.detail.depAmount).toBe(d1.detail.accumulateDep);
-    expect(d2.detail.depAmount).toBeCloseTo(
-      d2.detail.accumulateDep - d1.detail.accumulateDep,
+    expect(d2.detail.depAmount).toBeGreaterThan(d1.detail.depAmount);
+    expect(d2.detail.depAmount).toBe(d2.detail.accumulateDep);
+    expect(d3.detail.depAmount).toBe(d3.detail.accumulateDep);
+    expect(d4.detail.depAmount).toBe(d4.detail.accumulateDep);
+    expect(d1.detail.erpTimeline.accumulatedDep).toBe(d1.detail.accumulateDep);
+    expect(d1.detail.erpTimeline.thisYearDepAmount).toBe(d1.detail.depAmount);
+  });
+
+  it("this FY dep amount is only selected FY slice; accumulate is lifetime when prior FYs exist", () => {
+    const base = {
+      purchaseAmount: 100_000,
+      depreciationStartBs: "2082/04/01",
+      depRatePercent: 10,
+      method: "STRAIGHT_LINE" as const,
+      fiscalYearStart: 2083,
+    };
+    const d4 = computeAssetQuarterCumulative({ ...base, quarter: 4 });
+    expect(d4.ok).toBe(true);
+    if (!d4.ok) return;
+    expect(d4.detail.depAmount).toBeLessThan(d4.detail.accumulateDep);
+    expect(d4.detail.bookValue).toBeCloseTo(
+      base.purchaseAmount - d4.detail.accumulateDep,
       2
     );
+    expect(d4.detail.erpTimeline.priorYearsDepAmount).toBeGreaterThan(0);
+    expect(d4.detail.accumulateDep).toBe(d4.detail.erpTimeline.accumulatedDep);
   });
 
   it("returns zero days when depreciation starts after quarter end", () => {
@@ -412,5 +456,111 @@ describe("computeAssetQuarterCumulative", () => {
     if (!r.ok) return;
     expect(r.detail.depDays).toBe(0);
     expect(r.detail.accumulateDep).toBe(0);
+  });
+
+  it("AS_OF_DATE: this-year dep and lifetime are through calculation date, before Q4 FY end", () => {
+    const base = {
+      purchaseAmount: 100_000,
+      depreciationStartBs: "2082/04/01",
+      depRatePercent: 10,
+      method: "STRAIGHT_LINE" as const,
+      fiscalYearStart: 2082,
+      quarter: 4 as const,
+    };
+    const full = computeAssetQuarterCumulative({ ...base });
+    const asOf = computeAssetQuarterCumulative({
+      ...base,
+      depreciationScopeMode: "AS_OF_DATE",
+      asOfDateBs: "2082/06/15",
+    });
+    expect(full.ok && asOf.ok).toBe(true);
+    if (!full.ok || !asOf.ok) return;
+    expect(asOf.detail.depDays).toBeLessThan(full.detail.depDays);
+    expect(asOf.detail.depAmount).toBeLessThan(full.detail.depAmount);
+    expect(asOf.detail.accumulateDep).toBeLessThan(full.detail.accumulateDep);
+    expect(asOf.detail.bookValue).toBeGreaterThan(full.detail.bookValue);
+  });
+});
+
+describe("buildDepreciationTimeline", () => {
+  it("exposes calculateLifetimeDepreciationUpToFY as an alias", () => {
+    expect(calculateLifetimeDepreciationUpToFY).toBe(buildDepreciationTimeline);
+  });
+
+  it("rejects an invalid depreciation start BS string", () => {
+    const r = buildDepreciationTimeline({
+      purchaseAmount: 10_000,
+      depreciationStartBs: "not-a-date",
+      depRatePercent: 10,
+      method: "STRAIGHT_LINE",
+      fiscalYearStart: 2082,
+      quarter: 4,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("splits prior-years and current FY depreciation without double counting", () => {
+    const result = buildDepreciationTimeline({
+      purchaseAmount: 13_728.64,
+      depreciationStartBs: "2081/04/01",
+      depRatePercent: 25,
+      method: "DECLINING_BALANCE",
+      fiscalYearStart: 2082,
+      quarter: 4,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const t = result.timeline;
+    expect(t.priorYearsDepAmount).toBeGreaterThan(0);
+    expect(t.thisYearDepAmount).toBeGreaterThan(0);
+    expect(t.accumulatedDep).toBeCloseTo(
+      t.priorYearsDepAmount + t.thisYearDepAmount,
+      2
+    );
+    expect(t.accumulatedDep).toBeLessThanOrEqual(13_728.64);
+    expect(t.closingBookValue).toBeGreaterThanOrEqual(0);
+    expect(t.closingBookValue).toBeCloseTo(13_728.64 - t.accumulatedDep, 2);
+    expect(t.thisYearDepAmount).toBeLessThan(t.accumulatedDep);
+  });
+
+  it("declining balance: lifetime accumulated through a later FY includes all prior FYs (ERP roll-forward)", () => {
+    const result = buildDepreciationTimeline({
+      purchaseAmount: 13_728.64,
+      depreciationStartBs: "2082/04/01",
+      depRatePercent: 25,
+      method: "DECLINING_BALANCE",
+      fiscalYearStart: 2084,
+      quarter: 4,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const t = result.timeline;
+    expect(t.priorYearsDepAmount).toBeCloseTo(5445.7, 2);
+    expect(t.thisYearDepAmount).toBeCloseTo(1849.2, 2);
+    expect(t.accumulatedDep).toBeCloseTo(7294.9, 2);
+    expect(t.accumulatedDep).toBeCloseTo(
+      t.priorYearsDepAmount + t.thisYearDepAmount,
+      2
+    );
+    expect(t.closingBookValue).toBeCloseTo(13_728.64 - t.accumulatedDep, 2);
+    expect(t.thisYearDepAmount).toBeLessThan(t.accumulatedDep);
+    expect(t.accumulatedDep).toBeLessThanOrEqual(13_728.64);
+    expect(t.closingBookValue).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns full-asset depreciation cap correctly", () => {
+    const result = buildDepreciationTimeline({
+      purchaseAmount: 13_728.64,
+      depreciationStartBs: "2070/04/01",
+      depRatePercent: 25,
+      method: "STRAIGHT_LINE",
+      fiscalYearStart: 2082,
+      quarter: 4,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.timeline.accumulatedDep).toBeLessThanOrEqual(13_728.64);
+    expect(result.timeline.closingBookValue).toBeGreaterThanOrEqual(0);
   });
 });

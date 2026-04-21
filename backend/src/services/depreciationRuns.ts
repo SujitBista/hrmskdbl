@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { pool, query } from "../db.js";
 import { createLogger } from "../logger.js";
 
@@ -6,8 +7,11 @@ import {
   bsDateFromJsDate,
   compareBsDateString,
   computeAssetQuarterCumulative,
+  depreciationCommencementFromRegister,
   fiscalQuarterEndBs,
   fiscalQuarterFromNepaliCalendarMonthIndex,
+  fiscalYearEndBs,
+  fiscalYearStartBs,
   fiscalYearStartFromBsDate,
   NEPALI_MONTHS_ORDERED_EN,
   nepaliCalendarMonthIndexFromBs,
@@ -15,7 +19,9 @@ import {
   nepaliMonthNameToCalendarIndex,
   normalizeBsDateEnglish,
   parseDepreciationMethod,
+  parseDepreciationScopeMode,
   type DepreciationCalculationMode,
+  type DepreciationScopeMode,
 } from "@hrmskdbl/depreciation-core";
 
 export type DepreciationRunRow = {
@@ -26,6 +32,8 @@ export type DepreciationRunRow = {
   months_covered: number;
   calculation_date_ad: string;
   calculation_date_bs: string;
+  /** FY_END = through selected quarter / FY end; AS_OF_DATE = through calculation date (capped to FY end). */
+  depreciation_scope_mode: DepreciationScopeMode;
   remarks: string | null;
   is_final_for_fy: boolean;
   status: string;
@@ -53,6 +61,8 @@ export type DepreciationRunDetailRow = {
   accumulate_dep: string;
   dep_formula: string;
   dep_start_date_bs: string;
+  /** Current `hrms_assets.depreciation_start_date_bs` (register field; updates when asset is edited). */
+  register_depreciation_start_bs: string;
   balance_amount: string;
   created_at: string;
 };
@@ -133,7 +143,8 @@ export async function listDepreciationRuns(params: {
   ) {
     const r = await query<DepreciationRunRow>(
       `SELECT id, fiscal_year_start, dep_title, quarter_no, months_covered,
-        calculation_date_ad::text, calculation_date_bs, remarks, is_final_for_fy,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode,
+        remarks, is_final_for_fy,
         status, branch_id, created_at::text, updated_at::text
        FROM hrms_depreciation_runs
        WHERE fiscal_year_start = $1
@@ -144,7 +155,8 @@ export async function listDepreciationRuns(params: {
   }
   const r = await query<DepreciationRunRow>(
     `SELECT id, fiscal_year_start, dep_title, quarter_no, months_covered,
-      calculation_date_ad::text, calculation_date_bs, remarks, is_final_for_fy,
+      calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode,
+      remarks, is_final_for_fy,
       status, branch_id, created_at::text, updated_at::text
      FROM hrms_depreciation_runs
      ORDER BY fiscal_year_start DESC, quarter_no ASC, id DESC`
@@ -157,7 +169,8 @@ export async function getDepreciationRunById(
 ): Promise<DepreciationRunRow | null> {
   const r = await query<DepreciationRunRow>(
     `SELECT id, fiscal_year_start, dep_title, quarter_no, months_covered,
-      calculation_date_ad::text, calculation_date_bs, remarks, is_final_for_fy,
+      calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode,
+      remarks, is_final_for_fy,
       status, branch_id, created_at::text, updated_at::text
      FROM hrms_depreciation_runs WHERE id = $1`,
     [id]
@@ -174,7 +187,9 @@ export async function listDetailsForRun(
       (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS purchase_price,
       d.dep_rate::text, d.dep_days, d.dep_amount::text, d.group_name, d.sub_group_name,
       d.branch_name, d.book_value::text, d.accumulate_dep::text, d.dep_formula,
-      d.dep_start_date_bs, d.balance_amount::text, d.created_at::text
+      d.dep_start_date_bs,
+      a.depreciation_start_date_bs AS register_depreciation_start_bs,
+      d.balance_amount::text, d.created_at::text
      FROM hrms_depreciation_run_details d
      INNER JOIN hrms_assets a ON a.id = d.asset_id
      WHERE d.depreciation_run_id = $1
@@ -199,9 +214,143 @@ export type CreateDepreciationRunInput = {
   depTitle?: string | null;
   branchId?: number | null;
   calculationMode?: DepreciationCalculationMode;
+  /**
+   * FY_END: through selected fiscal quarter end (existing behavior).
+   * AS_OF_DATE: through calculation date (min with fiscal year end).
+   */
+  depreciationScopeMode?: DepreciationScopeMode;
   /** Optional BS date for the run; defaults to server “today” in BS. */
   calculationDateBs?: string | null;
 };
+
+async function insertDepreciationDetailRows(
+  client: PoolClient,
+  args: {
+    runId: number;
+    fiscalYearStart: number;
+    quarterNo: 1 | 2 | 3 | 4;
+    calculationDateBs: string;
+    depreciationScopeMode: DepreciationScopeMode;
+    calculationMode: DepreciationCalculationMode;
+    assets: AssetDepRow[];
+  }
+): Promise<{ detailsInserted: number; skippedAssets: DepreciationSkippedAsset[] }> {
+  const {
+    runId,
+    fiscalYearStart: fy,
+    quarterNo,
+    calculationDateBs,
+    depreciationScopeMode,
+    calculationMode,
+    assets,
+  } = args;
+
+  const skippedAssets: DepreciationSkippedAsset[] = [];
+  let detailsInserted = 0;
+  let loggedVerificationAsset = false;
+
+  for (const a of assets) {
+    const purchaseAmount = parsePurchaseAmount(a.purchase_qty, a.unit_rate);
+    const depRate = parseDepRatePercent(a.group_dep_rate);
+    const method = parseDepreciationMethod(a.group_dep_method);
+    const depreciationStartBs = depreciationCommencementFromRegister(
+      a.purchase_date_bs,
+      a.depreciation_start_date_bs
+    );
+
+    if (
+      purchaseAmount === null ||
+      depRate === null ||
+      method === null ||
+      purchaseAmount <= 0 ||
+      depRate <= 0 ||
+      !depreciationStartBs
+    ) {
+      const reason =
+        purchaseAmount === null || purchaseAmount <= 0
+          ? "Invalid or missing purchase cost (qty × unit rate must be > 0)."
+          : depRate === null || depRate <= 0
+            ? "Asset group has no valid depreciation rate (> 0)."
+            : method === null
+              ? "Asset group depreciation method is missing or not recognized (use Straight Line or Declining Balance)."
+              : !depreciationStartBs
+                ? "Missing or invalid depreciation start / purchase date (BS)."
+                : "Asset skipped (validation).";
+      skippedAssets.push({
+        asset_id: a.id,
+        asset_name: a.asset_name,
+        reason,
+      });
+      continue;
+    }
+
+    const computed = computeAssetQuarterCumulative({
+      purchaseAmount,
+      depreciationStartBs,
+      depRatePercent: depRate,
+      method,
+      calculationMode,
+      fiscalYearStart: fy,
+      quarter: quarterNo,
+      depreciationScopeMode,
+      asOfDateBs:
+        depreciationScopeMode === "AS_OF_DATE" ? calculationDateBs : null,
+    });
+
+    if (!computed.ok) {
+      skippedAssets.push({
+        asset_id: a.id,
+        asset_name: a.asset_name,
+        reason: computed.errors.join("; "),
+      });
+      continue;
+    }
+
+    const d = computed.detail;
+    if (!loggedVerificationAsset) {
+      const t = d.erpTimeline;
+      log.info("depreciation verification sample", {
+        assetId: a.id,
+        purchasePrice: purchaseAmount,
+        openingBookValueOfFY: t.openingBookValueOfFY,
+        priorYearsDepAmount: t.priorYearsDepAmount,
+        thisYearDepAmount: t.thisYearDepAmount,
+        accumulatedDep: t.accumulatedDep,
+        bookValue: t.closingBookValue,
+      });
+      loggedVerificationAsset = true;
+    }
+
+    await client.query(
+      `INSERT INTO hrms_depreciation_run_details (
+        depreciation_run_id, asset_id, fiscal_year, asset_name, dep_rate,
+        dep_days, dep_amount, group_name, sub_group_name, branch_name,
+        book_value, accumulate_dep, dep_formula, dep_start_date_bs,
+        balance_amount
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [
+        runId,
+        a.id,
+        fy,
+        a.asset_name,
+        depRate,
+        d.depDays,
+        d.depAmount,
+        a.group_name,
+        a.sub_group_name,
+        a.branch_name,
+        d.bookValue,
+        d.accumulateDep,
+        d.depFormula,
+        depreciationStartBs,
+        d.balanceAmount,
+      ]
+    );
+    detailsInserted += 1;
+  }
+
+  return { detailsInserted, skippedAssets };
+}
 
 export async function createDepreciationRun(
   input: CreateDepreciationRunInput
@@ -258,15 +407,27 @@ export async function createDepreciationRun(
   const calculationMode: DepreciationCalculationMode =
     input.calculationMode ?? "ERP_ACCURATE";
 
+  const depreciationScopeMode: DepreciationScopeMode =
+    input.depreciationScopeMode === "FY_END" ||
+    input.depreciationScopeMode === "AS_OF_DATE"
+      ? input.depreciationScopeMode
+      : parseDepreciationScopeMode(
+          typeof input.depreciationScopeMode === "string"
+            ? input.depreciationScopeMode
+            : null
+        ) ?? "FY_END";
+
   const customTitle = input.depTitle?.trim();
   const depTitle =
     customTitle && customTitle.length > 0
       ? customTitle.slice(0, 255)
-      : "Fiscal Year Depreciation";
+      : depreciationScopeMode === "AS_OF_DATE"
+        ? "Depreciation (as of calculation date)"
+        : "Fiscal Year Depreciation";
   const monthsCovered = 12;
-  const isFinal = true;
+  const isFinal = depreciationScopeMode === "FY_END";
 
-  const calculationDateBs = (() => {
+  let calculationDateBs = (() => {
     const raw = input.calculationDateBs;
     if (raw != null && String(raw).trim() !== "") {
       return normalizeBsDateEnglish(String(raw).trim());
@@ -277,8 +438,20 @@ export async function createDepreciationRun(
     throw new Error("Invalid calculation date (BS).");
   }
 
+  const fyStartBs = fiscalYearStartBs(fy);
+  const fyEndBs = fiscalYearEndBs(fy);
+  if (depreciationScopeMode === "AS_OF_DATE") {
+    if (compareBsDateString(calculationDateBs, fyStartBs) < 0) {
+      throw new Error(
+        "Calculation date must be on or after the fiscal year start (Shrawan 1) for as-of-date runs."
+      );
+    }
+    if (compareBsDateString(calculationDateBs, fyEndBs) > 0) {
+      calculationDateBs = fyEndBs;
+    }
+  }
+
   const assets = await loadAssetsForRun(branchId);
-  const skippedAssets: DepreciationSkippedAsset[] = [];
 
   log.debug("createDepreciationRun start", {
     fiscalYearStart: fy,
@@ -287,6 +460,7 @@ export async function createDepreciationRun(
     assetCount: assets.length,
     calculationDateBs,
     fiscalProgressBs: progressBs,
+    depreciationScopeMode,
   });
 
   const client = await pool.connect();
@@ -302,24 +476,43 @@ export async function createDepreciationRun(
       [fy, branchId]
     );
 
-    /** One FY sheet per branch scope; replace so new/changed assets are included. */
-    await client.query(
-      `DELETE FROM hrms_depreciation_runs
-       WHERE fiscal_year_start = $1
-         AND COALESCE(branch_id, -1) = COALESCE($2, -1)`,
-      [fy, branchId]
-    );
+    /**
+     * Replacement policy (see also partial unique indexes on `hrms_depreciation_runs`):
+     * - FY_END: keep a single “full quarter / FY” sheet per fiscal year + branch by deleting
+     *   any prior FY_END run in that scope before insert (recalculate replaces the sheet).
+     * - AS_OF_DATE: keep multiple dated snapshots per FY + branch; only replace a row that
+     *   matches the same stored calculation_date_bs so re-running the same as-of date is idempotent
+     *   without deleting other as-of snapshots.
+     */
+    if (depreciationScopeMode === "FY_END") {
+      await client.query(
+        `DELETE FROM hrms_depreciation_runs
+         WHERE fiscal_year_start = $1
+           AND COALESCE(branch_id, -1) = COALESCE($2, -1)
+           AND depreciation_scope_mode = 'FY_END'`,
+        [fy, branchId]
+      );
+    } else {
+      await client.query(
+        `DELETE FROM hrms_depreciation_runs
+         WHERE fiscal_year_start = $1
+           AND COALESCE(branch_id, -1) = COALESCE($2, -1)
+           AND depreciation_scope_mode = 'AS_OF_DATE'
+           AND calculation_date_bs = $3`,
+        [fy, branchId, calculationDateBs]
+      );
+    }
 
     const ins = await client.query<DepreciationRunRow>(
       `INSERT INTO hrms_depreciation_runs (
         fiscal_year_start, dep_title, quarter_no, months_covered,
-        calculation_date_ad, calculation_date_bs, remarks, is_final_for_fy,
+        calculation_date_ad, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
         status, branch_id, updated_at
       ) VALUES (
-        $1, $2, $3, $4, NOW(), $5, $6, $7, 'posted', $8, NOW()
+        $1, $2, $3, $4, NOW(), $5, $6, $7, $8, 'posted', $9, NOW()
       )
       RETURNING id, fiscal_year_start, dep_title, quarter_no, months_covered,
-        calculation_date_ad::text, calculation_date_bs, remarks, is_final_for_fy,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
         status, branch_id, created_at::text, updated_at::text`,
       [
         fy,
@@ -327,6 +520,7 @@ export async function createDepreciationRun(
         quarterNo,
         monthsCovered,
         calculationDateBs,
+        depreciationScopeMode,
         input.remarks?.trim() ?? null,
         isFinal,
         branchId,
@@ -338,90 +532,18 @@ export async function createDepreciationRun(
       throw new Error("Failed to create depreciation run.");
     }
 
-    let detailsInserted = 0;
-
-    for (const a of assets) {
-      const purchaseAmount = parsePurchaseAmount(a.purchase_qty, a.unit_rate);
-      const depRate = parseDepRatePercent(a.group_dep_rate);
-      const method = parseDepreciationMethod(a.group_dep_method);
-      const depStartRaw =
-        a.depreciation_start_date_bs?.trim() || a.purchase_date_bs;
-      const depreciationStartBs = normalizeBsDateEnglish(depStartRaw);
-
-      if (
-        purchaseAmount === null ||
-        depRate === null ||
-        method === null ||
-        purchaseAmount <= 0 ||
-        depRate <= 0 ||
-        !depreciationStartBs
-      ) {
-        const reason =
-          purchaseAmount === null || purchaseAmount <= 0
-            ? "Invalid or missing purchase cost (qty × unit rate must be > 0)."
-            : depRate === null || depRate <= 0
-              ? "Asset group has no valid depreciation rate (> 0)."
-              : method === null
-                ? "Asset group depreciation method is missing or not recognized (use Straight Line or Declining Balance)."
-                : !depreciationStartBs
-                  ? "Missing or invalid depreciation start / purchase date (BS)."
-                  : "Asset skipped (validation).";
-        skippedAssets.push({
-          asset_id: a.id,
-          asset_name: a.asset_name,
-          reason,
-        });
-        continue;
-      }
-
-      const computed = computeAssetQuarterCumulative({
-        purchaseAmount,
-        depreciationStartBs,
-        depRatePercent: depRate,
-        method,
-        calculationMode,
+    const { detailsInserted, skippedAssets } = await insertDepreciationDetailRows(
+      client,
+      {
+        runId: run.id,
         fiscalYearStart: fy,
-        quarter: quarterNo,
-      });
-
-      if (!computed.ok) {
-        skippedAssets.push({
-          asset_id: a.id,
-          asset_name: a.asset_name,
-          reason: computed.errors.join("; "),
-        });
-        continue;
+        quarterNo,
+        calculationDateBs,
+        depreciationScopeMode,
+        calculationMode,
+        assets,
       }
-
-      const d = computed.detail;
-
-      await client.query(
-        `INSERT INTO hrms_depreciation_run_details (
-          depreciation_run_id, asset_id, fiscal_year, asset_name, dep_rate,
-          dep_days, dep_amount, group_name, sub_group_name, branch_name,
-          book_value, accumulate_dep, dep_formula, dep_start_date_bs,
-          balance_amount
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-        [
-          run.id,
-          a.id,
-          fy,
-          a.asset_name,
-          depRate,
-          d.depDays,
-          d.depAmount,
-          a.group_name,
-          a.sub_group_name,
-          a.branch_name,
-          d.bookValue,
-          d.accumulateDep,
-          d.depFormula,
-          depreciationStartBs,
-          d.balanceAmount,
-        ]
-      );
-      detailsInserted += 1;
-    }
+    );
 
     if (detailsInserted === 0) {
       await client.query("ROLLBACK");
@@ -455,6 +577,109 @@ export async function createDepreciationRun(
 }
 
 /**
+ * Rebuilds detail lines for an existing run from the current asset register (purchase cost,
+ * group rate/method, depreciation start). Use after editing assets so posted runs reflect
+ * register changes without creating a new run id.
+ */
+export async function refreshDepreciationRunDetailsFromAssets(runId: number): Promise<{
+  run: DepreciationRunRow;
+  detailsInserted: number;
+  skippedAssets: DepreciationSkippedAsset[];
+}> {
+  const run = await getDepreciationRunById(runId);
+  if (!run) {
+    throw new Error("Depreciation run not found.");
+  }
+
+  const fy = run.fiscal_year_start;
+  const q = run.quarter_no;
+  if (!Number.isFinite(q) || q < 1 || q > 4) {
+    throw new Error("Invalid quarter on depreciation run.");
+  }
+  const quarterNo = q as 1 | 2 | 3 | 4;
+
+  const calculationDateBs = normalizeBsDateEnglish(
+    String(run.calculation_date_bs).trim()
+  );
+  if (!calculationDateBs) {
+    throw new Error("Run has invalid calculation date (BS).");
+  }
+
+  const depreciationScopeMode =
+    parseDepreciationScopeMode(run.depreciation_scope_mode) ?? "FY_END";
+  const calculationMode: DepreciationCalculationMode = "ERP_ACCURATE";
+  const branchId = run.branch_id;
+  const assets = await loadAssetsForRun(branchId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtext('hrms_depr_run'),
+         ($1::int * 100000) + COALESCE($2::int, -1)
+       )`,
+      [fy, branchId]
+    );
+
+    await client.query(
+      `DELETE FROM hrms_depreciation_run_details WHERE depreciation_run_id = $1`,
+      [runId]
+    );
+
+    const { detailsInserted, skippedAssets } = await insertDepreciationDetailRows(
+      client,
+      {
+        runId,
+        fiscalYearStart: fy,
+        quarterNo,
+        calculationDateBs,
+        depreciationScopeMode,
+        calculationMode,
+        assets,
+      }
+    );
+
+    if (detailsInserted === 0) {
+      await client.query("ROLLBACK");
+      throw new Error(
+        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
+      );
+    }
+
+    await client.query(
+      `UPDATE hrms_depreciation_runs SET updated_at = NOW() WHERE id = $1`,
+      [runId]
+    );
+
+    await client.query("COMMIT");
+    log.info("refreshDepreciationRunDetailsFromAssets committed", {
+      runId,
+      detailsInserted,
+      skippedCount: skippedAssets.length,
+    });
+
+    const updated = await getDepreciationRunById(runId);
+    if (!updated) {
+      throw new Error("Depreciation run disappeared after refresh.");
+    }
+    return { run: updated, detailsInserted, skippedAssets };
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    log.error("refreshDepreciationRunDetailsFromAssets failed (rolled back)", err, {
+      runId,
+    });
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * “Add Depreciation Master” minimal form: calculation BS date + Nepali month name.
  * Derives fiscal year, quarter, and books-closed date for eligibility.
  */
@@ -463,6 +688,7 @@ export async function createDepreciationRunFromMasterForm(input: {
   nepaliMonth: string;
   depTitle?: string | null;
   remarks?: string | null;
+  depreciationScopeMode?: DepreciationScopeMode;
 }): Promise<{
   run: DepreciationRunRow;
   detailsInserted: number;
@@ -497,6 +723,9 @@ export async function createDepreciationRunFromMasterForm(input: {
   const fiscalProgressBs =
     compareBsDateString(calcBs, qEnd) >= 0 ? calcBs : qEnd;
 
+  const scope: DepreciationScopeMode =
+    input.depreciationScopeMode === "AS_OF_DATE" ? "AS_OF_DATE" : "FY_END";
+
   return createDepreciationRun({
     fiscalYearStart: fyStart,
     quarterNo,
@@ -506,6 +735,7 @@ export async function createDepreciationRunFromMasterForm(input: {
     calculationDateBs: calcBs,
     branchId: null,
     calculationMode: "ERP_ACCURATE",
+    depreciationScopeMode: scope,
   });
 }
 
@@ -545,6 +775,7 @@ export async function ensureDepreciationRunForCurrentFiscalYear(): Promise<{
     nepaliMonth,
     depTitle: null,
     remarks: null,
+    depreciationScopeMode: "AS_OF_DATE",
   });
 }
 
@@ -557,7 +788,7 @@ export async function updateDepreciationRunRemarks(
      SET remarks = $2, updated_at = NOW()
      WHERE id = $1
      RETURNING id, fiscal_year_start, dep_title, quarter_no, months_covered,
-       calculation_date_ad::text, calculation_date_bs, remarks, is_final_for_fy,
+       calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
        status, branch_id, created_at::text, updated_at::text`,
     [id, remarks?.trim() ?? null]
   );

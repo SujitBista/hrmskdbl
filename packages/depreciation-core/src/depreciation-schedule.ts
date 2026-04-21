@@ -692,8 +692,14 @@ export function computeOneYearDepreciationSchedule(
 export function computeDepreciationSchedule(
   params: ComputeDepreciationScheduleParams
 ): DepreciationScheduleResult {
+  const calculationFromNorm =
+    normalizeBsDateEnglish(params.calculationFromBs.trim()) ?? "";
+  const purchaseDateNorm =
+    normalizeBsDateEnglish(params.purchaseDateBs.trim()) ?? "";
   const fullParams: ComputeDepreciationScheduleParams = {
     ...params,
+    calculationFromBs: calculationFromNorm,
+    purchaseDateBs: purchaseDateNorm,
     calculationMode: params.calculationMode ?? "ERP_ACCURATE",
   };
 

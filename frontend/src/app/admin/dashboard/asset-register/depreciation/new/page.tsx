@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { DepreciationNewRunScreen } from "@/components/admin/depreciation-new-run-screen";
 
 export default function DepreciationNewRunPage() {
-  redirect("/admin/dashboard/asset-register/depreciation");
+  return <DepreciationNewRunScreen />;
 }

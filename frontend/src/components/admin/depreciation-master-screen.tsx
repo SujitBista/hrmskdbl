@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
+
+const SKIPPED_STORAGE_KEY = "hrmskdbl_depreciation_skipped";
 
 export type DepreciationRunListRow = {
   id: number;
@@ -13,6 +16,7 @@ export type DepreciationRunListRow = {
   months_covered: number;
   calculation_date_ad: string;
   calculation_date_bs: string;
+  depreciation_scope_mode: "FY_END" | "AS_OF_DATE";
   remarks: string | null;
   is_final_for_fy: boolean;
   status: string;
@@ -81,6 +85,7 @@ function downloadCsv(filename: string, csv: string) {
 
 export function DepreciationMasterScreen() {
   const formId = useId();
+  const router = useRouter();
   const [runs, setRuns] = useState<DepreciationRunListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +94,7 @@ export function DepreciationMasterScreen() {
   const [editRemarks, setEditRemarks] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [quickEnsureLoading, setQuickEnsureLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +123,59 @@ export function DepreciationMasterScreen() {
     void load();
   }, [load]);
 
+  async function onQuickEnsureCurrentFy() {
+    setQuickEnsureLoading(true);
+    try {
+      const res = await fetch("/api/admin/depreciation-runs/ensure-current", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const json = (await res.json()) as {
+        run?: { id: number };
+        detailsInserted?: number;
+        skippedAssets?: {
+          asset_id: number;
+          asset_name: string;
+          reason: string;
+        }[];
+        error?: string;
+      };
+      if (!res.ok) {
+        window.alert(json.error ?? "Could not run depreciation for the current fiscal year.");
+        return;
+      }
+      const runId = json.run?.id;
+      if (!runId || !Number.isFinite(runId)) {
+        window.alert("Depreciation was calculated but no run id was returned.");
+        return;
+      }
+      if (json.skippedAssets && json.skippedAssets.length > 0) {
+        const lines = json.skippedAssets.map(
+          (s) => `#${s.asset_id} ${s.asset_name}: ${s.reason}`
+        );
+        window.alert(
+          `Depreciation for the current fiscal year was calculated (${json.detailsInserted ?? 0} row(s)).\n\n` +
+            `${json.skippedAssets.length} asset(s) were skipped:\n\n` +
+            lines.join("\n")
+        );
+        try {
+          sessionStorage.setItem(
+            SKIPPED_STORAGE_KEY,
+            JSON.stringify(json.skippedAssets)
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+      router.push(`/admin/dashboard/asset-register/depreciation/${runId}`);
+      router.refresh();
+    } catch {
+      window.alert("Could not reach the server to calculate depreciation.");
+    } finally {
+      setQuickEnsureLoading(false);
+    }
+  }
+
   const selected = useMemo(
     () => runs.find((r) => r.id === selectedId) ?? null,
     [runs, selectedId]
@@ -132,6 +191,7 @@ export function DepreciationMasterScreen() {
       "DepID",
       "FiscalYear",
       "DepTitle",
+      "ScopeMode",
       "CalculationDateAD",
       "CalculationDateNepali",
       "Remarks",
@@ -142,6 +202,7 @@ export function DepreciationMasterScreen() {
         r.id,
         formatFiscalYearLabel(r.fiscal_year_start),
         `"${r.dep_title.replace(/"/g, '""')}"`,
+        r.depreciation_scope_mode ?? "FY_END",
         r.calculation_date_ad,
         r.calculation_date_bs,
         `"${(r.remarks ?? "").replace(/"/g, '""')}"`,
@@ -217,18 +278,31 @@ export function DepreciationMasterScreen() {
             Depreciation Master List
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Fiscal-year depreciation runs by fiscal year (Shrawan–Ashadh). Select a
-            row and use Details.
+            Fiscal-year depreciation runs (Shrawan–Ashadh). Use{" "}
+            <span className="font-medium">Add New</span> to choose{" "}
+            <span className="font-medium">Full fiscal year</span> or{" "}
+            <span className="font-medium">As of calculation date</span>.{" "}
+            <span className="font-medium">Quick: as of today</span> posts an as-of-today
+            run without opening the form. Select a row for Details.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            href="/admin/dashboard/asset-register/depreciation"
+            href="/admin/dashboard/asset-register/depreciation/new"
             className={`${btnPrimary} inline-flex items-center gap-1.5`}
           >
             <PlusIcon className="h-4 w-4" />
             Add New
           </Link>
+          <button
+            type="button"
+            className={btnClass}
+            disabled={quickEnsureLoading}
+            onClick={() => void onQuickEnsureCurrentFy()}
+            title="Runs depreciation for the current fiscal year as of today’s BS date (AS_OF_DATE mode)"
+          >
+            {quickEnsureLoading ? "Running…" : "Quick: as of today"}
+          </button>
           <button
             type="button"
             className={btnClass}
@@ -292,6 +366,12 @@ export function DepreciationMasterScreen() {
               </th>
               <th className="border border-slate-300 px-2 py-2">
                 <span className="inline-flex w-full items-center justify-between gap-2">
+                  <span>Scope</span>
+                  <FilterHeaderIcon label="Scope" />
+                </span>
+              </th>
+              <th className="border border-slate-300 px-2 py-2">
+                <span className="inline-flex w-full items-center justify-between gap-2">
                   <span>CalculationDate</span>
                   <FilterHeaderIcon label="CalculationDate" />
                 </span>
@@ -319,13 +399,13 @@ export function DepreciationMasterScreen() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
+                <td colSpan={8} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
                   Loading…
                 </td>
               </tr>
             ) : runs.length === 0 ? (
               <tr>
-                <td colSpan={7} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
+                <td colSpan={8} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
                   No depreciation runs yet. Use Add New to post a quarter run.
                 </td>
               </tr>
@@ -355,6 +435,11 @@ export function DepreciationMasterScreen() {
                     >
                       {r.dep_title}
                     </Link>
+                  </td>
+                  <td className="border border-slate-300 px-2 py-1.5 text-slate-800">
+                    {r.depreciation_scope_mode === "AS_OF_DATE"
+                      ? "As of date"
+                      : "FY end"}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 font-mono text-xs tabular-nums text-slate-800">
                     {formatAdDate(r.calculation_date_ad)}

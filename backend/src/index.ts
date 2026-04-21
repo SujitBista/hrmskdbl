@@ -56,6 +56,7 @@ import {
   getDepreciationRunById,
   listDepreciationRuns,
   listDetailsForRun,
+  refreshDepreciationRunDetailsFromAssets,
   updateDepreciationRunRemarks,
 } from "./services/depreciationRuns.js";
 import {
@@ -1305,6 +1306,8 @@ app.post("/api/admin/depreciation-runs", async (req, res) => {
           : typeof body?.depTitle === "string"
             ? body.depTitle
             : null;
+      const depreciationScopeMode =
+        body?.depreciationScopeMode === "AS_OF_DATE" ? "AS_OF_DATE" : undefined;
 
       try {
         const { run, detailsInserted, skippedAssets } =
@@ -1313,6 +1316,7 @@ app.post("/api/admin/depreciation-runs", async (req, res) => {
             nepaliMonth: String(nepaliMonthRaw).trim(),
             depTitle,
             remarks,
+            depreciationScopeMode,
           });
         res.status(201).json({ run, detailsInserted, skippedAssets });
       } catch (err) {
@@ -1368,6 +1372,8 @@ app.post("/api/admin/depreciation-runs", async (req, res) => {
         : typeof body?.depTitle === "string"
           ? body.depTitle
           : null;
+    const depreciationScopeMode =
+      body?.depreciationScopeMode === "AS_OF_DATE" ? "AS_OF_DATE" : undefined;
 
     if (!Number.isFinite(fiscalYearStart) || fiscalYearStart < 2000) {
       res.status(400).json({ error: "A valid fiscal year start is required." });
@@ -1390,6 +1396,7 @@ app.post("/api/admin/depreciation-runs", async (req, res) => {
           ? calculationMode
           : undefined,
       calculationDateBs,
+      depreciationScopeMode,
     });
     res.status(201).json({ run, detailsInserted, skippedAssets });
   } catch (err) {
@@ -1440,6 +1447,45 @@ app.get("/api/admin/depreciation-runs/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not load depreciation run." });
+  }
+});
+
+app.post("/api/admin/depreciation-runs/:id/refresh-details", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid run id." });
+      return;
+    }
+
+    const result = await refreshDepreciationRunDetailsFromAssets(id);
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "Depreciation run not found.") {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (
+      msg.includes("No depreciation rows") ||
+      msg.includes("Invalid quarter") ||
+      msg.includes("invalid calculation date")
+    ) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error(err);
+    res
+      .status(500)
+      .json({ error: "Could not refresh depreciation run details." });
   }
 });
 

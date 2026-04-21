@@ -105,6 +105,28 @@ export function compareBsDateString(a: string, b: string): number {
   return compareBs(pa, pb);
 }
 
+/** Later of two English BS dates (YYYY/MM/DD); requires both strings to parse. */
+export function maxBsDateString(a: string, b: string): string {
+  return compareBsDateString(a, b) >= 0 ? a : b;
+}
+
+/**
+ * BS date when depreciation may begin: the later of capitalization (purchase) and
+ * register depreciation start. Missing/invalid depreciation start falls back to purchase only.
+ */
+export function depreciationCommencementFromRegister(
+  purchaseBs: string,
+  depreciationStartBs: string | null | undefined
+): string | null {
+  const p = normalizeBsDateEnglish(purchaseBs.trim());
+  if (!p) return null;
+  const raw = depreciationStartBs?.trim();
+  if (!raw) return p;
+  const d = normalizeBsDateEnglish(raw);
+  if (!d) return p;
+  return maxBsDateString(p, d);
+}
+
 /**
  * Highest quarter (1–4) that may be posted as of `progressBs` (books closed through).
  * Returns 0 if not even Q1 end reached.

@@ -170,15 +170,6 @@ async function migrate() {
     );
   `);
   await query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_fy_quarter_branch
-    ON hrms_depreciation_runs (fiscal_year_start, quarter_no, COALESCE(branch_id, -1));
-  `);
-  await query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_one_final_per_fy_branch
-    ON hrms_depreciation_runs (fiscal_year_start, COALESCE(branch_id, -1))
-    WHERE is_final_for_fy = true;
-  `);
-  await query(`
     CREATE TABLE IF NOT EXISTS hrms_depreciation_run_details (
       id SERIAL PRIMARY KEY,
       depreciation_run_id INTEGER NOT NULL REFERENCES hrms_depreciation_runs(id) ON DELETE CASCADE,
@@ -203,6 +194,38 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS hrms_depreciation_run_details_run_id
     ON hrms_depreciation_run_details (depreciation_run_id);
   `);
+
+  await query(`
+    ALTER TABLE hrms_depreciation_runs
+    ADD COLUMN IF NOT EXISTS depreciation_scope_mode VARCHAR(16) NOT NULL DEFAULT 'FY_END';
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_runs
+    DROP CONSTRAINT IF EXISTS hrms_depreciation_runs_depreciation_scope_mode_check;
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_runs
+    ADD CONSTRAINT hrms_depreciation_runs_depreciation_scope_mode_check
+    CHECK (depreciation_scope_mode IN ('FY_END', 'AS_OF_DATE'));
+  `);
+  await query(`DROP INDEX IF EXISTS hrms_depreciation_runs_fy_quarter_branch;`);
+  await query(`DROP INDEX IF EXISTS hrms_depreciation_runs_one_final_per_fy_branch;`);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_fy_end_fy_quarter_branch
+    ON hrms_depreciation_runs (fiscal_year_start, quarter_no, COALESCE(branch_id, -1))
+    WHERE depreciation_scope_mode = 'FY_END';
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_as_of_fy_branch_calc_bs
+    ON hrms_depreciation_runs (fiscal_year_start, COALESCE(branch_id, -1), calculation_date_bs)
+    WHERE depreciation_scope_mode = 'AS_OF_DATE';
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_runs_one_final_per_fy_branch
+    ON hrms_depreciation_runs (fiscal_year_start, COALESCE(branch_id, -1))
+    WHERE is_final_for_fy = true;
+  `);
+
   console.log("Migration complete.");
 }
 

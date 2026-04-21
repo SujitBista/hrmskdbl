@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { DepreciationRunListRow } from "./depreciation-master-screen";
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import { depreciationCommencementFromRegister } from "@/lib/depreciation-schedule";
 
 function formatFiscalYearLabel(start: number): string {
   const y2 = String(start + 1).slice(-2);
@@ -41,6 +42,8 @@ type DetailRow = {
   accumulate_dep: string;
   dep_formula: string;
   dep_start_date_bs: string;
+  /** Current asset register field (live); may differ from dep_start_date_bs until recalculate. */
+  register_depreciation_start_bs?: string;
   balance_amount: string;
   created_at: string;
 };
@@ -52,6 +55,18 @@ function formatAmount(value: string): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
+}
+
+/** True when register/purchase imply a different commencement than this run’s stored snapshot. */
+function commencementOutOfSync(d: DetailRow): boolean {
+  const reg = d.register_depreciation_start_bs?.trim();
+  if (!reg) return false;
+  const expected = depreciationCommencementFromRegister(
+    d.purchase_date_bs,
+    reg
+  );
+  if (!expected) return false;
+  return expected !== d.dep_start_date_bs.trim();
 }
 
 const DEPRECIATION_HUB =
@@ -75,6 +90,8 @@ export function DepreciationRunDetailScreen() {
   const [skippedNotice, setSkippedNotice] = useState<
     { asset_id: number; asset_name: string; reason: string }[] | null
   >(null);
+  const [refreshBusy, setRefreshBusy] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(runId) || runId < 1) {
@@ -124,6 +141,41 @@ export function DepreciationRunDetailScreen() {
     void load();
   }, [load]);
 
+  const refreshFromRegister = useCallback(async () => {
+    if (!Number.isFinite(runId) || runId < 1) return;
+    setRefreshBusy(true);
+    setRefreshError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/depreciation-runs/${runId}/refresh-details`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+        }
+      );
+      const json = (await res.json()) as {
+        error?: string;
+        skippedAssets?: {
+          asset_id: number;
+          asset_name: string;
+          reason: string;
+        }[];
+      };
+      if (!res.ok) {
+        setRefreshError(json.error ?? "Could not recalculate from register.");
+        return;
+      }
+      if (json.skippedAssets && json.skippedAssets.length > 0) {
+        setSkippedNotice(json.skippedAssets);
+      }
+      await load();
+    } catch {
+      setRefreshError("Could not recalculate from register.");
+    } finally {
+      setRefreshBusy(false);
+    }
+  }, [runId, load]);
+
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem("hrmskdbl_depreciation_skipped");
@@ -141,13 +193,18 @@ export function DepreciationRunDetailScreen() {
 
   function exportDetails() {
     if (!run) return;
+    const modeLine =
+      (run.depreciation_scope_mode ?? "FY_END") === "AS_OF_DATE"
+        ? `Calculation mode: AS_OF_DATE; through calculation date ${run.calculation_date_bs} (BS) (capped at fiscal year end).`
+        : `Calculation mode: FY_END; through fiscal quarter end (Q${run.quarter_no}) / fiscal year end.`;
     const header = [
       "FiscalYear",
       "AssetCode",
       "Group",
       "PurchaseDate",
       "PurchasePrice",
-      "DepStartDate",
+      "RegisterDepStartBS",
+      "DepCommencementBS",
       "DepRate",
       "ThisYearDepAmount",
       "AccumulatedDep",
@@ -160,6 +217,7 @@ export function DepreciationRunDetailScreen() {
         `"${d.group_name.replace(/"/g, '""')}"`,
         d.purchase_date_bs,
         d.purchase_price,
+        d.register_depreciation_start_bs ?? "",
         d.dep_start_date_bs,
         d.dep_rate,
         d.dep_amount,
@@ -169,7 +227,7 @@ export function DepreciationRunDetailScreen() {
     );
     downloadCsv(
       `depreciation-run-${run.id}-details.csv`,
-      [header, ...lines].join("\n")
+      [`"${modeLine.replace(/"/g, '""')}"`, header, ...lines].join("\n")
     );
   }
 
@@ -184,10 +242,22 @@ export function DepreciationRunDetailScreen() {
         <div>
           {run ? (
             <h2 className="text-lg font-semibold text-slate-900">
-              Depreciation Details{" "}
-              <span className="text-slate-600">
-                ({formatFiscalYearLabel(run.fiscal_year_start)})
-              </span>
+              {(run.depreciation_scope_mode ?? "FY_END") === "AS_OF_DATE" ? (
+                <>
+                  Depreciation Details (As of{" "}
+                  <span className="font-mono text-slate-800">
+                    {run.calculation_date_bs}
+                  </span>
+                  )
+                </>
+              ) : (
+                <>
+                  Depreciation Details{" "}
+                  <span className="text-slate-600">
+                    ({formatFiscalYearLabel(run.fiscal_year_start)})
+                  </span>
+                </>
+              )}
             </h2>
           ) : (
             <h2 className="text-lg font-semibold text-slate-900">Depreciation Details</h2>
@@ -196,27 +266,72 @@ export function DepreciationRunDetailScreen() {
             <p className="mt-1 text-sm text-slate-600">
               Run #{run.id} · Calculation{" "}
               <span className="font-mono">{run.calculation_date_bs}</span> (BS) ·
-              Final for FY: {run.is_final_for_fy ? "Yes" : "No"}
+              Calculation mode:{" "}
+              {(run.depreciation_scope_mode ?? "FY_END") === "AS_OF_DATE"
+                ? "As of date (amounts through calculation date)"
+                : "Full fiscal year (through quarter / fiscal year end)"}
+              {(run.depreciation_scope_mode ?? "FY_END") === "FY_END" ? (
+                <>
+                  {" "}
+                  · Final for FY: {run.is_final_for_fy ? "Yes" : "No"}
+                </>
+              ) : null}
               <span className="block pt-1 text-slate-500">
-                DepDays = inclusive calendar days from FY Shrawan 1 (or
-                depreciation start, if later) through fiscal year end. This Year
-                Dep Amount = current fiscal-year depreciation only;
-                AccumulatedDep = lifetime depreciation through fiscal year end.
+                {(run.depreciation_scope_mode ?? "FY_END") === "AS_OF_DATE" ? (
+                  <>
+                    DepDays = inclusive calendar days from FY Shrawan 1 (or
+                    depreciation start, if later) through the calculation date
+                    (capped at fiscal year end). This Year Dep Amount = fiscal-year
+                    depreciation only through that date; AccumulatedDep = lifetime
+                    depreciation through that date; Book value = purchase price minus
+                    accumulated depreciation (not below zero).
+                  </>
+                ) : (
+                  <>
+                    DepDays = inclusive calendar days from FY Shrawan 1 (or
+                    depreciation start, if later) through the selected quarter end.
+                    This Year Dep Amount = current fiscal-year depreciation through
+                    that quarter end; AccumulatedDep = lifetime depreciation through
+                    that same date.
+                  </>
+                )}
+              </span>
+              <span className="block pt-2 text-slate-500">
+                <strong className="font-medium text-slate-600">Register dep. start</strong>{" "}
+                is read live from the asset register.{" "}
+                <strong className="font-medium text-slate-600">Commencement</strong>{" "}
+                is the later of purchase date and register dep. start—the date this run
+                used for depreciation math. It updates when you click Recalculate. If
+                the two dates differ, amounts in the row are still based on the old
+                commencement until you recalculate.
               </span>
             </p>
           ) : null}
         </div>
-        <button
-          type="button"
-          className="self-start rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-          disabled={!run || details.length === 0}
-          onClick={exportDetails}
-        >
-          Export
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            className="self-start rounded-lg border border-emerald-700/30 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-950 shadow-sm hover:bg-emerald-100 disabled:opacity-50"
+            disabled={!run || refreshBusy}
+            onClick={() => void refreshFromRegister()}
+          >
+            {refreshBusy ? "Recalculating…" : "Recalculate from register"}
+          </button>
+          <button
+            type="button"
+            className="self-start rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            disabled={!run || details.length === 0}
+            onClick={exportDetails}
+          >
+            Export
+          </button>
+        </div>
       </div>
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {refreshError ? (
+        <p className="text-sm text-red-600">{refreshError}</p>
+      ) : null}
 
       {skippedNotice && skippedNotice.length > 0 ? (
         <div
@@ -238,7 +353,7 @@ export function DepreciationRunDetailScreen() {
       ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[1300px] w-full border-collapse text-left text-sm">
+        <table className="min-w-[1480px] w-full border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
               <th className="border border-slate-300 px-2 py-2">Fiscal Year</th>
@@ -248,7 +363,12 @@ export function DepreciationRunDetailScreen() {
               <th className="border border-slate-300 px-2 py-2 text-right">
                 Purchase Price
               </th>
-              <th className="border border-slate-300 px-2 py-2">Dep Start Date</th>
+              <th className="border border-slate-300 px-2 py-2">
+                Register dep. start (BS)
+              </th>
+              <th className="border border-slate-300 px-2 py-2">
+                Commencement (BS)
+              </th>
               <th className="border border-slate-300 px-2 py-2 text-right">Dep Rate</th>
               <th className="border border-slate-300 px-2 py-2 text-right">
                 This Year Dep Amount
@@ -265,7 +385,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -274,7 +394,7 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
@@ -299,7 +419,26 @@ export function DepreciationRunDetailScreen() {
                     {formatAmount(d.purchase_price)}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800">
+                    {d.register_depreciation_start_bs ?? "—"}
+                  </td>
+                  <td
+                    className={`border border-slate-300 px-2 py-1.5 font-mono text-xs ${
+                      commencementOutOfSync(d)
+                        ? "bg-amber-50 text-amber-950"
+                        : "text-slate-800"
+                    }`}
+                    title={
+                      commencementOutOfSync(d)
+                        ? "Commencement snapshot differs from purchase + register—click Recalculate to refresh amounts."
+                        : "Later of purchase date and register dep. start, as of last run/recalculate."
+                    }
+                  >
                     {d.dep_start_date_bs}
+                    {commencementOutOfSync(d) ? (
+                      <span className="ml-1.5 inline-block rounded bg-amber-200/80 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950">
+                        Stale
+                      </span>
+                    ) : null}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {d.dep_rate}%

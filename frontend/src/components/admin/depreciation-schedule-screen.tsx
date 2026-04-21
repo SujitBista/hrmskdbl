@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
@@ -8,6 +9,7 @@ import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
 import {
   computeOneYearDepreciationSchedule,
+  depreciationCommencementFromRegister,
   depreciationMethodLabel,
   parseDepreciationMethod,
   type DepreciationCalculationMode,
@@ -34,6 +36,7 @@ type ListResponse = {
 
 export function DepreciationScheduleScreen() {
   const formId = useId();
+  const pathname = usePathname();
   const [assets, setAssets] = useState<AssetRegisterRow[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [assetsError, setAssetsError] = useState<string | null>(null);
@@ -44,50 +47,62 @@ export function DepreciationScheduleScreen() {
 
   const [result, setResult] = useState<DepreciationScheduleResult | null>(null);
 
+  const loadAssets = useCallback(async () => {
+    setAssetsLoading(true);
+    setAssetsError(null);
+    try {
+      const res = await fetch(`/api/admin/assets?page=1&pageSize=200`, {
+        cache: "no-store",
+      });
+      const json = (await res.json()) as ListResponse & { error?: string };
+      if (!res.ok) {
+        setAssetsError(json.error ?? "Could not load assets.");
+        setAssets([]);
+        return;
+      }
+      setAssets(json.assets ?? []);
+    } catch {
+      setAssetsError("Could not load assets.");
+      setAssets([]);
+    } finally {
+      setAssetsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setAssetsLoading(true);
-      setAssetsError(null);
-      try {
-        const res = await fetch(`/api/admin/assets?page=1&pageSize=200`);
-        const json = (await res.json()) as ListResponse & { error?: string };
-        if (!res.ok) {
-          if (!cancelled) {
-            setAssetsError(json.error ?? "Could not load assets.");
-            setAssets([]);
-          }
-          return;
-        }
-        if (!cancelled) setAssets(json.assets ?? []);
-      } catch {
-        if (!cancelled) {
-          setAssetsError("Could not load assets.");
-          setAssets([]);
-        }
-      } finally {
-        if (!cancelled) setAssetsLoading(false);
+    void loadAssets();
+  }, [loadAssets, pathname]);
+
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void loadAssets();
       }
     }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [loadAssets]);
 
   const selectedAsset = useMemo(
     () => assets.find((a) => a.id === selectedAssetId) ?? null,
     [assets, selectedAssetId]
   );
 
-  /** Depreciation schedules use the register depreciation start date (falls back to purchase for legacy rows). */
+  /** Later of purchase and register depreciation start (same rule as posted depreciation runs). */
   const scheduleStartDateBs = useMemo(() => {
     if (!selectedAsset) return "";
-    const raw =
-      selectedAsset.depreciation_start_date_bs?.trim() ||
-      selectedAsset.purchase_date_bs;
-    return normalizeBsDateEnglish(raw);
-  }, [selectedAsset]);
+    return (
+      depreciationCommencementFromRegister(
+        selectedAsset.purchase_date_bs,
+        selectedAsset.depreciation_start_date_bs
+      ) ?? ""
+    );
+  }, [
+    selectedAsset?.id,
+    selectedAsset?.purchase_date_bs,
+    selectedAsset?.depreciation_start_date_bs,
+  ]);
 
   const runCalculation = useCallback(() => {
     if (!selectedAsset) {

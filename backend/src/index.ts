@@ -3,6 +3,8 @@ import cors from "cors";
 import express from "express";
 import { resolveDbErrorMessage } from "./dbErrors.js";
 import { createLogger } from "./logger.js";
+import { startDepreciationCron } from "./jobs/depreciationCron.js";
+import { ensureCurrentFiscalYearAutomation } from "./services/depreciationAutomation.js";
 import {
   signAdminToken,
   signUserToken,
@@ -74,6 +76,9 @@ const app = express();
 const port = Number(process.env.PORT ?? 4000);
 
 const logDepreciationEnsure = createLogger("api.depreciation.ensureCurrent");
+const logDepreciationAutomationJob = createLogger(
+  "api.internal.depreciationAutomation"
+);
 
 app.use(
   cors({
@@ -1237,6 +1242,38 @@ app.post("/api/admin/depreciation-runs/ensure-current", async (req, res) => {
   }
 });
 
+/**
+ * Manual trigger for `ensureCurrentFiscalYearAutomation` (cron uses the same function).
+ * Registered only when `DEPRECIATION_AUTOMATION_MANUAL_TOKEN` is set so the route is absent by default.
+ * TODO: Replace with a proper admin-audited job runner if internal endpoints proliferate.
+ */
+if (process.env.DEPRECIATION_AUTOMATION_MANUAL_TOKEN) {
+  const manualToken = process.env.DEPRECIATION_AUTOMATION_MANUAL_TOKEN;
+  app.post("/internal/jobs/depreciation/run-now", async (req, res) => {
+    const header = req.headers["x-internal-job-token"];
+    const token =
+      typeof header === "string"
+        ? header
+        : Array.isArray(header)
+          ? header[0]
+          : undefined;
+    if (!token || token !== manualToken) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    try {
+      const result = await ensureCurrentFiscalYearAutomation();
+      res.json({ ok: true, result });
+    } catch (err) {
+      logDepreciationAutomationJob.error("manual depreciation automation failed", err);
+      res.status(500).json({
+        error:
+          err instanceof Error ? err.message : "Automation job failed.",
+      });
+    }
+  });
+}
+
 app.get("/api/admin/depreciation-runs", async (req, res) => {
   const token = getBearerToken(req);
   if (!token) {
@@ -1626,4 +1663,5 @@ app.get("/api/auth/user/me", (req, res) => {
 
 app.listen(port, () => {
   console.log(`API listening on http://localhost:${port}`);
+  startDepreciationCron();
 });

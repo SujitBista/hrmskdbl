@@ -325,6 +325,8 @@ export function AssetRegisterForm({
     try {
       const payload = {
         asset_name: assetName.trim(),
+        asset_code:
+          assetCode.trim() === "" ? null : assetCode.trim(),
         group_id: groupId,
         sub_group_id:
           subGroupsForGroup.length > 0 ? subGroupId : null,
@@ -358,13 +360,13 @@ export function AssetRegisterForm({
       const rawCode = json.asset?.asset_code ?? "";
       const displayCode =
         rawCode === "" ? "" : formatAssetCodeForDisplay(rawCode);
-      setAssetCode(displayCode);
       setSuccess(
         displayCode
           ? `Asset saved. Asset code: ${displayCode}`
           : "Asset register entry saved."
       );
       onSaved?.();
+      setAssetCode("");
       setAssetName("");
       setSubGroupId("");
       setOwnershipType("");
@@ -435,19 +437,17 @@ export function AssetRegisterForm({
                 Asset code
               </label>
               <p className="mt-0.5 text-xs text-slate-500">
-                Assigned automatically after save (SKDBL / branch / group /
-                purchase date / sequential id).
+                Optional for legacy records. Leave blank to assign automatically
+                (SKDBL / branch / group / purchase date / id).
               </p>
               <input
                 id={`${formId}-asset-code`}
                 type="text"
                 autoComplete="off"
-                readOnly
-                tabIndex={-1}
                 value={assetCode}
-                aria-readonly="true"
-                className={`${inputClass} cursor-default bg-slate-50 text-slate-800`}
-                placeholder="Generated when you save"
+                onChange={(ev) => setAssetCode(ev.target.value)}
+                className={inputClass}
+                placeholder="Leave blank to generate"
               />
             </div>
           </div>

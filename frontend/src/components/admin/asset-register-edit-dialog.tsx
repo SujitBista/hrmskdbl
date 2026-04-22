@@ -75,6 +75,7 @@ export function AssetRegisterEditDialog({
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
+  const [assetCode, setAssetCode] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +104,7 @@ export function AssetRegisterEditDialog({
       setPurchaseQty(asset.purchase_qty ?? "");
       setUnitRate(asset.unit_rate ?? "");
       setPurchaseInvoiceNo(asset.purchase_invoice_no ?? "");
+      setAssetCode(asset.asset_code ?? "");
       setError(null);
       el.showModal();
     } else {
@@ -180,6 +182,8 @@ export function AssetRegisterEditDialog({
     try {
       const payload = {
         asset_name: assetName.trim(),
+        asset_code:
+          assetCode.trim() === "" ? null : assetCode.trim(),
         group_id: groupId,
         sub_group_id:
           subGroupsForGroup.length > 0 ? subGroupId : null,
@@ -233,17 +237,14 @@ export function AssetRegisterEditDialog({
               Edit asset
             </h3>
             <p className="mt-1 text-sm text-slate-600">
-              Asset code is regenerated if branch, group, or purchase date (BS)
-              changes. Current code:{" "}
-              <span className="font-mono text-xs text-slate-800">
-                {formatAssetCodeForDisplay(asset.asset_code)}
-              </span>
+              Update the code only when entering a legacy value or correcting
+              it. Leave blank to use the standard generated code (SKDBL / …).
             </p>
           </div>
 
         <div className="flex flex-col gap-6 px-6 py-5">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2">
+            <div>
               <label
                 htmlFor={`${formId}-name`}
                 className="block text-sm font-medium text-slate-700"
@@ -258,6 +259,29 @@ export function AssetRegisterEditDialog({
                 value={assetName}
                 onChange={(e) => setAssetName(e.target.value)}
                 className={fieldClass}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor={`${formId}-asset-code`}
+                className="block text-sm font-medium text-slate-700"
+              >
+                Asset code
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Display:{" "}
+                <span className="font-mono text-slate-700">
+                  {formatAssetCodeForDisplay(asset.asset_code)}
+                </span>
+              </p>
+              <input
+                id={`${formId}-asset-code`}
+                type="text"
+                autoComplete="off"
+                value={assetCode}
+                onChange={(e) => setAssetCode(e.target.value)}
+                className={fieldClass}
+                placeholder="Blank = auto-generated code"
               />
             </div>
             <div>

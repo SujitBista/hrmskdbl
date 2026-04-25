@@ -80,6 +80,7 @@ export function AssetRegisterForm({
   const [purchaseDatePickerReady, setPurchaseDatePickerReady] = useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
+  const [oldBookValue, setOldBookValue] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -340,6 +341,10 @@ export function AssetRegisterForm({
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
         unit_rate:
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
+        old_book_value:
+          oldBookValue.trim() === ""
+            ? null
+            : Number.parseFloat(oldBookValue),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
       };
@@ -377,6 +382,7 @@ export function AssetRegisterForm({
       setDepreciationStartDateBs("");
       setPurchaseQty("");
       setUnitRate("");
+      setOldBookValue("");
       setPurchaseInvoiceNo("");
     } catch {
       setError("Something went wrong. Try again.");
@@ -824,6 +830,29 @@ export function AssetRegisterForm({
                 placeholder="—"
                 aria-readonly="true"
                 className={`${inputClass} cursor-default bg-slate-50 text-slate-800`}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor={`${formId}-old-book`}
+                className="block text-sm font-medium text-slate-700"
+              >
+                Old book value
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Optional. When set, depreciation uses this instead of purchase
+                amount (for migrated assets).
+              </p>
+              <input
+                id={`${formId}-old-book`}
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={oldBookValue}
+                onChange={(ev) => setOldBookValue(ev.target.value)}
+                className={inputClass}
+                placeholder="Leave empty for new purchases"
               />
             </div>
             <div>

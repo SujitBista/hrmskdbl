@@ -18,6 +18,7 @@ export type Asset = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
+  old_book_value: string | null;
   purchase_invoice_no: string | null;
   lifetime_years: number | null;
   salvage_value: string | null;
@@ -36,6 +37,8 @@ export type CreateAssetInput = {
   depreciation_start_date_bs: string;
   purchase_qty: number | null;
   unit_rate: number | null;
+  /** Optional; when positive, depreciation runs use this as cost basis instead of qty × unit rate. */
+  old_book_value: number | null;
   purchase_invoice_no: string | null;
   /** Legacy / manual code; omit or null to auto-generate SKDBL/… */
   asset_code: string | null;
@@ -144,6 +147,21 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
 
   const purchase_qty = parseOptionalNumber(b.purchase_qty);
   const unit_rate = parseOptionalNumber(b.unit_rate);
+  let old_book_value: number | null = null;
+  if (
+    b.old_book_value !== null &&
+    b.old_book_value !== undefined &&
+    b.old_book_value !== ""
+  ) {
+    const parsedOb = parseOptionalNumber(b.old_book_value);
+    if (parsedOb === null) {
+      throw new Error("Invalid old book value.");
+    }
+    if (parsedOb < 0) {
+      throw new Error("Old book value cannot be negative.");
+    }
+    old_book_value = parsedOb === 0 ? null : parsedOb;
+  }
   const purchase_invoice_no =
     typeof b.purchase_invoice_no === "string" &&
     b.purchase_invoice_no.trim() !== ""
@@ -209,6 +227,7 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     depreciation_start_date_bs,
     purchase_qty,
     unit_rate,
+    old_book_value,
     purchase_invoice_no,
     asset_code,
   };
@@ -318,9 +337,9 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
       `INSERT INTO hrms_assets (
         asset_name, group_id, sub_group_id, ownership_type, working_status,
         branch_id, department_id, purchase_date_bs, depreciation_start_date_bs,
-        purchase_qty, unit_rate, purchase_invoice_no
+        purchase_qty, unit_rate, purchase_invoice_no, old_book_value
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id, created_at::text`,
       [
         input.asset_name,
@@ -335,6 +354,7 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
         input.purchase_qty,
         input.unit_rate,
         input.purchase_invoice_no,
+        input.old_book_value,
       ]
     );
 
@@ -352,7 +372,7 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
          (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
          a.purchase_date_bs,
          a.depreciation_start_date_bs,
-         a.purchase_qty::text, a.unit_rate::text, a.purchase_invoice_no, a.lifetime_years,
+         a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no, a.lifetime_years,
          a.salvage_value::text, a.created_at::text`,
       [asset_code, row.id]
     );
@@ -406,14 +426,15 @@ export async function updateAsset(
       depreciation_start_date_bs = $10,
       purchase_qty = $11,
       unit_rate = $12,
-      purchase_invoice_no = $13
-    WHERE a.id = $14
+      purchase_invoice_no = $13,
+      old_book_value = $14
+    WHERE a.id = $15
     RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
       a.ownership_type, a.working_status, a.branch_id, a.department_id,
       (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
       a.purchase_date_bs,
       a.depreciation_start_date_bs,
-      a.purchase_qty::text, a.unit_rate::text, a.purchase_invoice_no, a.lifetime_years,
+      a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no, a.lifetime_years,
       a.salvage_value::text, a.created_at::text`,
     [
       asset_code,
@@ -429,6 +450,7 @@ export async function updateAsset(
       input.purchase_qty,
       input.unit_rate,
       input.purchase_invoice_no,
+      input.old_book_value,
       id,
     ]
   );
@@ -464,6 +486,7 @@ export type AssetListRow = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
+  old_book_value: string | null;
   purchase_invoice_no: string | null;
   lifetime_years: number | null;
   salvage_value: string | null;
@@ -505,6 +528,7 @@ const ASSET_LIST_SELECT = `
     a.depreciation_start_date_bs,
     a.purchase_qty::text,
     a.unit_rate::text,
+    a.old_book_value::text,
     a.purchase_invoice_no,
     a.lifetime_years,
     a.salvage_value::text,

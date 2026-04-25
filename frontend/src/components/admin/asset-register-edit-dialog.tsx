@@ -74,6 +74,7 @@ export function AssetRegisterEditDialog({
     useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
+  const [oldBookValue, setOldBookValue] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
   const [assetCode, setAssetCode] = useState("");
 
@@ -103,6 +104,7 @@ export function AssetRegisterEditDialog({
       );
       setPurchaseQty(asset.purchase_qty ?? "");
       setUnitRate(asset.unit_rate ?? "");
+      setOldBookValue(asset.old_book_value ?? "");
       setPurchaseInvoiceNo(asset.purchase_invoice_no ?? "");
       setAssetCode(asset.asset_code ?? "");
       setError(null);
@@ -197,6 +199,10 @@ export function AssetRegisterEditDialog({
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
         unit_rate:
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
+        old_book_value:
+          oldBookValue.trim() === ""
+            ? null
+            : Number.parseFloat(oldBookValue),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
       };
@@ -593,6 +599,29 @@ export function AssetRegisterEditDialog({
                 placeholder="—"
                 aria-readonly="true"
                 className={`${fieldClass} cursor-default bg-slate-50 text-slate-800`}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor={`${formId}-old-book`}
+                className="block text-sm font-medium text-slate-700"
+              >
+                Old book value
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                When set, depreciation uses this instead of purchase amount
+                (migrated assets). Clear to use qty × rate only.
+              </p>
+              <input
+                id={`${formId}-old-book`}
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={oldBookValue}
+                onChange={(e) => setOldBookValue(e.target.value)}
+                className={fieldClass}
+                placeholder="Optional"
               />
             </div>
             <div>

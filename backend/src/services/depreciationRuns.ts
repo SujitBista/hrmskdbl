@@ -798,6 +798,43 @@ export async function refreshDepreciationRunDetailsFromAssets(
 }
 
 /**
+ * Recalculate mutable depreciation reports that currently include the asset.
+ * Final FY reports are left untouched to preserve historical audit snapshots.
+ */
+export async function refreshMutableDepreciationRunsForAsset(
+  assetId: number
+): Promise<{
+  refreshedRunIds: number[];
+  skippedFinalizedRunIds: number[];
+}> {
+  const runs = await query<{ id: number; is_final_for_fy: boolean }>(
+    `SELECT DISTINCT r.id, r.is_final_for_fy
+     FROM hrms_depreciation_runs r
+     INNER JOIN hrms_depreciation_run_details d
+       ON d.depreciation_run_id = r.id
+     WHERE d.asset_id = $1
+     ORDER BY r.id DESC`,
+    [assetId]
+  );
+
+  const refreshedRunIds: number[] = [];
+  const skippedFinalizedRunIds: number[] = [];
+
+  for (const run of runs.rows) {
+    if (run.is_final_for_fy) {
+      skippedFinalizedRunIds.push(run.id);
+      continue;
+    }
+    await refreshDepreciationRunDetailsFromAssets(run.id, {
+      advanceCalculationDateToTodayBs: false,
+    });
+    refreshedRunIds.push(run.id);
+  }
+
+  return { refreshedRunIds, skippedFinalizedRunIds };
+}
+
+/**
  * “Add Depreciation Master” minimal form: calculation BS date + Nepali month name.
  * Derives fiscal year, quarter, and books-closed date for eligibility.
  */

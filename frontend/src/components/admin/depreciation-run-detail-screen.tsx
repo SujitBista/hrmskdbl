@@ -1,13 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DepreciationRunListRow } from "./depreciation-master-screen";
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
-import { depreciationCommencementFromRegister } from "@/lib/depreciation-schedule";
+import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
+import { compareBsDateString } from "@hrmskdbl/depreciation-core";
 
 function formatFiscalYearLabel(start: number): string {
   const y2 = String(start + 1).slice(-2);
@@ -42,7 +42,7 @@ type DetailRow = {
   accumulate_dep: string;
   dep_formula: string;
   dep_start_date_bs: string;
-  /** Current asset register field (live); may differ from dep_start_date_bs until recalculate. */
+  /** Current authoritative depreciation start date from asset register (live). */
   register_depreciation_start_bs?: string;
   balance_amount: string;
   created_at: string;
@@ -57,20 +57,26 @@ function formatAmount(value: string): string {
   }).format(n);
 }
 
-/** True when register/purchase imply a different commencement than this run’s stored snapshot. */
-function commencementOutOfSync(d: DetailRow): boolean {
-  const reg = d.register_depreciation_start_bs?.trim();
-  if (!reg) return false;
-  const expected = depreciationCommencementFromRegister(
-    d.purchase_date_bs,
-    reg
-  );
-  if (!expected) return false;
-  return expected !== d.dep_start_date_bs.trim();
-}
-
 const DEPRECIATION_HUB =
   "/admin/dashboard/asset-register/depreciation";
+const DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY =
+  "hrmskdbl_depreciation_autoreload_after_asset_edit";
+
+function snapshotStorageKey(runId: number): string {
+  return `hrmskdbl_depreciation_detail_snapshot_${runId}`;
+}
+
+function isAsOfDateStale(
+  run: DepreciationRunListRow,
+  todayBs: string | null
+): boolean {
+  if ((run.depreciation_scope_mode ?? "FY_END") !== "AS_OF_DATE") {
+    return false;
+  }
+  const saved = normalizeBsDateEnglish(run.calculation_date_bs);
+  if (!saved || !todayBs) return false;
+  return compareBsDateString(saved, todayBs) < 0;
+}
 
 export function DepreciationRunDetailScreen() {
   const router = useRouter();
@@ -92,6 +98,13 @@ export function DepreciationRunDetailScreen() {
   >(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [todayBs, setTodayBs] = useState<string | null>(null);
+  const [snapshotPinned, setSnapshotPinned] = useState(false);
+  const autoRecalcAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    autoRecalcAttemptedRef.current = false;
+  }, [runId]);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(runId) || runId < 1) {
@@ -110,6 +123,7 @@ export function DepreciationRunDetailScreen() {
       const json = (await res.json()) as {
         run?: DepreciationRunListRow;
         details?: DetailRow[];
+        todayBs?: string | null;
         error?: string;
       };
       if (res.status === 404) {
@@ -126,6 +140,12 @@ export function DepreciationRunDetailScreen() {
       }
       setRun(json.run ?? null);
       setDetails(json.details ?? []);
+      const tb = json.todayBs;
+      setTodayBs(
+        typeof tb === "string" && tb.trim()
+          ? normalizeBsDateEnglish(tb)
+          : null
+      );
     } catch {
       setError("Could not load run.");
       setRun(null);
@@ -141,40 +161,115 @@ export function DepreciationRunDetailScreen() {
     void load();
   }, [load]);
 
-  const refreshFromRegister = useCallback(async () => {
+  useEffect(() => {
     if (!Number.isFinite(runId) || runId < 1) return;
-    setRefreshBusy(true);
-    setRefreshError(null);
-    try {
-      const res = await fetch(
-        `/api/admin/depreciation-runs/${runId}/refresh-details`,
-        {
-          method: "POST",
-          credentials: "same-origin",
-        }
-      );
-      const json = (await res.json()) as {
-        error?: string;
-        skippedAssets?: {
-          asset_id: number;
-          asset_name: string;
-          reason: string;
-        }[];
-      };
-      if (!res.ok) {
-        setRefreshError(json.error ?? "Could not recalculate from register.");
-        return;
-      }
-      if (json.skippedAssets && json.skippedAssets.length > 0) {
-        setSkippedNotice(json.skippedAssets);
-      }
-      await load();
-    } catch {
-      setRefreshError("Could not recalculate from register.");
-    } finally {
-      setRefreshBusy(false);
+    if (typeof window === "undefined") return;
+
+    const maybeReloadAfterEdit = () => {
+      const shouldReload =
+        sessionStorage.getItem(DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY) ===
+        "1";
+      if (!shouldReload || refreshBusy) return;
+      sessionStorage.removeItem(DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY);
+      void load();
+    };
+
+    maybeReloadAfterEdit();
+    window.addEventListener("focus", maybeReloadAfterEdit);
+    return () => {
+      window.removeEventListener("focus", maybeReloadAfterEdit);
+    };
+  }, [runId, load, refreshBusy]);
+
+  useEffect(() => {
+    if (!Number.isFinite(runId) || runId < 1) return;
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    let pinned = sessionStorage.getItem(snapshotStorageKey(runId)) === "1";
+    if (sp.get("snapshot") === "1" || sp.get("historical") === "1") {
+      sessionStorage.setItem(snapshotStorageKey(runId), "1");
+      pinned = true;
     }
-  }, [runId, load]);
+    setSnapshotPinned(pinned);
+  }, [runId]);
+
+  const refreshFromRegister = useCallback(
+    async (opts?: { advanceCalculationDateToTodayBs?: boolean }) => {
+      if (!Number.isFinite(runId) || runId < 1) return;
+      setRefreshBusy(true);
+      setRefreshError(null);
+      try {
+        const advanceCalculationDateToTodayBs =
+          opts?.advanceCalculationDateToTodayBs === true;
+        const res = await fetch(
+          `/api/admin/depreciation-runs/${runId}/refresh-details`,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ advanceCalculationDateToTodayBs }),
+          }
+        );
+        const json = (await res.json()) as {
+          error?: string;
+          redirectToRunId?: number;
+          skippedAssets?: {
+            asset_id: number;
+            asset_name: string;
+            reason: string;
+          }[];
+        };
+        if (!res.ok) {
+          setRefreshError(json.error ?? "Could not recalculate from register.");
+          return;
+        }
+        if (
+          typeof json.redirectToRunId === "number" &&
+          Number.isFinite(json.redirectToRunId) &&
+          json.redirectToRunId >= 1 &&
+          json.redirectToRunId !== runId
+        ) {
+          router.replace(
+            `/admin/dashboard/asset-register/depreciation/${json.redirectToRunId}`
+          );
+          return;
+        }
+        if (json.skippedAssets && json.skippedAssets.length > 0) {
+          setSkippedNotice(json.skippedAssets);
+        }
+        await load();
+      } catch {
+        setRefreshError("Could not recalculate from register.");
+      } finally {
+        setRefreshBusy(false);
+      }
+    },
+    [runId, load, router]
+  );
+
+  const asOfStale =
+    run != null && todayBs != null && isAsOfDateStale(run, todayBs);
+  const savedBsNormalized =
+    run != null ? normalizeBsDateEnglish(run.calculation_date_bs) : "";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!run || loading || refreshBusy) return;
+    if (!todayBs || !asOfStale || snapshotPinned) return;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("autorecalc") !== "1") return;
+    if (autoRecalcAttemptedRef.current) return;
+    autoRecalcAttemptedRef.current = true;
+    void refreshFromRegister({ advanceCalculationDateToTodayBs: true });
+  }, [
+    run,
+    loading,
+    refreshBusy,
+    todayBs,
+    asOfStale,
+    snapshotPinned,
+    refreshFromRegister,
+  ]);
 
   useEffect(() => {
     try {
@@ -298,25 +393,14 @@ export function DepreciationRunDetailScreen() {
               </span>
               <span className="block pt-2 text-slate-500">
                 <strong className="font-medium text-slate-600">Register dep. start</strong>{" "}
-                is read live from the asset register.{" "}
-                <strong className="font-medium text-slate-600">Commencement</strong>{" "}
-                is the later of purchase date and register dep. start—the date this run
-                used for depreciation math. It updates when you click Recalculate. If
-                the two dates differ, amounts in the row are still based on the old
-                commencement until you recalculate.
+                is the authoritative depreciation start date from the asset register.
+                Recalculation uses this value for depreciation amount, accumulated
+                depreciation, and book value.
               </span>
             </p>
           ) : null}
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <button
-            type="button"
-            className="self-start rounded-lg border border-emerald-700/30 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-950 shadow-sm hover:bg-emerald-100 disabled:opacity-50"
-            disabled={!run || refreshBusy}
-            onClick={() => void refreshFromRegister()}
-          >
-            {refreshBusy ? "Recalculating…" : "Recalculate from register"}
-          </button>
           <button
             type="button"
             className="self-start rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50"
@@ -331,6 +415,48 @@ export function DepreciationRunDetailScreen() {
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {refreshError ? (
         <p className="text-sm text-red-600">{refreshError}</p>
+      ) : null}
+
+      {run && asOfStale && snapshotPinned ? (
+        <div
+          className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800"
+          role="status"
+        >
+          <p>
+            Historical as-of snapshot: this report is through{" "}
+            <span className="font-mono">{savedBsNormalized}</span> (BS).{" "}
+            <span className="text-slate-600">
+              Recalculate refreshes asset register fields but keeps this as-of
+              date.
+            </span>
+          </p>
+        </div>
+      ) : null}
+
+      {run && asOfStale && !snapshotPinned ? (
+        <div
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+          role="status"
+        >
+          <p>
+            This report is as of{" "}
+            <span className="font-mono">{savedBsNormalized}</span>. It refreshes
+            automatically after register date edits.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2.5 py-1 text-xs font-medium text-amber-900 underline-offset-2 hover:underline"
+              disabled={refreshBusy}
+              onClick={() => {
+                sessionStorage.setItem(snapshotStorageKey(runId), "1");
+                setSnapshotPinned(true);
+              }}
+            >
+              Keep this as-of date (snapshot)
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {skippedNotice && skippedNotice.length > 0 ? (
@@ -367,7 +493,7 @@ export function DepreciationRunDetailScreen() {
                 Register dep. start (BS)
               </th>
               <th className="border border-slate-300 px-2 py-2">
-                Commencement (BS)
+                Depreciation Start (BS)
               </th>
               <th className="border border-slate-300 px-2 py-2 text-right">Dep Rate</th>
               <th className="border border-slate-300 px-2 py-2 text-right">
@@ -422,23 +548,10 @@ export function DepreciationRunDetailScreen() {
                     {d.register_depreciation_start_bs ?? "—"}
                   </td>
                   <td
-                    className={`border border-slate-300 px-2 py-1.5 font-mono text-xs ${
-                      commencementOutOfSync(d)
-                        ? "bg-amber-50 text-amber-950"
-                        : "text-slate-800"
-                    }`}
-                    title={
-                      commencementOutOfSync(d)
-                        ? "Commencement snapshot differs from purchase + register—click Recalculate to refresh amounts."
-                        : "Later of purchase date and register dep. start, as of last run/recalculate."
-                    }
+                    className="border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800"
+                    title="Depreciation start date used for this report calculation."
                   >
                     {d.dep_start_date_bs}
-                    {commencementOutOfSync(d) ? (
-                      <span className="ml-1.5 inline-block rounded bg-amber-200/80 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950">
-                        Stale
-                      </span>
-                    ) : null}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {d.dep_rate}%

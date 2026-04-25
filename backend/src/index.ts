@@ -56,6 +56,7 @@ import {
   ensureDepreciationRunForCurrentFiscalYear,
   deleteDepreciationRun,
   getDepreciationRunById,
+  getServerTodayBsEnglish,
   listDepreciationRuns,
   listDetailsForRun,
   refreshDepreciationRunDetailsFromAssets,
@@ -1480,7 +1481,8 @@ app.get("/api/admin/depreciation-runs/:id", async (req, res) => {
       return;
     }
     const details = await listDetailsForRun(id);
-    res.json({ run, details });
+    const todayBs = getServerTodayBsEnglish();
+    res.json({ run, details, todayBs });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not load depreciation run." });
@@ -1503,7 +1505,16 @@ app.post("/api/admin/depreciation-runs/:id/refresh-details", async (req, res) =>
       return;
     }
 
-    const result = await refreshDepreciationRunDetailsFromAssets(id);
+    const body =
+      req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
+        ? (req.body as { advanceCalculationDateToTodayBs?: unknown })
+        : null;
+    const advanceCalculationDateToTodayBs =
+      body?.advanceCalculationDateToTodayBs === true;
+
+    const result = await refreshDepreciationRunDetailsFromAssets(id, {
+      advanceCalculationDateToTodayBs,
+    });
     res.json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

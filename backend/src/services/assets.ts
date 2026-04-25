@@ -1,5 +1,6 @@
 import { pool, query } from "../db.js";
 import { clampListParams } from "./groups.js";
+import { refreshMutableDepreciationRunsForAsset } from "./depreciationRuns.js";
 
 const ASSET_CODE_PREFIX = "SKDBL";
 
@@ -400,11 +401,14 @@ export async function updateAsset(
   id: number,
   input: CreateAssetInput
 ): Promise<Asset | null> {
-  const exists = await query<{ id: number }>(
-    `SELECT id FROM hrms_assets WHERE id = $1`,
+  const existing = await query<{ id: number; depreciation_start_date_bs: string }>(
+    `SELECT id, depreciation_start_date_bs
+     FROM hrms_assets
+     WHERE id = $1`,
     [id]
   );
-  if (!exists.rows[0]) {
+  const prev = existing.rows[0];
+  if (!prev) {
     return null;
   }
 
@@ -454,7 +458,16 @@ export async function updateAsset(
       id,
     ]
   );
-  return result.rows[0] ?? null;
+  const updated = result.rows[0] ?? null;
+  if (!updated) {
+    return null;
+  }
+
+  if (prev.depreciation_start_date_bs !== input.depreciation_start_date_bs) {
+    await refreshMutableDepreciationRunsForAsset(id);
+  }
+
+  return updated;
 }
 
 export async function deleteAsset(id: number): Promise<boolean> {

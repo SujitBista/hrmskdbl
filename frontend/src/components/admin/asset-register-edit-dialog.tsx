@@ -25,6 +25,8 @@ type BranchOption = {
 };
 
 type DepartmentOption = { id: number; name: string };
+const DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY =
+  "hrmskdbl_depreciation_autoreload_after_asset_edit";
 
 const OWNERSHIP_TYPES = ["Owner", "Lease"] as const;
 
@@ -216,6 +218,12 @@ export function AssetRegisterEditDialog({
       if (!res.ok) {
         setError(json.error ?? "Could not update asset.");
         return;
+      }
+      if (asset.depreciation_start_date_bs !== depreciationStartDateBs.trim()) {
+        sessionStorage.setItem(
+          DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY,
+          "1"
+        );
       }
       onSaved();
       onClose();

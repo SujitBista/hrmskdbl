@@ -79,6 +79,7 @@ type AssetDepRow = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
+  old_book_value: string | null;
 };
 
 const ASSET_SELECT = `
@@ -92,7 +93,8 @@ const ASSET_SELECT = `
     a.purchase_date_bs,
     a.depreciation_start_date_bs,
     a.purchase_qty::text,
-    a.unit_rate::text
+    a.unit_rate::text,
+    a.old_book_value::text
   FROM hrms_assets a
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
@@ -109,6 +111,21 @@ function parsePurchaseAmount(
   if (!Number.isFinite(q) || !Number.isFinite(r)) return null;
   if (q < 0 || r < 0) return null;
   return q * r;
+}
+
+/** Positive old book value overrides qty × rate for depreciation (migrated assets). */
+function depreciableAmountForRun(
+  oldBookValueText: string | null,
+  qty: string | null,
+  unitRate: string | null
+): number | null {
+  if (oldBookValueText != null && oldBookValueText !== "") {
+    const ob = Number.parseFloat(oldBookValueText);
+    if (Number.isFinite(ob) && ob > 0) {
+      return ob;
+    }
+  }
+  return parsePurchaseAmount(qty, unitRate);
 }
 
 function parseDepRatePercent(rate: string | null): number | null {
@@ -184,7 +201,11 @@ export async function listDetailsForRun(
   const r = await query<DepreciationRunDetailRow>(
     `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code, d.fiscal_year,
       d.asset_name, a.purchase_date_bs,
-      (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS purchase_price,
+      (CASE
+        WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
+        THEN a.old_book_value
+        ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
+      END)::text AS purchase_price,
       d.dep_rate::text, d.dep_days, d.dep_amount::text, d.group_name, d.sub_group_name,
       d.branch_name, d.book_value::text, d.accumulate_dep::text, d.dep_formula,
       d.dep_start_date_bs,
@@ -250,7 +271,11 @@ async function insertDepreciationDetailRows(
   let loggedVerificationAsset = false;
 
   for (const a of assets) {
-    const purchaseAmount = parsePurchaseAmount(a.purchase_qty, a.unit_rate);
+    const purchaseAmount = depreciableAmountForRun(
+      a.old_book_value,
+      a.purchase_qty,
+      a.unit_rate
+    );
     const depRate = parseDepRatePercent(a.group_dep_rate);
     const method = parseDepreciationMethod(a.group_dep_method);
     const depreciationStartBs = depreciationCommencementFromRegister(
@@ -268,7 +293,7 @@ async function insertDepreciationDetailRows(
     ) {
       const reason =
         purchaseAmount === null || purchaseAmount <= 0
-          ? "Invalid or missing purchase cost (qty × unit rate must be > 0)."
+          ? "Invalid or missing depreciable cost (qty × unit rate or old book value must be > 0)."
           : depRate === null || depRate <= 0
             ? "Asset group has no valid depreciation rate (> 0)."
             : method === null
@@ -548,7 +573,7 @@ export async function createDepreciationRun(
     if (detailsInserted === 0) {
       await client.query("ROLLBACK");
       throw new Error(
-        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
+        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate or old book value), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
       );
     }
 
@@ -576,15 +601,41 @@ export async function createDepreciationRun(
   }
 }
 
+function serverTodayBsNormalized(): string | null {
+  try {
+    return normalizeBsDateEnglish(bsDateFromJsDate(new Date()).trim());
+  } catch {
+    return null;
+  }
+}
+
+/** Server “today” in English BS (`YYYY/MM/DD`), for UI freshness checks. */
+export function getServerTodayBsEnglish(): string | null {
+  return serverTodayBsNormalized();
+}
+
+/** Today’s BS date, capped to the end of the given fiscal year (for as-of runs). */
+function todayBsCappedForFiscalYear(fy: number): string | null {
+  const todayBs = serverTodayBsNormalized();
+  if (!todayBs) return null;
+  const fyEndBs = fiscalYearEndBs(fy);
+  return compareBsDateString(todayBs, fyEndBs) > 0 ? fyEndBs : todayBs;
+}
+
 /**
- * Rebuilds detail lines for an existing run from the current asset register (purchase cost,
- * group rate/method, depreciation start). Use after editing assets so posted runs reflect
- * register changes without creating a new run id.
+ * Rebuilds detail lines from the current asset register. For `AS_OF_DATE` runs,
+ * `advanceCalculationDateToTodayBs` bumps `calculation_date_bs` to today (BS, capped at FY end)
+ * before recomputing so the header and amounts match “through today”.
  */
-export async function refreshDepreciationRunDetailsFromAssets(runId: number): Promise<{
+export async function refreshDepreciationRunDetailsFromAssets(
+  runId: number,
+  options?: { advanceCalculationDateToTodayBs?: boolean }
+): Promise<{
   run: DepreciationRunRow;
   detailsInserted: number;
   skippedAssets: DepreciationSkippedAsset[];
+  /** Another as-of run already uses this calculation date; open that run instead. */
+  redirectToRunId?: number;
 }> {
   const run = await getDepreciationRunById(runId);
   if (!run) {
@@ -596,9 +647,9 @@ export async function refreshDepreciationRunDetailsFromAssets(runId: number): Pr
   if (!Number.isFinite(q) || q < 1 || q > 4) {
     throw new Error("Invalid quarter on depreciation run.");
   }
-  const quarterNo = q as 1 | 2 | 3 | 4;
+  let quarterNo = q as 1 | 2 | 3 | 4;
 
-  const calculationDateBs = normalizeBsDateEnglish(
+  let calculationDateBs = normalizeBsDateEnglish(
     String(run.calculation_date_bs).trim()
   );
   if (!calculationDateBs) {
@@ -609,6 +660,7 @@ export async function refreshDepreciationRunDetailsFromAssets(runId: number): Pr
     parseDepreciationScopeMode(run.depreciation_scope_mode) ?? "FY_END";
   const calculationMode: DepreciationCalculationMode = "ERP_ACCURATE";
   const branchId = run.branch_id;
+
   const assets = await loadAssetsForRun(branchId);
 
   const client = await pool.connect();
@@ -621,6 +673,72 @@ export async function refreshDepreciationRunDetailsFromAssets(runId: number): Pr
        )`,
       [fy, branchId]
     );
+
+    if (
+      options?.advanceCalculationDateToTodayBs === true &&
+      depreciationScopeMode === "AS_OF_DATE"
+    ) {
+      const stored = normalizeBsDateEnglish(
+        String(
+          (
+            await client.query<{ calculation_date_bs: string }>(
+              `SELECT calculation_date_bs FROM hrms_depreciation_runs WHERE id = $1 FOR UPDATE`,
+              [runId]
+            )
+          ).rows[0]?.calculation_date_bs ?? ""
+        ).trim()
+      );
+      if (stored) {
+        const targetBs = todayBsCappedForFiscalYear(fy);
+        const fyStartBs = fiscalYearStartBs(fy);
+        if (targetBs && compareBsDateString(stored, targetBs) < 0) {
+          let effectiveTarget = targetBs;
+          if (compareBsDateString(effectiveTarget, fyStartBs) < 0) {
+            effectiveTarget = fyStartBs;
+          }
+          const dup = await client.query<{ id: number }>(
+            `SELECT id FROM hrms_depreciation_runs
+             WHERE fiscal_year_start = $1
+               AND COALESCE(branch_id, -1) = COALESCE($2, -1)
+               AND depreciation_scope_mode = 'AS_OF_DATE'
+               AND calculation_date_bs = $3
+               AND id <> $4
+             LIMIT 1`,
+            [fy, branchId, effectiveTarget, runId]
+          );
+          if (dup.rows[0]) {
+            await client.query("ROLLBACK");
+            const otherId = dup.rows[0].id;
+            const other = await getDepreciationRunById(otherId);
+            if (!other) {
+              throw new Error("Conflicting depreciation run not found.");
+            }
+            return {
+              run: other,
+              detailsInserted: 0,
+              skippedAssets: [],
+              redirectToRunId: otherId,
+            };
+          }
+          const monthIdx = nepaliCalendarMonthIndexFromBs(effectiveTarget);
+          const newQuarter =
+            monthIdx !== null
+              ? fiscalQuarterFromNepaliCalendarMonthIndex(monthIdx)
+              : quarterNo;
+          await client.query(
+            `UPDATE hrms_depreciation_runs
+             SET calculation_date_bs = $2,
+                 quarter_no = $3,
+                 calculation_date_ad = NOW(),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [runId, effectiveTarget, newQuarter]
+          );
+          calculationDateBs = effectiveTarget;
+          quarterNo = newQuarter;
+        }
+      }
+    }
 
     await client.query(
       `DELETE FROM hrms_depreciation_run_details WHERE depreciation_run_id = $1`,
@@ -643,7 +761,7 @@ export async function refreshDepreciationRunDetailsFromAssets(runId: number): Pr
     if (detailsInserted === 0) {
       await client.query("ROLLBACK");
       throw new Error(
-        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
+        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate or old book value), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
       );
     }
 

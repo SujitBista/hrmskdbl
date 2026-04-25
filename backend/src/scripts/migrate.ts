@@ -153,6 +153,10 @@ async function migrate() {
     ALTER COLUMN depreciation_start_date_bs SET NOT NULL;
   `);
   await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS old_book_value NUMERIC(18, 4);
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS hrms_depreciation_runs (
       id SERIAL PRIMARY KEY,
       fiscal_year_start INTEGER NOT NULL,

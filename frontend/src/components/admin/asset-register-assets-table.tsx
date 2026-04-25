@@ -36,7 +36,7 @@ type DepartmentOption = { id: number; name: string };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 17;
+const COL_COUNT = 18;
 
 function formatPurchaseAmount(
   qty: string | null,
@@ -55,6 +55,13 @@ function formatMoney(amount: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatOldBookValue(v: string | null): string {
+  if (v == null || v === "") return "—";
+  const n = Number.parseFloat(v);
+  if (!Number.isFinite(n)) return "—";
+  return formatMoney(n);
 }
 
 export function AssetRegisterAssetsTable({
@@ -318,6 +325,13 @@ export function AssetRegisterAssetsTable({
               </th>
               <th
                 scope="col"
+                className="px-4 py-3 font-medium whitespace-nowrap text-right"
+                title="When set, used as depreciation cost basis instead of purchase amount"
+              >
+                Old book value
+              </th>
+              <th
+                scope="col"
                 className="px-4 py-3 font-medium whitespace-nowrap"
                 title="From asset group"
               >
@@ -412,6 +426,9 @@ export function AssetRegisterAssetsTable({
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
                       {formatPurchaseAmount(a.purchase_qty, a.unit_rate)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
+                      {formatOldBookValue(a.old_book_value)}
                     </td>
                     <td className="max-w-[140px] px-4 py-3 whitespace-normal text-slate-700">
                       {a.group_dep_method?.trim() ? a.group_dep_method : "—"}

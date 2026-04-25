@@ -18,7 +18,7 @@ import {
 } from "@/lib/depreciation-schedule";
 import { DepreciationScheduleGrid } from "./depreciation-schedule-grid";
 import {
-  parsePurchaseAmount,
+  depreciableAmountForAsset,
   parseDepRatePercent,
 } from "@/lib/asset-depreciation";
 import type { AssetRegisterRow } from "./asset-register-types";
@@ -109,10 +109,11 @@ export function DepreciationScheduleScreen() {
       setResult(null);
       return;
     }
-    const purchaseAmount = parsePurchaseAmount(
-      selectedAsset.purchase_qty,
-      selectedAsset.unit_rate
-    );
+    const purchaseAmount = depreciableAmountForAsset({
+      oldBookValue: selectedAsset.old_book_value,
+      purchaseQty: selectedAsset.purchase_qty,
+      unitRate: selectedAsset.unit_rate,
+    });
     const depRate = parseDepRatePercent(selectedAsset.group_dep_rate);
     const method = parseDepreciationMethod(selectedAsset.group_dep_method);
 
@@ -126,7 +127,7 @@ export function DepreciationScheduleScreen() {
       setResult({
         ok: false,
         errors: [
-          "Selected asset must have a positive purchase amount (qty × rate) and a positive group depreciation rate.",
+          "Selected asset must have a positive depreciable amount (qty × rate, or old book value if set) and a positive group depreciation rate.",
         ],
       });
       return;

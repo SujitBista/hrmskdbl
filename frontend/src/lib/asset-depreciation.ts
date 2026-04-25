@@ -25,6 +25,22 @@ export function parsePurchaseAmount(
   return q * r;
 }
 
+/** Positive old book value overrides qty × rate for depreciation (migrated assets). */
+export function depreciableAmountForAsset(params: {
+  oldBookValue: string | null;
+  purchaseQty: string | null;
+  unitRate: string | null;
+}): number | null {
+  const raw = params.oldBookValue;
+  if (raw != null && raw !== "") {
+    const ob = Number.parseFloat(raw);
+    if (Number.isFinite(ob) && ob > 0) {
+      return ob;
+    }
+  }
+  return parsePurchaseAmount(params.purchaseQty, params.unitRate);
+}
+
 export function parseDepRatePercent(rate: string | null): number | null {
   if (rate == null || rate === "") return null;
   const n = Number.parseFloat(rate);
@@ -103,13 +119,15 @@ export function computeYearOneDepreciation(params: {
 export function tryComputeYearOneDepreciation(params: {
   purchaseQty: string | null;
   unitRate: string | null;
+  oldBookValue?: string | null;
   groupDepRate: string | null;
   groupDepMethod: string | null;
 }): YearOneDepreciationSummary | null {
-  const purchaseAmount = parsePurchaseAmount(
-    params.purchaseQty,
-    params.unitRate
-  );
+  const purchaseAmount = depreciableAmountForAsset({
+    oldBookValue: params.oldBookValue ?? null,
+    purchaseQty: params.purchaseQty,
+    unitRate: params.unitRate,
+  });
   const depRatePercent = parseDepRatePercent(params.groupDepRate);
   const methodCode = parseDepreciationMethod(params.groupDepMethod);
   if (

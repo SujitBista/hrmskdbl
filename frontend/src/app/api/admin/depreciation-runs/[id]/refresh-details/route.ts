@@ -5,7 +5,7 @@ const COOKIE_NAME = "admin_token";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function POST(_request: NextRequest, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) {
@@ -15,13 +15,27 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
 
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed = (await request.json()) as unknown;
+    if (parsed != null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      body = parsed as Record<string, unknown>;
+    }
+  } catch {
+    body = {};
+  }
+
   let res: Response;
   try {
     res = await fetch(
       `${backendUrl}/api/admin/depreciation-runs/${id}/refresh-details`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
       }
     );
   } catch (err) {
@@ -39,6 +53,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     run?: unknown;
     detailsInserted?: number;
     skippedAssets?: unknown;
+    redirectToRunId?: number;
     error?: string;
   };
   if (!res.ok) {

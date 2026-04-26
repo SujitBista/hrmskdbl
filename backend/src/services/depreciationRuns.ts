@@ -67,6 +67,12 @@ export type DepreciationRunDetailRow = {
   created_at: string;
 };
 
+export type DepreciationRunActor = {
+  adminId: number;
+  adminEmail: string;
+  isSuperAdmin: boolean;
+};
+
 type AssetDepRow = {
   id: number;
   asset_name: string;
@@ -950,9 +956,180 @@ export async function updateDepreciationRunRemarks(
   return r.rows[0] ?? null;
 }
 
-export async function deleteDepreciationRun(id: number): Promise<boolean> {
-  const r = await query(`DELETE FROM hrms_depreciation_runs WHERE id = $1`, [
-    id,
-  ]);
-  return (r.rowCount ?? 0) > 0;
+async function insertDepreciationRunAudit(
+  client: PoolClient,
+  input: {
+    depreciationRunId: number | null;
+    action: "DELETE" | "DELETE_BLOCKED_FINAL" | "VOID";
+    actor: DepreciationRunActor;
+    overrideUsed: boolean;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  try {
+    await client.query(
+      `INSERT INTO hrms_depreciation_run_audit_logs (
+        depreciation_run_id,
+        action,
+        actor_admin_id,
+        actor_admin_email,
+        is_super_admin,
+        override_used,
+        metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        input.depreciationRunId,
+        input.action,
+        input.actor.adminId,
+        input.actor.adminEmail,
+        input.actor.isSuperAdmin,
+        input.overrideUsed,
+        input.metadata ? JSON.stringify(input.metadata) : null,
+      ]
+    );
+  } catch (err) {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? String((err as { code?: unknown }).code ?? "")
+        : "";
+    if (code === "42P01") {
+      // Backward-compatible safety net: allow delete/void to proceed on databases
+      // where the audit migration has not yet been applied.
+      log.warn("Audit log table missing; skipping depreciation run audit insert", {
+        action: input.action,
+        depreciationRunId: input.depreciationRunId,
+      });
+      return;
+    }
+    throw err;
+  }
+}
+
+export async function deleteDepreciationRun(
+  id: number,
+  options: { actor: DepreciationRunActor; allowFinalOverride: boolean }
+): Promise<{ deleted: boolean; blockedFinal: boolean }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const runResult = await client.query<DepreciationRunRow>(
+      `SELECT id, fiscal_year_start, dep_title, quarter_no, months_covered,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
+        status, branch_id, created_at::text, updated_at::text
+       FROM hrms_depreciation_runs
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+    const run = runResult.rows[0];
+    if (!run) {
+      await client.query("COMMIT");
+      return { deleted: false, blockedFinal: false };
+    }
+    if (run.is_final_for_fy && !options.allowFinalOverride) {
+      await insertDepreciationRunAudit(client, {
+        depreciationRunId: run.id,
+        action: "DELETE_BLOCKED_FINAL",
+        actor: options.actor,
+        overrideUsed: false,
+        metadata: {
+          runTitle: run.dep_title,
+          fiscalYearStart: run.fiscal_year_start,
+          reason: "final_run_requires_super_admin_override",
+        },
+      });
+      await client.query("COMMIT");
+      return { deleted: false, blockedFinal: true };
+    }
+
+    // Audit must be inserted while the run row still exists: FK on
+    // `depreciation_run_id` would reject an insert after DELETE.
+    await insertDepreciationRunAudit(client, {
+      depreciationRunId: run.id,
+      action: "DELETE",
+      actor: options.actor,
+      overrideUsed: run.is_final_for_fy && options.allowFinalOverride,
+      metadata: {
+        runTitle: run.dep_title,
+        fiscalYearStart: run.fiscal_year_start,
+        wasFinalForFy: run.is_final_for_fy,
+      },
+    });
+    await client.query(`DELETE FROM hrms_depreciation_runs WHERE id = $1`, [id]);
+    await client.query("COMMIT");
+    return { deleted: true, blockedFinal: false };
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function voidDepreciationRun(
+  id: number,
+  actor: DepreciationRunActor
+): Promise<DepreciationRunRow | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existingResult = await client.query<DepreciationRunRow>(
+      `SELECT id, fiscal_year_start, dep_title, quarter_no, months_covered,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
+        status, branch_id, created_at::text, updated_at::text
+       FROM hrms_depreciation_runs
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    const updateResult = await client.query<DepreciationRunRow>(
+      `UPDATE hrms_depreciation_runs
+       SET status = 'void',
+           is_final_for_fy = false,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, fiscal_year_start, dep_title, quarter_no, months_covered,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
+        status, branch_id, created_at::text, updated_at::text`,
+      [id]
+    );
+    const updated = updateResult.rows[0] ?? null;
+    if (!updated) {
+      await client.query("ROLLBACK");
+      throw new Error("Failed to void depreciation run.");
+    }
+    await insertDepreciationRunAudit(client, {
+      depreciationRunId: id,
+      action: "VOID",
+      actor,
+      overrideUsed: false,
+      metadata: {
+        runTitle: existing.dep_title,
+        fiscalYearStart: existing.fiscal_year_start,
+        priorStatus: existing.status,
+        priorFinalForFy: existing.is_final_for_fy,
+      },
+    });
+    await client.query("COMMIT");
+    return updated;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }

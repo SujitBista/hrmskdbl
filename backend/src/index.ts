@@ -61,6 +61,7 @@ import {
   listDetailsForRun,
   refreshDepreciationRunDetailsFromAssets,
   updateDepreciationRunRemarks,
+  voidDepreciationRun,
 } from "./services/depreciationRuns.js";
 import {
   clampListParams,
@@ -185,6 +186,17 @@ app.post("/api/auth/user/login", async (req, res) => {
 function getBearerToken(req: express.Request): string | undefined {
   const header = req.headers.authorization;
   return header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+}
+
+function isSuperAdminEmail(email: string): boolean {
+  const allowList = String(process.env.SUPER_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+  if (allowList.length === 0) {
+    return false;
+  }
+  return allowList.includes(email.trim().toLowerCase());
 }
 
 app.get("/api/admin/roles", (req, res) => {
@@ -1584,7 +1596,7 @@ app.delete("/api/admin/depreciation-runs/:id", async (req, res) => {
       res.status(401).json({ error: "Unauthorized." });
       return;
     }
-    verifyAdminToken(token);
+    const admin = verifyAdminToken(token);
 
     const idRaw = req.params.id;
     const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
@@ -1593,8 +1605,22 @@ app.delete("/api/admin/depreciation-runs/:id", async (req, res) => {
       return;
     }
 
-    const deleted = await deleteDepreciationRun(id);
-    if (!deleted) {
+    const superAdmin = isSuperAdminEmail(admin.email);
+    const deleted = await deleteDepreciationRun(id, {
+      actor: {
+        adminId: admin.sub,
+        adminEmail: admin.email,
+        isSuperAdmin: superAdmin,
+      },
+      allowFinalOverride: superAdmin,
+    });
+    if (deleted.blockedFinal) {
+      res.status(403).json({
+        error: "Final fiscal year runs cannot be deleted directly. Use Void, or super admin override.",
+      });
+      return;
+    }
+    if (!deleted.deleted) {
       res.status(404).json({ error: "Depreciation run not found." });
       return;
     }
@@ -1602,6 +1628,38 @@ app.delete("/api/admin/depreciation-runs/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not delete depreciation run." });
+  }
+});
+
+app.post("/api/admin/depreciation-runs/:id/void", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+    const admin = verifyAdminToken(token);
+
+    const idRaw = req.params.id;
+    const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+    if (!Number.isFinite(id) || id < 1) {
+      res.status(400).json({ error: "Invalid run id." });
+      return;
+    }
+
+    const run = await voidDepreciationRun(id, {
+      adminId: admin.sub,
+      adminEmail: admin.email,
+      isSuperAdmin: isSuperAdminEmail(admin.email),
+    });
+    if (!run) {
+      res.status(404).json({ error: "Depreciation run not found." });
+      return;
+    }
+    res.json({ run });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not void depreciation run." });
   }
 });
 

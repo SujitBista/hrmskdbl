@@ -229,6 +229,23 @@ async function migrate() {
     ON hrms_depreciation_runs (fiscal_year_start, COALESCE(branch_id, -1))
     WHERE is_final_for_fy = true;
   `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_depreciation_run_audit_logs (
+      id SERIAL PRIMARY KEY,
+      depreciation_run_id INTEGER REFERENCES hrms_depreciation_runs(id) ON DELETE SET NULL,
+      action VARCHAR(64) NOT NULL,
+      actor_admin_id INTEGER,
+      actor_admin_email VARCHAR(255) NOT NULL,
+      is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
+      override_used BOOLEAN NOT NULL DEFAULT FALSE,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_depreciation_run_audit_logs_run_id
+    ON hrms_depreciation_run_audit_logs (depreciation_run_id, created_at DESC);
+  `);
 
   console.log("Migration complete.");
 }

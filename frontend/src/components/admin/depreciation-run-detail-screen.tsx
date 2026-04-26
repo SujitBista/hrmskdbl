@@ -435,7 +435,7 @@ export function DepreciationRunDetailScreen() {
 
       {run && asOfStale && !snapshotPinned ? (
         <div
-          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-950"
           role="status"
         >
           <p>
@@ -446,7 +446,7 @@ export function DepreciationRunDetailScreen() {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="rounded-md border border-transparent px-2.5 py-1 text-xs font-medium text-amber-900 underline-offset-2 hover:underline"
+              className="rounded-md border border-transparent px-2 py-0.5 text-xs font-medium text-amber-900 underline-offset-2 hover:underline"
               disabled={refreshBusy}
               onClick={() => {
                 sessionStorage.setItem(snapshotStorageKey(runId), "1");
@@ -479,30 +479,40 @@ export function DepreciationRunDetailScreen() {
       ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[1480px] w-full border-collapse text-left text-sm">
+        <table className="min-w-[1580px] w-full table-fixed border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
-              <th className="border border-slate-300 px-2 py-2">Fiscal Year</th>
-              <th className="border border-slate-300 px-2 py-2">Asset Code</th>
-              <th className="border border-slate-300 px-2 py-2">Group</th>
-              <th className="border border-slate-300 px-2 py-2">Purchase Date</th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th className="sticky top-0 z-30 w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Asset Code
+              </th>
+              <th className="sticky top-0 z-30 w-[180px] min-w-[180px] whitespace-nowrap border border-slate-300 border-r-slate-400 bg-slate-100 px-2 py-2">
+                Group
+              </th>
+              <th className="sticky top-0 z-30 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 Purchase Price
               </th>
-              <th className="border border-slate-300 px-2 py-2">
-                Register dep. start (BS)
-              </th>
-              <th className="border border-slate-300 px-2 py-2">
-                Depreciation Start (BS)
-              </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">Dep Rate</th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th className="sticky top-0 z-30 w-[170px] min-w-[170px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 This Year Dep Amount
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th className="sticky top-0 z-30 w-[160px] min-w-[160px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 AccumulatedDep
               </th>
-              <th className="border border-slate-300 px-2 py-2 text-right">
+              <th className="sticky top-0 z-30 w-[110px] min-w-[110px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
+                Dep Rate
+              </th>
+              <th className="sticky top-0 z-30 w-[120px] min-w-[120px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Fiscal Year
+              </th>
+              <th className="sticky top-0 z-30 w-[130px] min-w-[130px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Purchase Date
+              </th>
+              <th className="sticky top-0 z-30 w-[180px] min-w-[180px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Register dep. start (BS)
+              </th>
+              <th className="sticky top-0 z-30 w-[190px] min-w-[190px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Depreciation Start (BS)
+              </th>
+              <th className="sticky right-0 top-0 z-40 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-white px-2 py-2 text-right shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
                 Book Value
               </th>
             </tr>
@@ -527,22 +537,44 @@ export function DepreciationRunDetailScreen() {
                 </td>
               </tr>
             ) : (
-              details.map((d) => (
-                <tr key={d.id} className="bg-white odd:bg-slate-50/60">
+              details.map((d, index) => (
+                <tr
+                  key={d.id}
+                  className="bg-white odd:bg-slate-50/60 hover:bg-emerald-50/40"
+                >
+                  <td
+                    className="w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800"
+                    title={formatAssetCodeForDisplay(d.asset_code)}
+                  >
+                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
+                      {formatAssetCodeForDisplay(d.asset_code)}
+                    </span>
+                  </td>
+                  <td
+                    className="w-[180px] min-w-[180px] whitespace-nowrap border border-slate-300 border-r-slate-400 px-2 py-1.5 text-slate-700"
+                    title={d.group_name}
+                  >
+                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
+                      {d.group_name}
+                    </span>
+                  </td>
+                  <td className="w-[150px] min-w-[150px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {formatAmount(d.purchase_price)}
+                  </td>
+                  <td className="w-[170px] min-w-[170px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {formatAmount(d.dep_amount)}
+                  </td>
+                  <td className="w-[160px] min-w-[160px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {formatAmount(d.accumulate_dep)}
+                  </td>
+                  <td className="w-[110px] min-w-[110px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {d.dep_rate}%
+                  </td>
                   <td className="border border-slate-300 px-2 py-1.5 whitespace-nowrap text-slate-800">
                     {formatFiscalYearLabel(d.fiscal_year)}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800">
-                    {formatAssetCodeForDisplay(d.asset_code)}
-                  </td>
-                  <td className="border border-slate-300 px-2 py-1.5 text-slate-700">
-                    {d.group_name}
-                  </td>
-                  <td className="border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800">
                     {d.purchase_date_bs}
-                  </td>
-                  <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
-                    {formatAmount(d.purchase_price)}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800">
                     {d.register_depreciation_start_bs ?? "—"}
@@ -553,16 +585,7 @@ export function DepreciationRunDetailScreen() {
                   >
                     {d.dep_start_date_bs}
                   </td>
-                  <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
-                    {d.dep_rate}%
-                  </td>
-                  <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
-                    {formatAmount(d.dep_amount)}
-                  </td>
-                  <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
-                    {formatAmount(d.accumulate_dep)}
-                  </td>
-                  <td className="border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums font-semibold text-emerald-900">
+                  <td className="sticky right-0 z-20 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-white px-2 py-1.5 text-right font-mono text-xs tabular-nums font-semibold text-emerald-900 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
                     {formatAmount(d.book_value)}
                   </td>
                 </tr>

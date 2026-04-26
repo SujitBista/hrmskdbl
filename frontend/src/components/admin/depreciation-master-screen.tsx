@@ -95,6 +95,10 @@ export function DepreciationMasterScreen() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [quickEnsureLoading, setQuickEnsureLoading] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [voidLoading, setVoidLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,15 +216,13 @@ export function DepreciationMasterScreen() {
     downloadCsv(`depreciation-runs-${Date.now()}.csv`, [header, ...lines].join("\n"));
   }
 
-  async function onDelete() {
+  async function onDeleteConfirmed() {
     if (!selected) return;
-    if (
-      !window.confirm(
-        `Delete depreciation run #${selected.id} (${selected.dep_title} ${formatFiscalYearLabel(selected.fiscal_year_start)})? This cannot be undone.`
-      )
-    ) {
+    if (selected.is_final_for_fy) {
+      window.alert("Final fiscal year runs cannot be deleted directly.");
       return;
     }
+    setDeleteLoading(true);
     try {
       const res = await fetch(`/api/admin/depreciation-runs/${selected.id}`, {
         method: "DELETE",
@@ -230,10 +232,68 @@ export function DepreciationMasterScreen() {
         window.alert(j.error ?? "Delete failed.");
         return;
       }
+      setDeleteConfirmOpen(false);
       setSelectedId(null);
       await load();
     } catch {
       window.alert("Delete failed.");
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  async function onRecalculateSelected() {
+    if (!selected) return;
+    setRecalcLoading(true);
+    try {
+      const res = await fetch(
+        `/api/admin/depreciation-runs/${selected.id}/refresh-details`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ advanceCalculationDateToTodayBs: false }),
+        }
+      );
+      const json = (await res.json()) as { error?: string; redirectToRunId?: number };
+      if (!res.ok) {
+        window.alert(json.error ?? "Could not recalculate this depreciation run.");
+        return;
+      }
+      if (json.redirectToRunId && Number.isFinite(json.redirectToRunId)) {
+        setSelectedId(json.redirectToRunId);
+      }
+      await load();
+    } catch {
+      window.alert("Could not recalculate this depreciation run.");
+    } finally {
+      setRecalcLoading(false);
+    }
+  }
+
+  async function onVoidSelected() {
+    if (!selected) return;
+    if (
+      !window.confirm(
+        `Void depreciation run #${selected.id} (${selected.dep_title})? This keeps the record for audit and marks it as void.`
+      )
+    ) {
+      return;
+    }
+    setVoidLoading(true);
+    try {
+      const res = await fetch(`/api/admin/depreciation-runs/${selected.id}/void`, {
+        method: "POST",
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        window.alert(json.error ?? "Could not void this depreciation run.");
+        return;
+      }
+      await load();
+    } catch {
+      window.alert("Could not void this depreciation run.");
+    } finally {
+      setVoidLoading(false);
     }
   }
 
@@ -314,11 +374,37 @@ export function DepreciationMasterScreen() {
           <button
             type="button"
             className={btnClass}
-            disabled={!selected}
-            onClick={onDelete}
+            disabled={!selected || selected.is_final_for_fy || deleteLoading}
+            onClick={() => setDeleteConfirmOpen(true)}
+            title={
+              selected?.is_final_for_fy
+                ? "Final fiscal year runs cannot be deleted directly."
+                : undefined
+            }
           >
-            Delete
+            {deleteLoading ? "Deleting…" : "Delete"}
           </button>
+          {selected?.is_final_for_fy ? (
+            <>
+              <button
+                type="button"
+                className={btnClass}
+                disabled={recalcLoading}
+                onClick={() => void onRecalculateSelected()}
+              >
+                {recalcLoading ? "Recalculating…" : "Recalculate"}
+              </button>
+              <button
+                type="button"
+                className={btnClass}
+                disabled={voidLoading}
+                onClick={() => void onVoidSelected()}
+                title="Admin only"
+              >
+                {voidLoading ? "Voiding…" : "Void (admin only)"}
+              </button>
+            </>
+          ) : null}
           <Link
             href={selected ? `/admin/dashboard/asset-register/depreciation/${selected.id}` : "#"}
             className={`${btnClass} ${!selected ? "pointer-events-none opacity-50" : ""}`}
@@ -500,6 +586,43 @@ export function DepreciationMasterScreen() {
                 disabled={editSaving}
               >
                 {editSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteConfirmOpen && selected && !selected.is_final_for_fy ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          role="dialog"
+          aria-modal
+          aria-labelledby={`${formId}-delete-title`}
+        >
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+            <h3 id={`${formId}-delete-title`} className="text-base font-semibold text-slate-900">
+              Delete depreciation run #{selected.id}?
+            </h3>
+            <p className="mt-2 text-sm text-slate-600">
+              {selected.dep_title} ({formatFiscalYearLabel(selected.fiscal_year_start)}) will be
+              permanently deleted. This action cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className={btnClass}
+                onClick={() => setDeleteConfirmOpen(false)}
+                disabled={deleteLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={btnPrimary}
+                onClick={() => void onDeleteConfirmed()}
+                disabled={deleteLoading}
+              >
+                {deleteLoading ? "Deleting…" : "Confirm delete"}
               </button>
             </div>
           </div>

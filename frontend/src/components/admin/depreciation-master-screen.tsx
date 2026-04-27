@@ -338,12 +338,11 @@ export function DepreciationMasterScreen() {
             Depreciation Master List
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Fiscal-year depreciation runs (Shrawan–Ashadh). Use{" "}
-            <span className="font-medium">Add New</span> to choose{" "}
-            <span className="font-medium">Full fiscal year</span> or{" "}
-            <span className="font-medium">As of calculation date</span>.{" "}
-            <span className="font-medium">Quick: as of today</span> posts an as-of-today
-            run without opening the form. Select a row for Details.
+            Fiscal-year depreciation runs (Shrawan–Ashadh), each stored as an as-of-date
+            snapshot through the calculation date (capped at fiscal year end). Use{" "}
+            <span className="font-medium">Add New</span> to post a run, or{" "}
+            <span className="font-medium">Quick: as of today</span> for today’s BS date
+            without opening the form. Select a row for Details.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -492,7 +491,7 @@ export function DepreciationMasterScreen() {
             ) : runs.length === 0 ? (
               <tr>
                 <td colSpan={8} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
-                  No depreciation runs yet. Use Add New to post a quarter run.
+                  No depreciation runs yet. Use Add New to post an as-of-date run.
                 </td>
               </tr>
             ) : (

@@ -242,8 +242,8 @@ export type CreateDepreciationRunInput = {
   branchId?: number | null;
   calculationMode?: DepreciationCalculationMode;
   /**
-   * FY_END: through selected fiscal quarter end (existing behavior).
-   * AS_OF_DATE: through calculation date (min with fiscal year end).
+   * AS_OF_DATE: through calculation date (min with fiscal year end). New runs
+   * use this. FY_END is retained for existing stored runs / refresh logic.
    */
   depreciationScopeMode?: DepreciationScopeMode;
   /** Optional BS date for the run; defaults to server “today” in BS. */
@@ -446,7 +446,7 @@ export async function createDepreciationRun(
           typeof input.depreciationScopeMode === "string"
             ? input.depreciationScopeMode
             : null
-        ) ?? "FY_END";
+        ) ?? "AS_OF_DATE";
 
   const customTitle = input.depTitle?.trim();
   const depTitle =
@@ -849,7 +849,6 @@ export async function createDepreciationRunFromMasterForm(input: {
   nepaliMonth: string;
   depTitle?: string | null;
   remarks?: string | null;
-  depreciationScopeMode?: DepreciationScopeMode;
 }): Promise<{
   run: DepreciationRunRow;
   detailsInserted: number;
@@ -884,9 +883,6 @@ export async function createDepreciationRunFromMasterForm(input: {
   const fiscalProgressBs =
     compareBsDateString(calcBs, qEnd) >= 0 ? calcBs : qEnd;
 
-  const scope: DepreciationScopeMode =
-    input.depreciationScopeMode === "AS_OF_DATE" ? "AS_OF_DATE" : "FY_END";
-
   return createDepreciationRun({
     fiscalYearStart: fyStart,
     quarterNo,
@@ -896,7 +892,7 @@ export async function createDepreciationRunFromMasterForm(input: {
     calculationDateBs: calcBs,
     branchId: null,
     calculationMode: "ERP_ACCURATE",
-    depreciationScopeMode: scope,
+    depreciationScopeMode: "AS_OF_DATE",
   });
 }
 
@@ -936,7 +932,6 @@ export async function ensureDepreciationRunForCurrentFiscalYear(): Promise<{
     nepaliMonth,
     depTitle: null,
     remarks: null,
-    depreciationScopeMode: "AS_OF_DATE",
   });
 }
 

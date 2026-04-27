@@ -67,10 +67,6 @@ export function DepreciationNewRunScreen() {
   );
   const [depTitle, setDepTitle] = useState("");
   const [remarks, setRemarks] = useState("");
-  /** FY_END = through selected fiscal quarter end (existing). AS_OF_DATE = through calculation date (capped to FY end). */
-  const [calculationScopeMode, setCalculationScopeMode] = useState<
-    "FY_END" | "AS_OF_DATE"
-  >("FY_END");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** NepaliDatePicker is client-only — avoids SSR / hydration mismatches. */
@@ -122,7 +118,6 @@ export function DepreciationNewRunScreen() {
         calculationDateBs: calc,
         nepaliMonth,
         remarks: remarks.trim() || null,
-        depreciationScopeMode: calculationScopeMode,
       };
       if (depTitle.trim()) {
         body.depTitle = depTitle.trim();
@@ -197,22 +192,10 @@ export function DepreciationNewRunScreen() {
           ) : null}
         </div>
         <p className="mt-2 text-sm text-slate-600">
-          {calculationScopeMode === "FY_END" ? (
-            <>
-              Saving replaces the <span className="font-medium">full fiscal-year</span>{" "}
-              depreciation sheet for that fiscal year and branch scope and
-              recalculates <span className="font-medium">all</span> register assets
-              (through the selected quarter / fiscal year end).
-            </>
-          ) : (
-            <>
-              Saving stores an{" "}
-              <span className="font-medium">as-of-date snapshot</span> for that
-              fiscal year (depreciation through the calculation date, capped at
-              fiscal year end). Multiple as-of dates per year are kept; the same
-              date saved again replaces only that snapshot.
-            </>
-          )}
+          Saving stores an <span className="font-medium">as-of-date snapshot</span>{" "}
+          for that fiscal year (depreciation through the calculation date, capped at
+          fiscal year end). Multiple as-of dates per year are kept; the same date
+          saved again replaces only that snapshot.
         </p>
 
         <form
@@ -220,32 +203,6 @@ export function DepreciationNewRunScreen() {
           className="mt-4 rounded border border-slate-300 bg-white p-6 shadow-sm"
         >
           <div className="grid gap-6 md:grid-cols-2">
-            <div className="grid grid-cols-[minmax(132px,150px)_1fr] items-start gap-x-3 md:col-span-2">
-              <label className={labelClass} htmlFor={`${formId}-scope-mode`}>
-                Calculation mode
-              </label>
-              <div>
-                <select
-                  id={`${formId}-scope-mode`}
-                  className={inputClass}
-                  value={calculationScopeMode}
-                  onChange={(e) =>
-                    setCalculationScopeMode(
-                      e.target.value === "AS_OF_DATE" ? "AS_OF_DATE" : "FY_END"
-                    )
-                  }
-                >
-                  <option value="FY_END">Full fiscal year (through quarter / FY end)</option>
-                  <option value="AS_OF_DATE">As of calculation date</option>
-                </select>
-                <p className="mt-1 text-xs text-slate-500">
-                  {calculationScopeMode === "FY_END"
-                    ? "Uses the selected month to determine which fiscal quarter is closed — depreciation runs through that quarter’s end (Q4 = full fiscal year end)."
-                    : "Depreciation amounts are only through the calculation date (not the full fiscal year)."}
-                </p>
-              </div>
-            </div>
-
             <div className="grid grid-cols-[minmax(132px,150px)_1fr] items-start gap-x-3">
               <span id={`${formId}-calc-bs-label`} className={labelClass}>
                 CalculationDate

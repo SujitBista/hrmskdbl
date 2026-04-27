@@ -724,11 +724,6 @@ app.post("/api/admin/depreciation-runs", async (req, res) => {
       });
       return;
     }
-    const scopeRaw = b.depreciationScopeMode;
-    const depreciationScopeMode =
-      scopeRaw === "AS_OF_DATE" || scopeRaw === "FY_END"
-        ? scopeRaw
-        : undefined;
     const depTitle =
       typeof b.depTitle === "string"
         ? b.depTitle
@@ -746,7 +741,6 @@ app.post("/api/admin/depreciation-runs", async (req, res) => {
       nepaliMonth: nepMonth,
       depTitle,
       remarks: remarks ?? null,
-      depreciationScopeMode,
     });
     res.status(201).json(result);
   } catch (err) {

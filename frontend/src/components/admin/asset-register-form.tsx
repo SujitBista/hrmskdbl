@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { NepaliDatePicker } from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
+import * as XLSX from "xlsx";
 
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import {
@@ -42,6 +43,43 @@ const inputClass =
 
 const sectionHeadingClass =
   "border-b border-emerald-900/10 pb-2 text-sm font-semibold text-slate-800";
+const IMPORT_BATCH_SIZE = 200;
+const IMPORT_RETRY_ROUNDS = 1;
+
+type ImportAssetRow = {
+  asset_code: string | null;
+  asset_name: string;
+  group_name: string;
+  sub_group_name: string | null;
+  ownership_type: string;
+  working_status: string;
+  branch_name: string;
+  department_name: string | null;
+  purchase_date_bs: string;
+  depreciation_start_date_bs: string;
+  purchase_qty: number | null;
+  purchase_amount: number | null;
+  purchase_invoice_no: string | null;
+  old_book_value: number | null;
+};
+
+function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: "",
+  });
+  const expectedHeaders = ["AssetName", "GroupName", "BranchName"];
+  const maxScan = Math.min(rows.length, 40);
+  for (let i = 0; i < maxScan; i += 1) {
+    const row = Array.isArray(rows[i]) ? rows[i] : [];
+    const normalized = row.map((cell) => String(cell ?? "").trim());
+    const hasAll = expectedHeaders.every((h) => normalized.includes(h));
+    if (hasAll) {
+      return i;
+    }
+  }
+  return -1;
+}
 
 export function AssetRegisterForm({
   onSaved,
@@ -84,6 +122,14 @@ export function AssetRegisterForm({
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{
+    totalRows: number;
+    processedRows: number;
+    currentBatch: number;
+    totalBatches: number;
+    retryRound: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -391,6 +437,161 @@ export function AssetRegisterForm({
     }
   }
 
+  async function onImportFile(file: File) {
+    setError(null);
+    setSuccess(null);
+    setImporting(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        setError("The selected file has no worksheet.");
+        return;
+      }
+      const sheet = workbook.Sheets[firstSheetName];
+      if (!sheet) {
+        setError("Could not read worksheet from the selected file.");
+        return;
+      }
+
+      const headerRowIndex = findImportHeaderRow(sheet);
+      if (headerRowIndex < 0) {
+        setError(
+          "Could not find import columns. Make sure the sheet contains headers like AssetName, GroupName, and BranchName."
+        );
+        return;
+      }
+
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+        defval: "",
+        range: headerRowIndex,
+      });
+      if (rows.length === 0) {
+        setError("The worksheet has no rows to import.");
+        return;
+      }
+
+      const payloadRows: ImportAssetRow[] = rows
+        .map((r) => {
+          const assetName = String(r.AssetName ?? "").trim();
+          if (assetName === "") {
+            return null;
+          }
+          const purchaseAmountRaw = String(r.PurchaseAmount ?? "").trim();
+          const qtyRaw = String(r.Qty ?? "").trim();
+          const oldBookRaw = String(r.BookValue ?? "").trim();
+          const parseNumber = (v: string): number | null => {
+            if (v === "") return null;
+            const n = Number(v.replace(/,/g, ""));
+            return Number.isFinite(n) ? n : null;
+          };
+          return {
+            asset_code: String(r.AssetCode ?? "").trim() || null,
+            asset_name: assetName,
+            group_name: String(r.GroupName ?? "").trim(),
+            sub_group_name: String(r.SubGroupName ?? "").trim() || null,
+            ownership_type: String(r.OwnType ?? "").trim() || "Owner",
+            working_status: String(r.WorkingStatus ?? "").trim() || "In use",
+            branch_name: String(r.BranchName ?? "").trim(),
+            department_name:
+              String(r.DepartmentName ?? r.Department ?? "").trim() || null,
+            purchase_date_bs: String(r.PurchaseDateNepali ?? "").trim(),
+            depreciation_start_date_bs: String(r.DepStartDateNepali ?? "").trim(),
+            purchase_qty: parseNumber(qtyRaw),
+            purchase_amount: parseNumber(purchaseAmountRaw),
+            purchase_invoice_no: String(r.Remarks ?? "").trim() || null,
+            old_book_value: parseNumber(oldBookRaw),
+          };
+        })
+        .filter((r): r is ImportAssetRow => r !== null);
+
+      if (payloadRows.length === 0) {
+        setError("No valid asset rows found in the selected file.");
+        return;
+      }
+
+      let importedCount = 0;
+      let skippedCount = 0;
+      const rowErrors: Array<{ row: number; message: string }> = [];
+      let pendingRows = payloadRows.map((row, idx) => ({ row, rowNumber: idx + 1 }));
+      for (let retryRound = 0; retryRound <= IMPORT_RETRY_ROUNDS; retryRound += 1) {
+        if (pendingRows.length === 0) {
+          break;
+        }
+        const currentTotalRows = pendingRows.length;
+        const totalBatches = Math.max(
+          1,
+          Math.ceil(currentTotalRows / IMPORT_BATCH_SIZE)
+        );
+        const nextPending: typeof pendingRows = [];
+        for (
+          let start = 0, batch = 1;
+          start < pendingRows.length;
+          start += IMPORT_BATCH_SIZE, batch += 1
+        ) {
+          const end = Math.min(start + IMPORT_BATCH_SIZE, pendingRows.length);
+          const chunkMeta = pendingRows.slice(start, end);
+          const chunk = chunkMeta.map((item) => item.row);
+          setImportProgress({
+            totalRows: currentTotalRows,
+            processedRows: end,
+            currentBatch: batch,
+            totalBatches,
+            retryRound,
+          });
+          const res = await fetch("/api/admin/assets/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rows: chunk }),
+          });
+          const json = (await res.json()) as {
+            importedCount?: number;
+            skippedCount?: number;
+            errors?: Array<{ row: number; message: string }>;
+            error?: string;
+          };
+          if (!res.ok) {
+            setError(json.error ?? "Could not import asset register.");
+            return;
+          }
+          importedCount += json.importedCount ?? 0;
+          skippedCount += json.skippedCount ?? 0;
+          for (const e of json.errors ?? []) {
+            const source = chunkMeta[e.row - 1];
+            if (!source) continue;
+            if (retryRound < IMPORT_RETRY_ROUNDS) {
+              nextPending.push(source);
+            } else {
+              rowErrors.push({ row: source.rowNumber, message: e.message });
+            }
+          }
+        }
+        pendingRows = nextPending;
+      }
+      const parts = [`Imported ${importedCount} asset(s).`];
+      if (skippedCount > 0) {
+        parts.push(`Skipped ${skippedCount} empty row(s).`);
+      }
+      if (rowErrors.length > 0) {
+        const firstFew = rowErrors
+          .slice(0, 3)
+          .map((e) => `row ${e.row}: ${e.message}`)
+          .join("; ");
+        parts.push(
+          `${rowErrors.length} row(s) failed (${firstFew}${rowErrors.length > 3 ? "; ..." : ""}).`
+        );
+      }
+      setSuccess(parts.join(" "));
+      onSaved?.();
+    } catch {
+      setError("Could not read/import the XLSX file.");
+    } finally {
+      setImporting(false);
+      setImportProgress(null);
+    }
+  }
+
   const lookupsBusy =
     groupsLoading || subGroupsLoading || branchesLoading || departmentsLoading;
   const noGroups = !groupsLoading && groups.length === 0;
@@ -412,6 +613,55 @@ export function AssetRegisterForm({
         Record basic details, classification, and purchase data for a fixed
         asset.
       </p>
+      <div className="mt-4 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-slate-700">
+          Import from Excel (`.xlsx`) using your Assets Register export format.
+        </p>
+        <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">
+          {importing ? "Importing..." : "Import XLSX"}
+          <input
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="sr-only"
+            disabled={importing || submitting || lookupsBusy || noGroups || noBranches}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                void onImportFile(file);
+              }
+              e.currentTarget.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {importProgress ? (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+          <p className="text-sm text-emerald-900">
+            Importing rows... batch {importProgress.currentBatch}/
+            {importProgress.totalBatches}
+            {importProgress.retryRound > 0
+              ? ` (retry ${importProgress.retryRound}/${IMPORT_RETRY_ROUNDS})`
+              : ""}
+          </p>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
+            <div
+              className="h-full rounded-full bg-emerald-600 transition-all"
+              style={{
+                width: `${Math.max(
+                  5,
+                  Math.round(
+                    (importProgress.processedRows / importProgress.totalRows) * 100
+                  )
+                )}%`,
+              }}
+            />
+          </div>
+          <p className="mt-1 text-xs text-emerald-800">
+            {importProgress.processedRows}/{importProgress.totalRows} rows processed
+            this pass.
+          </p>
+        </div>
+      ) : null}
 
       <form className="mt-6 flex flex-col gap-8" onSubmit={onSubmit}>
         <div className="space-y-4">
@@ -888,7 +1138,7 @@ export function AssetRegisterForm({
 
         <button
           type="submit"
-          disabled={submitting || lookupsBusy || noGroups || noBranches}
+          disabled={submitting || importing || lookupsBusy || noGroups || noBranches}
           className="w-full max-w-lg rounded-lg bg-[var(--brand-primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--brand-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {submitting ? "Saving…" : "Save asset"}

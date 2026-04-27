@@ -44,6 +44,33 @@ export type CreateAssetInput = {
   asset_code: string | null;
 };
 
+export type ImportAssetRowInput = {
+  asset_code?: string | null;
+  asset_name?: string | null;
+  group_name?: string | null;
+  sub_group_name?: string | null;
+  ownership_type?: string | null;
+  working_status?: string | null;
+  branch_name?: string | null;
+  department_name?: string | null;
+  purchase_date_bs?: string | null;
+  depreciation_start_date_bs?: string | null;
+  purchase_qty?: number | string | null;
+  purchase_amount?: number | string | null;
+  purchase_invoice_no?: string | null;
+  old_book_value?: number | string | null;
+};
+
+export type ImportAssetsPayload = {
+  rows: ImportAssetRowInput[];
+};
+
+export type ImportAssetsResult = {
+  importedCount: number;
+  skippedCount: number;
+  errors: Array<{ row: number; message: string }>;
+};
+
 /**
  * Branch segment for asset codes: strips wrapping `()`, `[]`, `{}` and `BC:` (any
  * case), then uses the numeric part only (zero-padded to 3 digits when short).
@@ -284,9 +311,301 @@ function parseOptionalNumber(v: unknown): number | null {
   return n;
 }
 
+function normalizeComparableText(v: string): string {
+  return v.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function parseDateBsOrThrow(v: unknown, fieldName: string): string {
+  const text = typeof v === "string" ? v.trim() : "";
+  if (!/^\d{4}\/\d{2}\/\d{2}$/.test(text)) {
+    throw new Error(`${fieldName} must be YYYY/MM/DD (Bikram Sambat).`);
+  }
+  return text;
+}
+
+function parseNumberish(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") {
+    return null;
+  }
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? v : null;
+  }
+  if (typeof v === "string") {
+    const cleaned = v.replace(/,/g, "").trim();
+    if (cleaned === "") return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+export function parseImportAssetsPayload(body: unknown): ImportAssetsPayload {
+  if (!body || typeof body !== "object") {
+    throw new Error("Invalid request body.");
+  }
+  const b = body as Record<string, unknown>;
+  if (!Array.isArray(b.rows)) {
+    throw new Error("rows must be an array.");
+  }
+  return { rows: b.rows as ImportAssetRowInput[] };
+}
+
+export async function importAssetsFromRows(
+  payload: ImportAssetsPayload
+): Promise<ImportAssetsResult> {
+  if (payload.rows.length === 0) {
+    throw new Error("No rows provided for import.");
+  }
+
+  const groupsResult = await query<{ id: number; name: string }>(
+    `SELECT id, name FROM hrms_groups`
+  );
+  const subGroupsResult = await query<{ id: number; group_id: number; name: string }>(
+    `SELECT id, group_id, name FROM hrms_sub_groups`
+  );
+  const branchesResult = await query<{ id: number; branch_name: string }>(
+    `SELECT id, branch_name FROM hrms_branches`
+  );
+  const departmentsResult = await query<{ id: number; name: string }>(
+    `SELECT id, name FROM hrms_departments`
+  );
+
+  const groupByName = new Map<string, { id: number; name: string }>();
+  for (const g of groupsResult.rows) {
+    groupByName.set(normalizeComparableText(g.name), g);
+  }
+
+  const branchByName = new Map<string, { id: number; branch_name: string }>();
+  for (const b of branchesResult.rows) {
+    branchByName.set(normalizeComparableText(b.branch_name), b);
+  }
+
+  const departmentByName = new Map<string, { id: number; name: string }>();
+  for (const d of departmentsResult.rows) {
+    departmentByName.set(normalizeComparableText(d.name), d);
+  }
+
+  const subGroupByGroupName = new Map<
+    number,
+    Map<string, { id: number; group_id: number; name: string }>
+  >();
+  for (const sg of subGroupsResult.rows) {
+    const key = sg.group_id;
+    const existing = subGroupByGroupName.get(key);
+    if (existing) {
+      existing.set(normalizeComparableText(sg.name), sg);
+      continue;
+    }
+    subGroupByGroupName.set(
+      key,
+      new Map([[normalizeComparableText(sg.name), sg]])
+    );
+  }
+
+  let importedCount = 0;
+  let skippedCount = 0;
+  const errors: Array<{ row: number; message: string }> = [];
+  const validatedInputs: Array<{ row: number; input: CreateAssetInput }> = [];
+  const payloadAssetCodeRows = new Map<string, number[]>();
+
+  for (let idx = 0; idx < payload.rows.length; idx += 1) {
+    const row = payload.rows[idx];
+    const rowNumber = idx + 1;
+    try {
+      const assetName = typeof row.asset_name === "string" ? row.asset_name.trim() : "";
+      if (assetName === "") {
+        skippedCount += 1;
+        continue;
+      }
+
+      const groupName = typeof row.group_name === "string" ? row.group_name.trim() : "";
+      if (groupName === "") {
+        throw new Error("Group name is required.");
+      }
+      const group = groupByName.get(normalizeComparableText(groupName));
+      if (!group) {
+        throw new Error(`Group not found: ${groupName}`);
+      }
+
+      const branchName = typeof row.branch_name === "string" ? row.branch_name.trim() : "";
+      if (branchName === "") {
+        throw new Error("Branch name is required.");
+      }
+      const branch = branchByName.get(normalizeComparableText(branchName));
+      if (!branch) {
+        throw new Error(`Branch not found: ${branchName}`);
+      }
+
+      let subGroupId: number | null = null;
+      const subGroupName =
+        typeof row.sub_group_name === "string" ? row.sub_group_name.trim() : "";
+      if (subGroupName !== "") {
+        const groupMap = subGroupByGroupName.get(group.id);
+        const matched = groupMap?.get(normalizeComparableText(subGroupName));
+        if (!matched) {
+          throw new Error(
+            `Sub group not found under "${group.name}": ${subGroupName}`
+          );
+        }
+        subGroupId = matched.id;
+      }
+
+      let departmentId: number | null = null;
+      const departmentName =
+        typeof row.department_name === "string" ? row.department_name.trim() : "";
+      if (departmentName !== "") {
+        const department = departmentByName.get(normalizeComparableText(departmentName));
+        if (department) {
+          departmentId = department.id;
+        }
+      }
+
+      const purchaseDateBs = parseDateBsOrThrow(
+        row.purchase_date_bs,
+        "Purchase date"
+      );
+      const depreciationStartDateBs = parseDateBsOrThrow(
+        row.depreciation_start_date_bs,
+        "Depreciation start date"
+      );
+
+      const ownershipTypeRaw =
+        typeof row.ownership_type === "string" ? row.ownership_type.trim() : "";
+      const ownershipType = ownershipTypeRaw === "" ? "Owner" : ownershipTypeRaw;
+
+      const workingStatusRaw =
+        typeof row.working_status === "string" ? row.working_status.trim() : "";
+      const workingStatusMap: Record<string, string> = {
+        INUSE: "In use",
+        IN_USE: "In use",
+      };
+      const workingStatus =
+        workingStatusRaw === ""
+          ? "In use"
+          : workingStatusMap[workingStatusRaw.toUpperCase()] ?? workingStatusRaw;
+
+      const qty = parseNumberish(row.purchase_qty);
+      const oldBookValue = parseNumberish(row.old_book_value);
+      const purchaseAmount = parseNumberish(row.purchase_amount);
+      const unitRate =
+        purchaseAmount !== null && qty !== null && qty > 0
+          ? purchaseAmount / qty
+          : purchaseAmount;
+
+      const assetCodeRaw = typeof row.asset_code === "string" ? row.asset_code.trim() : "";
+      const purchaseInvoiceNo =
+        typeof row.purchase_invoice_no === "string" && row.purchase_invoice_no.trim() !== ""
+          ? row.purchase_invoice_no.trim()
+          : null;
+
+      const input: CreateAssetInput = {
+        asset_name: assetName,
+        asset_code: assetCodeRaw === "" ? null : assetCodeRaw,
+        group_id: group.id,
+        sub_group_id: subGroupId,
+        ownership_type: ownershipType,
+        working_status: workingStatus,
+        branch_id: branch.id,
+        department_id: departmentId,
+        purchase_date_bs: purchaseDateBs,
+        depreciation_start_date_bs: depreciationStartDateBs,
+        purchase_qty: qty,
+        unit_rate: unitRate,
+        old_book_value: oldBookValue,
+        purchase_invoice_no: purchaseInvoiceNo,
+      };
+      if (input.asset_code) {
+        const key = normalizeComparableText(input.asset_code);
+        const existingRows = payloadAssetCodeRows.get(key);
+        if (existingRows) {
+          existingRows.push(rowNumber);
+        } else {
+          payloadAssetCodeRows.set(key, [rowNumber]);
+        }
+      }
+      validatedInputs.push({ row: rowNumber, input });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not import this row.";
+      errors.push({ row: rowNumber, message });
+    }
+  }
+
+  for (const [code, rowsWithCode] of payloadAssetCodeRows.entries()) {
+    if (rowsWithCode.length > 1) {
+      errors.push({
+        row: rowsWithCode[0]!,
+        message: `Duplicate asset code in file: ${code} (rows: ${rowsWithCode.join(", ")})`,
+      });
+    }
+  }
+
+  const uniqueAssetCodes = [...payloadAssetCodeRows.keys()];
+  if (uniqueAssetCodes.length > 0) {
+    const existingCodeRows = await query<{ asset_code: string }>(
+      `SELECT asset_code
+       FROM hrms_assets
+       WHERE LOWER(TRIM(asset_code)) = ANY($1::text[])`,
+      [uniqueAssetCodes]
+    );
+    const existingCodeSet = new Set(
+      existingCodeRows.rows
+        .map((r) => normalizeComparableText(r.asset_code))
+        .filter((v) => v !== "")
+    );
+    for (const [code, rowsWithCode] of payloadAssetCodeRows.entries()) {
+      if (existingCodeSet.has(code)) {
+        errors.push({
+          row: rowsWithCode[0]!,
+          message: `Asset code already exists: ${code}`,
+        });
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return {
+      importedCount: 0,
+      skippedCount,
+      errors: errors.sort((a, b) => a.row - b.row),
+    };
+  }
+
+  const insertedIds: number[] = [];
+  try {
+    for (const item of validatedInputs) {
+      const created = await createAsset(item.input);
+      insertedIds.push(created.id);
+      importedCount += 1;
+    }
+  } catch (err) {
+    if (insertedIds.length > 0) {
+      await query(`DELETE FROM hrms_assets WHERE id = ANY($1::int[])`, [insertedIds]);
+    }
+    const message =
+      err instanceof Error ? err.message : "Import failed; upload rolled back.";
+    return {
+      importedCount: 0,
+      skippedCount,
+      errors: [{ row: 1, message: `Import failed and rolled back: ${message}` }],
+    };
+  }
+
+  return {
+    importedCount,
+    skippedCount,
+    errors: [],
+  };
+}
+
 async function resolveAssetRefs(
   input: CreateAssetInput
-): Promise<{ branch_code: string; group_code: string }> {
+): Promise<{
+  branch_code: string;
+  group_code: string;
+  group_dep_method: string | null;
+  group_dep_rate: string | null;
+}> {
   const branchRow = await query<{ branch_code: string }>(
     `SELECT branch_code FROM hrms_branches WHERE id = $1`,
     [input.branch_id]
@@ -296,8 +615,12 @@ async function resolveAssetRefs(
     throw new Error("Branch not found.");
   }
 
-  const groupRow = await query<{ code: string }>(
-    `SELECT code FROM hrms_groups WHERE id = $1`,
+  const groupRow = await query<{
+    code: string;
+    dep_method: string | null;
+    dep_rate: string | null;
+  }>(
+    `SELECT code, dep_method, dep_rate::text AS dep_rate FROM hrms_groups WHERE id = $1`,
     [input.group_id]
   );
   const grp = groupRow.rows[0];
@@ -328,7 +651,12 @@ async function resolveAssetRefs(
     }
   }
 
-  return { branch_code: branch.branch_code, group_code: grp.code };
+  return {
+    branch_code: branch.branch_code,
+    group_code: grp.code,
+    group_dep_method: grp.dep_method,
+    group_dep_rate: grp.dep_rate,
+  };
 }
 
 async function assertDepartmentExists(
@@ -361,9 +689,10 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
       `INSERT INTO hrms_assets (
         asset_name, group_id, sub_group_id, ownership_type, working_status,
         branch_id, department_id, purchase_date_bs, depreciation_start_date_bs,
-        purchase_qty, unit_rate, purchase_invoice_no, old_book_value
+        purchase_qty, unit_rate, purchase_invoice_no, old_book_value,
+        dep_method_snapshot, dep_rate_snapshot
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING id, created_at::text`,
       [
         input.asset_name,
@@ -379,6 +708,8 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
         input.unit_rate,
         input.purchase_invoice_no,
         input.old_book_value,
+        refs.group_dep_method,
+        refs.group_dep_rate,
       ]
     );
 

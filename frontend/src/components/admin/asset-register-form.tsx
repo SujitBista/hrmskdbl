@@ -44,7 +44,6 @@ const inputClass =
 const sectionHeadingClass =
   "border-b border-emerald-900/10 pb-2 text-sm font-semibold text-slate-800";
 type ImportAssetRow = {
-  asset_code: string | null;
   asset_name: string;
   group_name: string;
   sub_group_name: string | null;
@@ -57,7 +56,6 @@ type ImportAssetRow = {
   purchase_qty: number | null;
   purchase_amount: number | null;
   purchase_invoice_no: string | null;
-  old_book_value: number | null;
 };
 
 function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
@@ -76,6 +74,21 @@ function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
     }
   }
   return -1;
+}
+
+function formatBranchCodeSegmentForPreview(branchCode: string): string {
+  let t = branchCode
+    .trim()
+    .replace(/[()[\]{}]/g, "")
+    .trim();
+  if (/^BC\s*:/i.test(t)) {
+    const rest = t.replace(/^BC\s*:\s*/i, "").trim();
+    const m = rest.match(/\d+/);
+    if (m) return m[0]!.padStart(3, "0");
+    return rest.length > 0 ? rest : t;
+  }
+  if (/^\d+$/.test(t)) return t.padStart(3, "0");
+  return t;
 }
 
 export function AssetRegisterForm({
@@ -101,7 +114,6 @@ export function AssetRegisterForm({
   const [departmentsError, setDepartmentsError] = useState<string | null>(null);
 
   const [assetName, setAssetName] = useState("");
-  const [assetCode, setAssetCode] = useState("");
   const [groupId, setGroupId] = useState<number | "">("");
   const [subGroupId, setSubGroupId] = useState<number | "">("");
   const [ownershipType, setOwnershipType] = useState<string>("");
@@ -115,7 +127,6 @@ export function AssetRegisterForm({
   const [purchaseDatePickerReady, setPurchaseDatePickerReady] = useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
-  const [oldBookValue, setOldBookValue] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -318,6 +329,28 @@ export function AssetRegisterForm({
     }).format(amount);
   }, [purchaseQty, unitRate]);
 
+  const generatedAssetCodePreview = useMemo(() => {
+    if (groupId === "" || branchId === "" || !purchaseDateBs.trim()) {
+      return "Will auto generate after save";
+    }
+    const group = groups.find((g) => g.id === groupId);
+    const branch = branches.find((b) => b.id === branchId);
+    const dateText = purchaseDateBs.trim();
+    const parts = dateText.split("/").map((p) => p.trim());
+    if (!group?.code || !branch || parts.length !== 3) {
+      return "Will auto generate after save";
+    }
+    const y = Number.parseInt(parts[0] ?? "", 10);
+    const m = Number.parseInt(parts[1] ?? "", 10);
+    const d = Number.parseInt(parts[2] ?? "", 10);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+      return "Will auto generate after save";
+    }
+    const branchSegment = formatBranchCodeSegmentForPreview(branch.branch_code);
+    const groupSegment = group.code.trim().toUpperCase();
+    return `SKDBL/${branchSegment}/${groupSegment}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/######`;
+  }, [groupId, branchId, purchaseDateBs, groups, branches]);
+
   useEffect(() => {
     if (subGroupId === "") return;
     const row = subGroups.find((sg) => sg.id === subGroupId);
@@ -366,8 +399,6 @@ export function AssetRegisterForm({
     try {
       const payload = {
         asset_name: assetName.trim(),
-        asset_code:
-          assetCode.trim() === "" ? null : assetCode.trim(),
         group_id: groupId,
         sub_group_id:
           subGroupsForGroup.length > 0 ? subGroupId : null,
@@ -381,10 +412,6 @@ export function AssetRegisterForm({
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
         unit_rate:
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
-        old_book_value:
-          oldBookValue.trim() === ""
-            ? null
-            : Number.parseFloat(oldBookValue),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
       };
@@ -411,7 +438,6 @@ export function AssetRegisterForm({
           : "Asset register entry saved."
       );
       onSaved?.();
-      setAssetCode("");
       setAssetName("");
       setSubGroupId("");
       setOwnershipType("");
@@ -422,7 +448,6 @@ export function AssetRegisterForm({
       setDepreciationStartDateBs("");
       setPurchaseQty("");
       setUnitRate("");
-      setOldBookValue("");
       setPurchaseInvoiceNo("");
     } catch {
       setError("Something went wrong. Try again.");
@@ -474,14 +499,12 @@ export function AssetRegisterForm({
           }
           const purchaseAmountRaw = String(r.PurchaseAmount ?? "").trim();
           const qtyRaw = String(r.Qty ?? "").trim();
-          const oldBookRaw = String(r.BookValue ?? "").trim();
           const parseNumber = (v: string): number | null => {
             if (v === "") return null;
             const n = Number(v.replace(/,/g, ""));
             return Number.isFinite(n) ? n : null;
           };
           return {
-            asset_code: String(r.AssetCode ?? "").trim() || null,
             asset_name: assetName,
             group_name: String(r.GroupName ?? "").trim(),
             sub_group_name: String(r.SubGroupName ?? "").trim() || null,
@@ -495,7 +518,6 @@ export function AssetRegisterForm({
             purchase_qty: parseNumber(qtyRaw),
             purchase_amount: parseNumber(purchaseAmountRaw),
             purchase_invoice_no: String(r.Remarks ?? "").trim() || null,
-            old_book_value: parseNumber(oldBookRaw),
           };
         })
         .filter((r): r is ImportAssetRow => r !== null);
@@ -661,24 +683,17 @@ export function AssetRegisterForm({
               />
             </div>
             <div>
-              <label
-                htmlFor={`${formId}-asset-code`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Asset code
-              </label>
+              <p className="block text-sm font-medium text-slate-700">Asset code</p>
               <p className="mt-0.5 text-xs text-slate-500">
-                Optional for legacy records. Leave blank to assign automatically
-                (SKDBL / branch / group / purchase date / id).
+                Auto-generated from branch, group, purchase date, and row id.
               </p>
               <input
-                id={`${formId}-asset-code`}
                 type="text"
-                autoComplete="off"
-                value={assetCode}
-                onChange={(ev) => setAssetCode(ev.target.value)}
-                className={inputClass}
-                placeholder="Leave blank to generate"
+                readOnly
+                tabIndex={-1}
+                value={generatedAssetCodePreview}
+                aria-readonly="true"
+                className={`${inputClass} cursor-default bg-slate-50 font-mono text-xs text-slate-700`}
               />
             </div>
           </div>
@@ -1055,29 +1070,6 @@ export function AssetRegisterForm({
                 placeholder="—"
                 aria-readonly="true"
                 className={`${inputClass} cursor-default bg-slate-50 text-slate-800`}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor={`${formId}-old-book`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Old book value
-              </label>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Optional. When set, depreciation uses this instead of purchase
-                amount (for migrated assets).
-              </p>
-              <input
-                id={`${formId}-old-book`}
-                type="number"
-                min={0}
-                step="0.01"
-                inputMode="decimal"
-                value={oldBookValue}
-                onChange={(ev) => setOldBookValue(ev.target.value)}
-                className={inputClass}
-                placeholder="Leave empty for new purchases"
               />
             </div>
             <div>

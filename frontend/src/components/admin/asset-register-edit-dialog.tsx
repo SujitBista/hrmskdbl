@@ -76,9 +76,7 @@ export function AssetRegisterEditDialog({
     useState(false);
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
-  const [oldBookValue, setOldBookValue] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
-  const [assetCode, setAssetCode] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,9 +104,7 @@ export function AssetRegisterEditDialog({
       );
       setPurchaseQty(asset.purchase_qty ?? "");
       setUnitRate(asset.unit_rate ?? "");
-      setOldBookValue(asset.old_book_value ?? "");
       setPurchaseInvoiceNo(asset.purchase_invoice_no ?? "");
-      setAssetCode(asset.asset_code ?? "");
       setError(null);
       el.showModal();
     } else {
@@ -186,8 +182,6 @@ export function AssetRegisterEditDialog({
     try {
       const payload = {
         asset_name: assetName.trim(),
-        asset_code:
-          assetCode.trim() === "" ? null : assetCode.trim(),
         group_id: groupId,
         sub_group_id:
           subGroupsForGroup.length > 0 ? subGroupId : null,
@@ -201,10 +195,6 @@ export function AssetRegisterEditDialog({
           purchaseQty.trim() === "" ? null : Number.parseFloat(purchaseQty),
         unit_rate:
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
-        old_book_value:
-          oldBookValue.trim() === ""
-            ? null
-            : Number.parseFloat(oldBookValue),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
       };
@@ -251,8 +241,8 @@ export function AssetRegisterEditDialog({
               Edit asset
             </h3>
             <p className="mt-1 text-sm text-slate-600">
-              Update the code only when entering a legacy value or correcting
-              it. Leave blank to use the standard generated code (SKDBL / …).
+              Asset codes are generated automatically from branch, group, purchase
+              date, and id.
             </p>
           </div>
 
@@ -276,27 +266,13 @@ export function AssetRegisterEditDialog({
               />
             </div>
             <div>
-              <label
-                htmlFor={`${formId}-asset-code`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Asset code
-              </label>
+              <p className="block text-sm font-medium text-slate-700">Asset code</p>
               <p className="mt-0.5 text-xs text-slate-500">
                 Display:{" "}
                 <span className="font-mono text-slate-700">
                   {formatAssetCodeForDisplay(asset.asset_code)}
                 </span>
               </p>
-              <input
-                id={`${formId}-asset-code`}
-                type="text"
-                autoComplete="off"
-                value={assetCode}
-                onChange={(e) => setAssetCode(e.target.value)}
-                className={fieldClass}
-                placeholder="Blank = auto-generated code"
-              />
             </div>
             <div>
               <label
@@ -607,29 +583,6 @@ export function AssetRegisterEditDialog({
                 placeholder="—"
                 aria-readonly="true"
                 className={`${fieldClass} cursor-default bg-slate-50 text-slate-800`}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor={`${formId}-old-book`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Old book value
-              </label>
-              <p className="mt-0.5 text-xs text-slate-500">
-                When set, depreciation uses this instead of purchase amount
-                (migrated assets). Clear to use qty × rate only.
-              </p>
-              <input
-                id={`${formId}-old-book`}
-                type="number"
-                min={0}
-                step="0.01"
-                inputMode="decimal"
-                value={oldBookValue}
-                onChange={(e) => setOldBookValue(e.target.value)}
-                className={fieldClass}
-                placeholder="Optional"
               />
             </div>
             <div>

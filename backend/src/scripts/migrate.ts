@@ -102,8 +102,6 @@ async function migrate() {
       purchase_qty NUMERIC(18, 4),
       unit_rate NUMERIC(18, 4),
       purchase_invoice_no VARCHAR(255),
-      lifetime_years INTEGER,
-      salvage_value NUMERIC(18, 4),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -155,6 +153,12 @@ async function migrate() {
   await query(`
     ALTER TABLE hrms_assets
     ADD COLUMN IF NOT EXISTS old_book_value NUMERIC(18, 4);
+  `);
+  await query(`
+    ALTER TABLE hrms_assets DROP COLUMN IF EXISTS lifetime_years;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets DROP COLUMN IF EXISTS salvage_value;
   `);
   await query(`
     CREATE TABLE IF NOT EXISTS hrms_depreciation_runs (

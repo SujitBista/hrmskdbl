@@ -24,7 +24,5 @@ export type AssetRegisterRow = {
   /** When set and positive, depreciation uses this instead of qty × unit rate. */
   old_book_value: string | null;
   purchase_invoice_no: string | null;
-  lifetime_years: number | null;
-  salvage_value: string | null;
   created_at: string;
 };

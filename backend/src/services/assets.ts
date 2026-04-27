@@ -22,8 +22,6 @@ export type Asset = {
   unit_rate: string | null;
   old_book_value: string | null;
   purchase_invoice_no: string | null;
-  lifetime_years: number | null;
-  salvage_value: string | null;
   created_at: string;
 };
 
@@ -405,8 +403,8 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
              (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
              a.purchase_date_bs,
              a.depreciation_start_date_bs,
-             a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no, a.lifetime_years,
-             a.salvage_value::text, a.created_at::text`,
+             a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no,
+             a.created_at::text`,
           [candidateCode, row.id]
         );
         break;
@@ -493,8 +491,8 @@ export async function updateAsset(
           (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
           a.purchase_date_bs,
           a.depreciation_start_date_bs,
-          a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no, a.lifetime_years,
-          a.salvage_value::text, a.created_at::text`,
+          a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no,
+          a.created_at::text`,
         [
           candidateCode,
           input.asset_name,
@@ -572,8 +570,6 @@ export type AssetListRow = {
   unit_rate: string | null;
   old_book_value: string | null;
   purchase_invoice_no: string | null;
-  lifetime_years: number | null;
-  salvage_value: string | null;
   created_at: string;
 };
 
@@ -614,8 +610,6 @@ const ASSET_LIST_SELECT = `
     a.unit_rate::text,
     a.old_book_value::text,
     a.purchase_invoice_no,
-    a.lifetime_years,
-    a.salvage_value::text,
     a.created_at::text
   FROM hrms_assets a
   INNER JOIN hrms_groups g ON g.id = a.group_id

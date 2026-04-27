@@ -206,8 +206,25 @@ export async function getDepreciationRunById(
 }
 
 export async function listDetailsForRun(
-  runId: number
-): Promise<DepreciationRunDetailRow[]> {
+  runId: number,
+  options?: { page?: number; pageSize?: number }
+): Promise<{ rows: DepreciationRunDetailRow[]; total: number }> {
+  const pageRaw = options?.page ?? 1;
+  const pageSizeRaw = options?.pageSize ?? 100;
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+  const pageSize = Number.isFinite(pageSizeRaw)
+    ? Math.min(500, Math.max(1, Math.floor(pageSizeRaw)))
+    : 100;
+  const offset = (page - 1) * pageSize;
+
+  const countResult = await query<{ total: string }>(
+    `SELECT COUNT(*)::text AS total
+     FROM hrms_depreciation_run_details
+     WHERE depreciation_run_id = $1`,
+    [runId]
+  );
+  const total = Number.parseInt(countResult.rows[0]?.total ?? "0", 10) || 0;
+
   const r = await query<DepreciationRunDetailRow>(
     `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code, d.fiscal_year,
       d.asset_name, a.purchase_date_bs,
@@ -224,10 +241,11 @@ export async function listDetailsForRun(
      FROM hrms_depreciation_run_details d
      INNER JOIN hrms_assets a ON a.id = d.asset_id
      WHERE d.depreciation_run_id = $1
-     ORDER BY d.asset_id ASC`,
-    [runId]
+     ORDER BY d.asset_id ASC
+     LIMIT $2 OFFSET $3`,
+    [runId, pageSize, offset]
   );
-  return r.rows;
+  return { rows: r.rows, total };
 }
 
 export type DepreciationSkippedAsset = {

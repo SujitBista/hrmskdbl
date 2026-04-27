@@ -29,6 +29,7 @@ type DetailRow = {
   depreciation_run_id: number;
   asset_id: number;
   asset_code: string | null;
+  asset_name: string;
   fiscal_year: number;
   purchase_date_bs: string;
   purchase_price: string;
@@ -46,6 +47,13 @@ type DetailRow = {
   register_depreciation_start_bs?: string;
   balance_amount: string;
   created_at: string;
+};
+
+type DetailsPagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 };
 
 function formatAmount(value: string): string {
@@ -91,6 +99,14 @@ export function DepreciationRunDetailScreen() {
 
   const [run, setRun] = useState<DepreciationRunListRow | null>(null);
   const [details, setDetails] = useState<DetailRow[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  const [pagination, setPagination] = useState<DetailsPagination>({
+    page: 1,
+    pageSize: 100,
+    total: 0,
+    totalPages: 1,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [skippedNotice, setSkippedNotice] = useState<
@@ -98,12 +114,17 @@ export function DepreciationRunDetailScreen() {
   >(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
   const [todayBs, setTodayBs] = useState<string | null>(null);
   const [snapshotPinned, setSnapshotPinned] = useState(false);
   const autoRecalcAttemptedRef = useRef(false);
 
   useEffect(() => {
     autoRecalcAttemptedRef.current = false;
+  }, [runId]);
+
+  useEffect(() => {
+    setPage(1);
   }, [runId]);
 
   const load = useCallback(async () => {
@@ -116,13 +137,18 @@ export function DepreciationRunDetailScreen() {
     setError(null);
     let endLoading = true;
     try {
-      const res = await fetch(`/api/admin/depreciation-runs/${runId}`, {
+      const searchParams = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      const res = await fetch(`/api/admin/depreciation-runs/${runId}?${searchParams.toString()}`, {
         cache: "no-store",
         credentials: "same-origin",
       });
       const json = (await res.json()) as {
         run?: DepreciationRunListRow;
         details?: DetailRow[];
+        pagination?: DetailsPagination;
         todayBs?: string | null;
         error?: string;
       };
@@ -136,10 +162,23 @@ export function DepreciationRunDetailScreen() {
         setError(json.error ?? "Could not load run.");
         setRun(null);
         setDetails([]);
+        setPagination({
+          page,
+          pageSize,
+          total: 0,
+          totalPages: 1,
+        });
         return;
       }
       setRun(json.run ?? null);
       setDetails(json.details ?? []);
+      const serverPagination = json.pagination;
+      setPagination({
+        page: serverPagination?.page ?? page,
+        pageSize: serverPagination?.pageSize ?? pageSize,
+        total: serverPagination?.total ?? 0,
+        totalPages: Math.max(1, serverPagination?.totalPages ?? 1),
+      });
       const tb = json.todayBs;
       setTodayBs(
         typeof tb === "string" && tb.trim()
@@ -150,12 +189,18 @@ export function DepreciationRunDetailScreen() {
       setError("Could not load run.");
       setRun(null);
       setDetails([]);
+      setPagination({
+        page,
+        pageSize,
+        total: 0,
+        totalPages: 1,
+      });
     } finally {
       if (endLoading) {
         setLoading(false);
       }
     }
-  }, [runId, router]);
+  }, [runId, router, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -286,8 +331,9 @@ export function DepreciationRunDetailScreen() {
     }
   }, []);
 
-  function exportDetails() {
+  async function exportDetails() {
     if (!run) return;
+    setExportBusy(true);
     const modeLine =
       (run.depreciation_scope_mode ?? "FY_END") === "AS_OF_DATE"
         ? `Calculation mode: AS_OF_DATE; through calculation date ${run.calculation_date_bs} (BS) (capped at fiscal year end).`
@@ -306,26 +352,68 @@ export function DepreciationRunDetailScreen() {
       "AccumulatedDep",
       "BookValue",
     ].join(",");
-    const lines = details.map((d) =>
-      [
-        formatFiscalYearLabel(d.fiscal_year),
-        `"${formatAssetCodeForDisplay(d.asset_code).replace(/"/g, '""')}"`,
-        `"${d.group_name.replace(/"/g, '""')}"`,
-        d.purchase_date_bs,
-        d.purchase_price,
-        d.register_depreciation_start_bs ?? "",
-        d.dep_start_date_bs,
-        d.dep_rate,
-        d.dep_days,
-        d.dep_amount,
-        d.accumulate_dep,
-        d.book_value,
-      ].join(",")
-    );
-    downloadCsv(
-      `depreciation-run-${run.id}-details.csv`,
-      [`"${modeLine.replace(/"/g, '""')}"`, header, ...lines].join("\n")
-    );
+    try {
+      const exportPageSize = 500;
+      const firstRes = await fetch(
+        `/api/admin/depreciation-runs/${runId}?page=1&pageSize=${exportPageSize}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        }
+      );
+      const firstJson = (await firstRes.json()) as {
+        details?: DetailRow[];
+        pagination?: DetailsPagination;
+        error?: string;
+      };
+      if (!firstRes.ok) {
+        setRefreshError(firstJson.error ?? "Could not export details.");
+        return;
+      }
+      const totalPages = Math.max(1, firstJson.pagination?.totalPages ?? 1);
+      const allDetails: DetailRow[] = [...(firstJson.details ?? [])];
+
+      for (let currentPage = 2; currentPage <= totalPages; currentPage += 1) {
+        const res = await fetch(
+          `/api/admin/depreciation-runs/${runId}?page=${currentPage}&pageSize=${exportPageSize}`,
+          {
+            cache: "no-store",
+            credentials: "same-origin",
+          }
+        );
+        const json = (await res.json()) as { details?: DetailRow[]; error?: string };
+        if (!res.ok) {
+          setRefreshError(json.error ?? "Could not export details.");
+          return;
+        }
+        allDetails.push(...(json.details ?? []));
+      }
+
+      const lines = allDetails.map((d) =>
+        [
+          formatFiscalYearLabel(d.fiscal_year),
+          `"${formatAssetCodeForDisplay(d.asset_code).replace(/"/g, '""')}"`,
+          `"${d.group_name.replace(/"/g, '""')}"`,
+          d.purchase_date_bs,
+          d.purchase_price,
+          d.register_depreciation_start_bs ?? "",
+          d.dep_start_date_bs,
+          d.dep_rate,
+          d.dep_days,
+          d.dep_amount,
+          d.accumulate_dep,
+          d.book_value,
+        ].join(",")
+      );
+      downloadCsv(
+        `depreciation-run-${run.id}-details.csv`,
+        [`"${modeLine.replace(/"/g, '""')}"`, header, ...lines].join("\n")
+      );
+    } catch {
+      setRefreshError("Could not export details.");
+    } finally {
+      setExportBusy(false);
+    }
   }
 
   if (!Number.isFinite(runId) || runId < 1) {
@@ -406,10 +494,12 @@ export function DepreciationRunDetailScreen() {
           <button
             type="button"
             className="self-start rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-            disabled={!run || details.length === 0}
-            onClick={exportDetails}
+            disabled={!run || pagination.total === 0 || exportBusy}
+            onClick={() => {
+              void exportDetails();
+            }}
           >
-            Export
+            {exportBusy ? "Exporting..." : "Export"}
           </button>
         </div>
       </div>
@@ -480,8 +570,64 @@ export function DepreciationRunDetailScreen() {
         </div>
       ) : null}
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+        <p className="text-slate-600">
+          Showing{" "}
+          <span className="font-medium text-slate-800">
+            {pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1}
+          </span>{" "}
+          -{" "}
+          <span className="font-medium text-slate-800">
+            {Math.min(pagination.page * pagination.pageSize, pagination.total)}
+          </span>{" "}
+          of <span className="font-medium text-slate-800">{pagination.total}</span> rows
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-slate-600" htmlFor="dep-details-page-size">
+            Rows per page
+          </label>
+          <select
+            id="dep-details-page-size"
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+            value={pageSize}
+            disabled={loading}
+            onChange={(e) => {
+              const next = Number.parseInt(e.target.value, 10);
+              setPageSize(Number.isFinite(next) ? next : 100);
+              setPage(1);
+            }}
+          >
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={500}>500</option>
+          </select>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-50"
+            disabled={loading || pagination.page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            Prev
+          </button>
+          <span className="min-w-[86px] text-center text-slate-700">
+            Page {pagination.page} / {pagination.totalPages}
+          </span>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-50"
+            disabled={loading || pagination.page >= pagination.totalPages}
+            onClick={() =>
+              setPage((p) => Math.min(pagination.totalPages, p + 1))
+            }
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[1700px] w-full table-fixed border-collapse text-left text-sm">
+        <table className="min-w-[1860px] w-full table-fixed border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
               <th className="sticky top-0 z-30 w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
@@ -489,6 +635,9 @@ export function DepreciationRunDetailScreen() {
               </th>
               <th className="sticky top-0 z-30 w-[180px] min-w-[180px] whitespace-nowrap border border-slate-300 border-r-slate-400 bg-slate-100 px-2 py-2">
                 Group
+              </th>
+              <th className="sticky top-0 z-30 w-[280px] min-w-[280px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Asset Name
               </th>
               <th className="sticky top-0 z-30 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 Purchase Price
@@ -526,7 +675,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={13}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -535,14 +684,14 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={13}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
                 </td>
               </tr>
             ) : (
-              details.map((d, index) => (
+              details.map((d) => (
                 <tr
                   key={d.id}
                   className="bg-white odd:bg-slate-50/60 hover:bg-emerald-50/40"
@@ -561,6 +710,14 @@ export function DepreciationRunDetailScreen() {
                   >
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
                       {d.group_name}
+                    </span>
+                  </td>
+                  <td
+                    className="w-[280px] min-w-[280px] whitespace-nowrap border border-slate-300 px-2 py-1.5 text-slate-700"
+                    title={d.asset_name}
+                  >
+                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
+                      {d.asset_name}
                     </span>
                   </td>
                   <td className="w-[150px] min-w-[150px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">

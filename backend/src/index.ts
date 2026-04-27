@@ -769,6 +769,19 @@ app.get("/api/admin/depreciation-runs/:id", async (req, res) => {
   }
   const idRaw = req.params.id;
   const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  const pageRaw =
+    typeof req.query.page === "string"
+      ? Number.parseInt(req.query.page, 10)
+      : NaN;
+  const pageSizeRaw =
+    typeof req.query.pageSize === "string"
+      ? Number.parseInt(req.query.pageSize, 10)
+      : NaN;
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+  const pageSize =
+    Number.isFinite(pageSizeRaw) && pageSizeRaw > 0
+      ? Math.min(500, pageSizeRaw)
+      : 100;
   if (!Number.isFinite(id) || id < 1) {
     res.status(400).json({ error: "Invalid run id." });
     return;
@@ -779,8 +792,17 @@ app.get("/api/admin/depreciation-runs/:id", async (req, res) => {
       res.status(404).json({ error: "Depreciation run not found." });
       return;
     }
-    const details = await listDetailsForRun(id);
-    res.json({ run, details });
+    const detailsResult = await listDetailsForRun(id, { page, pageSize });
+    res.json({
+      run,
+      details: detailsResult.rows,
+      pagination: {
+        page,
+        pageSize,
+        total: detailsResult.total,
+        totalPages: Math.max(1, Math.ceil(detailsResult.total / pageSize)),
+      },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not load depreciation run." });

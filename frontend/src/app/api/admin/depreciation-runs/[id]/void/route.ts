@@ -32,7 +32,15 @@ export async function POST(_request: Request, context: RouteContext) {
     );
   }
 
-  const data = (await res.json()) as { run?: unknown; error?: string };
+  let data = {} as { run?: unknown; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       { error: data.error ?? "Could not void depreciation run." },

@@ -11,11 +11,31 @@ export async function GET() {
   }
 
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
-  const res = await fetch(`${backendUrl}/api/admin/roles`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/api/admin/roles`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as { roles?: string[]; error?: string };
+  let data = {} as { roles?: string[]; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(

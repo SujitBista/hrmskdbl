@@ -32,7 +32,19 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     );
   }
 
-  const data = (await res.json()) as { run?: unknown; details?: unknown; error?: string };
+  let data = {} as {
+    run?: unknown;
+    details?: unknown;
+    error?: string;
+  };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       { error: data.error ?? "Could not load depreciation run." },
@@ -80,7 +92,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     );
   }
 
-  const data = (await res.json()) as { run?: unknown; error?: string };
+  let data = {} as { run?: unknown; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       { error: data.error ?? "Could not update depreciation run." },
@@ -119,7 +139,15 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
   }
 
   if (!res.ok) {
-    const data = (await res.json()) as { error?: string };
+    let data = {} as { error?: string };
+    try {
+      data = (await res.json()) as typeof data;
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid response from API server." },
+        { status: 502 }
+      );
+    }
     return NextResponse.json(
       { error: data.error ?? "Could not delete depreciation run." },
       { status: res.status }

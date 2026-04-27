@@ -31,7 +31,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const data = (await res.json()) as { runs?: unknown; error?: string };
+  let data = {} as { runs?: unknown; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       { error: data.error ?? "Could not load depreciation runs." },
@@ -78,11 +86,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const data = (await res.json()) as {
+  let data = {} as {
     run?: unknown;
     detailsInserted?: number;
+    skippedAssets?: unknown;
     error?: string;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       { error: data.error ?? "Could not create depreciation run." },

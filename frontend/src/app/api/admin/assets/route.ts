@@ -30,13 +30,21 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const data = (await res.json()) as {
+  let data = {} as {
     assets?: unknown;
     total?: number;
     page?: number;
     pageSize?: number;
     error?: string;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(

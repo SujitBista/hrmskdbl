@@ -34,12 +34,20 @@ export async function POST() {
     );
   }
 
-  const data = (await res.json()) as {
+  let data = {} as {
     run?: unknown;
     detailsInserted?: number;
     skippedAssets?: unknown;
     error?: string;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       {

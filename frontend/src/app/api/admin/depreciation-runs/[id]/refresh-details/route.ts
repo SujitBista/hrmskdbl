@@ -49,13 +49,21 @@ export async function POST(request: NextRequest, context: RouteContext) {
     );
   }
 
-  const data = (await res.json()) as {
+  let data = {} as {
     run?: unknown;
     detailsInserted?: number;
     skippedAssets?: unknown;
     redirectToRunId?: number;
     error?: string;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
   if (!res.ok) {
     return NextResponse.json(
       { error: data.error ?? "Could not refresh depreciation run details." },

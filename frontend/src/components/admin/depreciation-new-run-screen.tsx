@@ -18,7 +18,7 @@ import {
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 
 const inputClass =
-  "w-full rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20";
+  "w-full rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)]/50 focus:ring-2 focus:ring-[var(--brand-primary)]/20";
 
 const fieldLabel =
   "mb-1 block text-sm font-medium leading-5 text-slate-700";
@@ -33,7 +33,7 @@ const sectionGroupTitleClass =
   "text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-500";
 
 const btnSaveClass =
-  "inline-flex min-w-[7.5rem] items-center justify-center gap-2 rounded-lg border border-blue-700/20 bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/10 transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex min-w-[7.5rem] items-center justify-center gap-2 rounded-lg border border-[rgb(15_81_50_/_0.25)] bg-[var(--brand-primary)] px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-[rgb(15_81_50_/_0.18)] transition hover:bg-[var(--brand-primary-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-primary)] disabled:cursor-not-allowed disabled:opacity-60";
 
 /** Secondary action — light outline, brand green; does not compete with solid Save. */
 const btnCancelClass =
@@ -222,7 +222,7 @@ export function DepreciationNewRunScreen() {
                   English BS (YYYY/MM/DD).
                 </p>
                 <div
-                  className="relative mt-2 w-full rounded-lg focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:ring-offset-0"
+                  className="relative mt-2 w-full rounded-lg focus-within:ring-2 focus-within:ring-[var(--brand-primary)]/20 focus-within:ring-offset-0"
                   aria-labelledby={`${formId}-calc-bs-label`}
                   aria-describedby={`${formId}-calc-bs-hint`}
                 >

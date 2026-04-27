@@ -38,15 +38,10 @@ export type CreateAssetInput = {
   depreciation_start_date_bs: string;
   purchase_qty: number | null;
   unit_rate: number | null;
-  /** Optional; when positive, depreciation runs use this as cost basis instead of qty × unit rate. */
-  old_book_value: number | null;
   purchase_invoice_no: string | null;
-  /** Legacy / manual code; omit or null to auto-generate SKDBL/… */
-  asset_code: string | null;
 };
 
 export type ImportAssetRowInput = {
-  asset_code?: string | null;
   asset_name?: string | null;
   group_name?: string | null;
   sub_group_name?: string | null;
@@ -59,7 +54,6 @@ export type ImportAssetRowInput = {
   purchase_qty?: number | string | null;
   purchase_amount?: number | string | null;
   purchase_invoice_no?: string | null;
-  old_book_value?: number | string | null;
 };
 
 export type ImportAssetsPayload = {
@@ -199,40 +193,11 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
 
   const purchase_qty = parseOptionalNumber(b.purchase_qty);
   const unit_rate = parseOptionalNumber(b.unit_rate);
-  let old_book_value: number | null = null;
-  if (
-    b.old_book_value !== null &&
-    b.old_book_value !== undefined &&
-    b.old_book_value !== ""
-  ) {
-    const parsedOb = parseOptionalNumber(b.old_book_value);
-    if (parsedOb === null) {
-      throw new Error("Invalid old book value.");
-    }
-    if (parsedOb < 0) {
-      throw new Error("Old book value cannot be negative.");
-    }
-    old_book_value = parsedOb === 0 ? null : parsedOb;
-  }
   const purchase_invoice_no =
     typeof b.purchase_invoice_no === "string" &&
     b.purchase_invoice_no.trim() !== ""
       ? b.purchase_invoice_no.trim()
       : null;
-
-  let asset_code: string | null = null;
-  if (b.asset_code !== null && b.asset_code !== undefined && b.asset_code !== "") {
-    if (typeof b.asset_code !== "string") {
-      throw new Error("Invalid asset code.");
-    }
-    const t = b.asset_code.trim();
-    if (t !== "") {
-      if (t.length > 256) {
-        throw new Error("Asset code must be at most 256 characters.");
-      }
-      asset_code = t;
-    }
-  }
 
   if (!asset_name) {
     throw new Error("Asset name is required.");
@@ -279,9 +244,7 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     depreciation_start_date_bs,
     purchase_qty,
     unit_rate,
-    old_book_value,
     purchase_invoice_no,
-    asset_code,
   };
 }
 
@@ -290,9 +253,6 @@ function resolveAssetCodeForRow(
   hrmsAssetId: number,
   refs: { branch_code: string; group_code: string }
 ): string {
-  if (input.asset_code != null) {
-    return input.asset_code;
-  }
   return buildAssetCode({
     hrmsAssetId,
     branchCode: refs.branch_code,
@@ -438,7 +398,6 @@ export async function importAssetsFromRows(
   let skippedCount = 0;
   const errors: Array<{ row: number; message: string }> = [];
   const validatedInputs: Array<{ row: number; input: CreateAssetInput }> = [];
-  const payloadAssetCodeRows = new Map<string, number[]>();
 
   for (let idx = 0; idx < payload.rows.length; idx += 1) {
     const row = payload.rows[idx];
@@ -515,14 +474,12 @@ export async function importAssetsFromRows(
           : workingStatusMap[workingStatusRaw.toUpperCase()] ?? workingStatusRaw;
 
       const qty = parseNumberish(row.purchase_qty);
-      const oldBookValue = parseNumberish(row.old_book_value);
       const purchaseAmount = parseNumberish(row.purchase_amount);
       const unitRate =
         purchaseAmount !== null && qty !== null && qty > 0
           ? purchaseAmount / qty
           : purchaseAmount;
 
-      const assetCodeRaw = typeof row.asset_code === "string" ? row.asset_code.trim() : "";
       const purchaseInvoiceNo =
         typeof row.purchase_invoice_no === "string" && row.purchase_invoice_no.trim() !== ""
           ? row.purchase_invoice_no.trim()
@@ -530,7 +487,6 @@ export async function importAssetsFromRows(
 
       const input: CreateAssetInput = {
         asset_name: assetName,
-        asset_code: assetCodeRaw === "" ? null : assetCodeRaw,
         group_id: group.id,
         sub_group_id: subGroupId,
         ownership_type: ownershipType,
@@ -541,55 +497,13 @@ export async function importAssetsFromRows(
         depreciation_start_date_bs: depreciationStartDateBs,
         purchase_qty: qty,
         unit_rate: unitRate,
-        old_book_value: oldBookValue,
         purchase_invoice_no: purchaseInvoiceNo,
       };
-      if (input.asset_code) {
-        const key = normalizeComparableText(input.asset_code);
-        const existingRows = payloadAssetCodeRows.get(key);
-        if (existingRows) {
-          existingRows.push(rowNumber);
-        } else {
-          payloadAssetCodeRows.set(key, [rowNumber]);
-        }
-      }
       validatedInputs.push({ row: rowNumber, input });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Could not import this row.";
       errors.push({ row: rowNumber, message });
-    }
-  }
-
-  for (const [code, rowsWithCode] of payloadAssetCodeRows.entries()) {
-    if (rowsWithCode.length > 1) {
-      errors.push({
-        row: rowsWithCode[0]!,
-        message: `Duplicate asset code in file: ${code} (rows: ${rowsWithCode.join(", ")})`,
-      });
-    }
-  }
-
-  const uniqueAssetCodes = [...payloadAssetCodeRows.keys()];
-  if (uniqueAssetCodes.length > 0) {
-    const existingCodeRows = await query<{ asset_code: string }>(
-      `SELECT asset_code
-       FROM hrms_assets
-       WHERE LOWER(TRIM(asset_code)) = ANY($1::text[])`,
-      [uniqueAssetCodes]
-    );
-    const existingCodeSet = new Set(
-      existingCodeRows.rows
-        .map((r) => normalizeComparableText(r.asset_code))
-        .filter((v) => v !== "")
-    );
-    for (const [code, rowsWithCode] of payloadAssetCodeRows.entries()) {
-      if (existingCodeSet.has(code)) {
-        errors.push({
-          row: rowsWithCode[0]!,
-          message: `Asset code already exists: ${code}`,
-        });
-      }
     }
   }
 
@@ -745,7 +659,7 @@ async function createAssetWithClient(
         input.purchase_qty,
         input.unit_rate,
         input.purchase_invoice_no,
-        input.old_book_value,
+        null,
         refs.group_dep_method,
         refs.group_dep_rate,
       ]
@@ -757,13 +671,10 @@ async function createAssetWithClient(
     }
 
     const baseAssetCode = resolveAssetCodeForRow(input, row.id, refs);
-    const isAutoGenerated = input.asset_code == null;
 
     let updated: { rows: Asset[] } | null = null;
     for (let attempt = 0; attempt <= MAX_AUTO_ASSET_CODE_RETRIES; attempt += 1) {
-      const candidateCode = isAutoGenerated
-        ? buildAssetCodeRetryCandidate(baseAssetCode, attempt)
-        : baseAssetCode;
+      const candidateCode = buildAssetCodeRetryCandidate(baseAssetCode, attempt);
       try {
         updated = await client.query<Asset>(
           `UPDATE hrms_assets AS a SET asset_code = $1 WHERE a.id = $2
@@ -778,11 +689,7 @@ async function createAssetWithClient(
         );
         break;
       } catch (err) {
-        if (
-          isAutoGenerated &&
-          isAssetCodeUniqueViolation(err) &&
-          attempt < MAX_AUTO_ASSET_CODE_RETRIES
-        ) {
+        if (isAssetCodeUniqueViolation(err) && attempt < MAX_AUTO_ASSET_CODE_RETRIES) {
           continue;
         }
         throw err;
@@ -843,13 +750,10 @@ export async function updateAsset(
   await assertDepartmentExists(input.department_id);
   const refs = await resolveAssetRefs(input);
   const baseAssetCode = resolveAssetCodeForRow(input, id, refs);
-  const isAutoGenerated = input.asset_code == null;
   let result: { rows: Asset[] } | null = null;
 
   for (let attempt = 0; attempt <= MAX_AUTO_ASSET_CODE_RETRIES; attempt += 1) {
-    const candidateCode = isAutoGenerated
-      ? buildAssetCodeRetryCandidate(baseAssetCode, attempt)
-      : baseAssetCode;
+    const candidateCode = buildAssetCodeRetryCandidate(baseAssetCode, attempt);
     try {
       result = await query<Asset>(
         `UPDATE hrms_assets AS a SET
@@ -889,17 +793,13 @@ export async function updateAsset(
           input.purchase_qty,
           input.unit_rate,
           input.purchase_invoice_no,
-          input.old_book_value,
+          null,
           id,
         ]
       );
       break;
     } catch (err) {
-      if (
-        isAutoGenerated &&
-        isAssetCodeUniqueViolation(err) &&
-        attempt < MAX_AUTO_ASSET_CODE_RETRIES
-      ) {
+      if (isAssetCodeUniqueViolation(err) && attempt < MAX_AUTO_ASSET_CODE_RETRIES) {
         continue;
       }
       throw err;

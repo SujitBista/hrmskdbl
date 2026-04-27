@@ -301,6 +301,7 @@ export function DepreciationRunDetailScreen() {
       "RegisterDepStartBS",
       "DepCommencementBS",
       "DepRate",
+      "DepDays",
       "ThisYearDepAmount",
       "AccumulatedDep",
       "BookValue",
@@ -315,6 +316,7 @@ export function DepreciationRunDetailScreen() {
         d.register_depreciation_start_bs ?? "",
         d.dep_start_date_bs,
         d.dep_rate,
+        d.dep_days,
         d.dep_amount,
         d.accumulate_dep,
         d.book_value,
@@ -479,7 +481,7 @@ export function DepreciationRunDetailScreen() {
       ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[1580px] w-full table-fixed border-collapse text-left text-sm">
+        <table className="min-w-[1700px] w-full table-fixed border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
               <th className="sticky top-0 z-30 w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
@@ -499,6 +501,9 @@ export function DepreciationRunDetailScreen() {
               </th>
               <th className="sticky top-0 z-30 w-[110px] min-w-[110px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 Dep Rate
+              </th>
+              <th className="sticky top-0 z-30 w-[100px] min-w-[100px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
+                Dep Days
               </th>
               <th className="sticky top-0 z-30 w-[120px] min-w-[120px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
                 Fiscal Year
@@ -521,7 +526,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={11}
+                  colSpan={12}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -530,7 +535,7 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={11}
+                  colSpan={12}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
@@ -569,6 +574,9 @@ export function DepreciationRunDetailScreen() {
                   </td>
                   <td className="w-[110px] min-w-[110px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {d.dep_rate}%
+                  </td>
+                  <td className="w-[100px] min-w-[100px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {d.dep_days}
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 whitespace-nowrap text-slate-800">
                     {formatFiscalYearLabel(d.fiscal_year)}

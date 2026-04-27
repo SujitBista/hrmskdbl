@@ -99,6 +99,8 @@ async function migrate() {
       branch_id INTEGER NOT NULL REFERENCES hrms_branches(id) ON DELETE RESTRICT,
       department_id INTEGER REFERENCES hrms_departments(id) ON DELETE SET NULL,
       purchase_date_bs VARCHAR(32) NOT NULL,
+      dep_method_snapshot VARCHAR(128),
+      dep_rate_snapshot NUMERIC(12, 4),
       purchase_qty NUMERIC(18, 4),
       unit_rate NUMERIC(18, 4),
       purchase_invoice_no VARCHAR(255),
@@ -140,6 +142,28 @@ async function migrate() {
   await query(`
     ALTER TABLE hrms_assets
     ADD COLUMN IF NOT EXISTS depreciation_start_date_bs VARCHAR(32);
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS dep_method_snapshot VARCHAR(128);
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS dep_rate_snapshot NUMERIC(12, 4);
+  `);
+  await query(`
+    UPDATE hrms_assets a
+    SET dep_method_snapshot = g.dep_method
+    FROM hrms_groups g
+    WHERE g.id = a.group_id
+      AND (a.dep_method_snapshot IS NULL OR TRIM(a.dep_method_snapshot) = '');
+  `);
+  await query(`
+    UPDATE hrms_assets a
+    SET dep_rate_snapshot = g.dep_rate
+    FROM hrms_groups g
+    WHERE g.id = a.group_id
+      AND a.dep_rate_snapshot IS NULL;
   `);
   await query(`
     UPDATE hrms_assets

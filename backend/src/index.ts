@@ -24,8 +24,10 @@ import {
 import {
   createAsset,
   deleteAsset,
+  importAssetsFromRows,
   listAssets,
   parseCreateAssetPayload,
+  parseImportAssetsPayload,
   updateAsset,
 } from "./services/assets.js";
 import {
@@ -1005,6 +1007,32 @@ app.post("/api/admin/assets", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Could not create asset." });
+  }
+});
+
+app.post("/api/admin/assets/import", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const payload = parseImportAssetsPayload(req.body);
+    const result = await importAssetsFromRows(payload);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not import assets." });
   }
 });
 

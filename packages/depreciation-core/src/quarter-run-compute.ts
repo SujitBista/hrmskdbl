@@ -299,8 +299,10 @@ export const calculateLifetimeDepreciationUpToFY = buildDepreciationTimeline;
  * Fiscal-year DepDays = inclusive calendar days from max(depreciation start, FY Shrawan 1)
  * through the run’s depreciation end date (quarter end, FY end, or as-of date capped to FY end).
  *
- * dep_amount = current fiscal-year depreciation only through that end date. For declining-balance,
- * opening WDV is carried from previous years.
+ * dep_amount = current fiscal-year depreciation only through that end date.
+ * It is computed directly from cumulative depDays (not month-by-month):
+ * - Straight-line base: purchase amount
+ * - Declining-balance base: opening FY written-down value
  * accumulate_dep = lifetime depreciation from depreciation start through that same end date.
  * Book value = cost minus lifetime accumulated depreciation (clamped). ERP calendar days;
  * `calculationMode` is ignored.
@@ -408,16 +410,33 @@ export function computeAssetQuarterCumulative(params: {
     return { ok: false, errors: timeline.errors };
   }
 
+  /**
+   * Daily proration policy:
+   * - Straight line: keep lifetime split from timeline (prior years + this-year slice).
+   * - Declining balance: treat `purchaseAmount` as FY opening WDV base and apply
+   *   annual rate prorated by depDays; do not subtract prior years again.
+   */
+  const isDeclining = params.method === "DECLINING_BALANCE";
+  const priorYearsDepAmount = isDeclining ? 0 : timeline.timeline.priorYearsDepAmount;
+  const dailyBaseAmount = roundMoney(params.purchaseAmount);
+  const dailyRawThisYearDep =
+    (dailyBaseAmount * (params.depRatePercent / 100) * depDays) / 365;
+  const clamped = clampDepreciationAmounts(
+    params.purchaseAmount,
+    priorYearsDepAmount,
+    roundMoney(dailyRawThisYearDep)
+  );
+
   return {
     ok: true,
     detail: {
       depDays,
-      depAmount: timeline.timeline.thisYearDepAmount,
-      accumulateDep: timeline.timeline.accumulatedDep,
-      bookValue: timeline.timeline.closingBookValue,
-      balanceAmount: timeline.timeline.closingBookValue,
+      depAmount: clamped.thisYearDepAmount,
+      accumulateDep: clamped.accumulatedDep,
+      bookValue: clamped.closingBookValue,
+      balanceAmount: clamped.closingBookValue,
       depFormula: formatDepFormula(params.method, params.depRatePercent),
-      erpTimeline: timeline.timeline,
+      erpTimeline: clamped,
     },
   };
 }

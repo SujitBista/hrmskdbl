@@ -79,6 +79,8 @@ type AssetDepRow = {
   group_name: string;
   group_dep_method: string | null;
   group_dep_rate: string | null;
+  asset_dep_method: string | null;
+  asset_dep_rate: string | null;
   sub_group_name: string | null;
   branch_name: string;
   purchase_date_bs: string;
@@ -94,6 +96,8 @@ const ASSET_SELECT = `
     g.name AS group_name,
     g.dep_method AS group_dep_method,
     g.dep_rate::text AS group_dep_rate,
+    a.dep_method_snapshot AS asset_dep_method,
+    a.dep_rate_snapshot::text AS asset_dep_rate,
     sg.name AS sub_group_name,
     b.branch_name,
     a.purchase_date_bs,
@@ -282,8 +286,8 @@ async function insertDepreciationDetailRows(
       a.purchase_qty,
       a.unit_rate
     );
-    const depRate = parseDepRatePercent(a.group_dep_rate);
-    const method = parseDepreciationMethod(a.group_dep_method);
+    const depRate = parseDepRatePercent(a.asset_dep_rate ?? a.group_dep_rate);
+    const method = parseDepreciationMethod(a.asset_dep_method ?? a.group_dep_method);
     const depreciationStartBs = depreciationCommencementFromRegister(
       a.purchase_date_bs,
       a.depreciation_start_date_bs

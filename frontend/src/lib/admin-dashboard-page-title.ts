@@ -9,9 +9,6 @@ export function adminDashboardPageTitle(pathname: string): string {
   if (pathname === "/admin/dashboard/asset-register/depreciation/new") {
     return "Add depreciation run";
   }
-  if (pathname === "/admin/dashboard/asset-register/depreciation/preview") {
-    return "Depreciation schedule preview";
-  }
   if (/^\/admin\/dashboard\/asset-register\/depreciation\/\d+$/.test(pathname)) {
     return "Depreciation details";
   }

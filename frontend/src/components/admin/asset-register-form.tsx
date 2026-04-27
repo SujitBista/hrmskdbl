@@ -43,9 +43,6 @@ const inputClass =
 
 const sectionHeadingClass =
   "border-b border-emerald-900/10 pb-2 text-sm font-semibold text-slate-800";
-const IMPORT_BATCH_SIZE = 200;
-const IMPORT_RETRY_ROUNDS = 1;
-
 type ImportAssetRow = {
   asset_code: string | null;
   asset_name: string;
@@ -126,9 +123,6 @@ export function AssetRegisterForm({
   const [importProgress, setImportProgress] = useState<{
     totalRows: number;
     processedRows: number;
-    currentBatch: number;
-    totalBatches: number;
-    retryRound: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -511,64 +505,32 @@ export function AssetRegisterForm({
         return;
       }
 
-      let importedCount = 0;
-      let skippedCount = 0;
-      const rowErrors: Array<{ row: number; message: string }> = [];
-      let pendingRows = payloadRows.map((row, idx) => ({ row, rowNumber: idx + 1 }));
-      for (let retryRound = 0; retryRound <= IMPORT_RETRY_ROUNDS; retryRound += 1) {
-        if (pendingRows.length === 0) {
-          break;
-        }
-        const currentTotalRows = pendingRows.length;
-        const totalBatches = Math.max(
-          1,
-          Math.ceil(currentTotalRows / IMPORT_BATCH_SIZE)
-        );
-        const nextPending: typeof pendingRows = [];
-        for (
-          let start = 0, batch = 1;
-          start < pendingRows.length;
-          start += IMPORT_BATCH_SIZE, batch += 1
-        ) {
-          const end = Math.min(start + IMPORT_BATCH_SIZE, pendingRows.length);
-          const chunkMeta = pendingRows.slice(start, end);
-          const chunk = chunkMeta.map((item) => item.row);
-          setImportProgress({
-            totalRows: currentTotalRows,
-            processedRows: end,
-            currentBatch: batch,
-            totalBatches,
-            retryRound,
-          });
-          const res = await fetch("/api/admin/assets/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rows: chunk }),
-          });
-          const json = (await res.json()) as {
-            importedCount?: number;
-            skippedCount?: number;
-            errors?: Array<{ row: number; message: string }>;
-            error?: string;
-          };
-          if (!res.ok) {
-            setError(json.error ?? "Could not import asset register.");
-            return;
-          }
-          importedCount += json.importedCount ?? 0;
-          skippedCount += json.skippedCount ?? 0;
-          for (const e of json.errors ?? []) {
-            const source = chunkMeta[e.row - 1];
-            if (!source) continue;
-            if (retryRound < IMPORT_RETRY_ROUNDS) {
-              nextPending.push(source);
-            } else {
-              rowErrors.push({ row: source.rowNumber, message: e.message });
-            }
-          }
-        }
-        pendingRows = nextPending;
+      setImportProgress({
+        totalRows: payloadRows.length,
+        processedRows: 0,
+      });
+      const res = await fetch("/api/admin/assets/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payloadRows }),
+      });
+      const json = (await res.json()) as {
+        importedCount?: number;
+        skippedCount?: number;
+        errors?: Array<{ row: number; message: string }>;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(json.error ?? "Could not import asset register.");
+        return;
       }
+      const importedCount = json.importedCount ?? 0;
+      const skippedCount = json.skippedCount ?? 0;
+      const rowErrors = json.errors ?? [];
+      setImportProgress({
+        totalRows: payloadRows.length,
+        processedRows: payloadRows.length,
+      });
       const parts = [`Imported ${importedCount} asset(s).`];
       if (skippedCount > 0) {
         parts.push(`Skipped ${skippedCount} empty row(s).`);
@@ -582,7 +544,14 @@ export function AssetRegisterForm({
           `${rowErrors.length} row(s) failed (${firstFew}${rowErrors.length > 3 ? "; ..." : ""}).`
         );
       }
-      setSuccess(parts.join(" "));
+      const message = parts.join(" ");
+      if (rowErrors.length > 0 && importedCount === 0) {
+        setError(message);
+        setSuccess(null);
+      } else {
+        setError(null);
+        setSuccess(message);
+      }
       onSaved?.();
     } catch {
       setError("Could not read/import the XLSX file.");
@@ -637,11 +606,7 @@ export function AssetRegisterForm({
       {importProgress ? (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
           <p className="text-sm text-emerald-900">
-            Importing rows... batch {importProgress.currentBatch}/
-            {importProgress.totalBatches}
-            {importProgress.retryRound > 0
-              ? ` (retry ${importProgress.retryRound}/${IMPORT_RETRY_ROUNDS})`
-              : ""}
+            Importing rows...
           </p>
           <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
             <div
@@ -661,6 +626,16 @@ export function AssetRegisterForm({
             this pass.
           </p>
         </div>
+      ) : null}
+      {error ? (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
+          {success}
+        </p>
       ) : null}
 
       <form className="mt-6 flex flex-col gap-8" onSubmit={onSubmit}>
@@ -1124,17 +1099,6 @@ export function AssetRegisterForm({
             </div>
           </div>
         </div>
-
-        {error ? (
-          <p className="text-sm text-red-600" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {success ? (
-          <p className="text-sm text-emerald-800" role="status">
-            {success}
-          </p>
-        ) : null}
 
         <button
           type="submit"

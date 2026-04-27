@@ -1,6 +1,7 @@
 import { pool, query } from "../db.js";
 import { clampListParams } from "./groups.js";
 import { refreshMutableDepreciationRunsForAsset } from "./depreciationRuns.js";
+import type pg from "pg";
 
 const ASSET_CODE_PREFIX = "SKDBL";
 const MAX_AUTO_ASSET_CODE_RETRIES = 10;
@@ -315,12 +316,43 @@ function normalizeComparableText(v: string): string {
   return v.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function normalizeBsDateInput(v: unknown): string {
+  const raw = typeof v === "string" ? v.trim() : "";
+  if (raw === "") {
+    return "";
+  }
+  const nfkc = raw.normalize("NFKC");
+  const englishDigits = nfkc.replace(/[०-९]/g, (d) =>
+    String("०१२३४५६७८९".indexOf(d))
+  );
+  return englishDigits
+    .replace(/[-.]/g, "/")
+    .replace(/\s*\/\s*/g, "/")
+    .trim();
+}
+
 function parseDateBsOrThrow(v: unknown, fieldName: string): string {
-  const text = typeof v === "string" ? v.trim() : "";
-  if (!/^\d{4}\/\d{2}\/\d{2}$/.test(text)) {
+  const text = normalizeBsDateInput(v);
+  const match = text.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  if (!match) {
+    const raw = typeof v === "string" ? v.trim() : String(v ?? "").trim();
+    const rawPart = raw !== "" ? ` (received: "${raw}")` : "";
+    throw new Error(
+      `${fieldName} must be YYYY/MM/DD (Bikram Sambat).${rawPart}`
+    );
+  }
+  const year = match[1];
+  const month = match[2];
+  const day = match[3];
+  if (!/^\d{4}$/.test(year ?? "")) {
     throw new Error(`${fieldName} must be YYYY/MM/DD (Bikram Sambat).`);
   }
-  return text;
+  const mNum = Number.parseInt(month!, 10);
+  const dNum = Number.parseInt(day!, 10);
+  if (!Number.isFinite(mNum) || !Number.isFinite(dNum) || mNum < 1 || mNum > 12 || dNum < 1 || dNum > 32) {
+    throw new Error(`${fieldName} must be YYYY/MM/DD (Bikram Sambat).`);
+  }
+  return `${year}/${String(mNum).padStart(2, "0")}/${String(dNum).padStart(2, "0")}`;
 }
 
 function parseNumberish(v: unknown): number | null {
@@ -460,14 +492,12 @@ export async function importAssetsFromRows(
         }
       }
 
-      const purchaseDateBs = parseDateBsOrThrow(
-        row.purchase_date_bs,
-        "Purchase date"
-      );
-      const depreciationStartDateBs = parseDateBsOrThrow(
-        row.depreciation_start_date_bs,
-        "Depreciation start date"
-      );
+      const purchaseDateBs = parseDateBsOrThrow(row.purchase_date_bs, "Purchase date");
+      const depStartRaw = normalizeBsDateInput(row.depreciation_start_date_bs);
+      const depreciationStartDateBs =
+        depStartRaw === ""
+          ? purchaseDateBs
+          : parseDateBsOrThrow(row.depreciation_start_date_bs, "Depreciation start date");
 
       const ownershipTypeRaw =
         typeof row.ownership_type === "string" ? row.ownership_type.trim() : "";
@@ -571,16 +601,19 @@ export async function importAssetsFromRows(
     };
   }
 
-  const insertedIds: number[] = [];
+  const client = await pool.connect();
   try {
+    await client.query("BEGIN");
     for (const item of validatedInputs) {
-      const created = await createAsset(item.input);
-      insertedIds.push(created.id);
+      await createAsset(item.input, client);
       importedCount += 1;
     }
+    await client.query("COMMIT");
   } catch (err) {
-    if (insertedIds.length > 0) {
-      await query(`DELETE FROM hrms_assets WHERE id = ANY($1::int[])`, [insertedIds]);
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore rollback errors */
     }
     const message =
       err instanceof Error ? err.message : "Import failed; upload rolled back.";
@@ -589,6 +622,8 @@ export async function importAssetsFromRows(
       skippedCount,
       errors: [{ row: 1, message: `Import failed and rolled back: ${message}` }],
     };
+  } finally {
+    client.release();
   }
 
   return {
@@ -598,15 +633,18 @@ export async function importAssetsFromRows(
   };
 }
 
+type QueryExecutor = Pick<pg.Pool, "query"> | pg.PoolClient;
+
 async function resolveAssetRefs(
-  input: CreateAssetInput
+  input: CreateAssetInput,
+  db: QueryExecutor = pool
 ): Promise<{
   branch_code: string;
   group_code: string;
   group_dep_method: string | null;
   group_dep_rate: string | null;
 }> {
-  const branchRow = await query<{ branch_code: string }>(
+  const branchRow = await db.query<{ branch_code: string }>(
     `SELECT branch_code FROM hrms_branches WHERE id = $1`,
     [input.branch_id]
   );
@@ -615,7 +653,7 @@ async function resolveAssetRefs(
     throw new Error("Branch not found.");
   }
 
-  const groupRow = await query<{
+  const groupRow = await db.query<{
     code: string;
     dep_method: string | null;
     dep_rate: string | null;
@@ -628,7 +666,7 @@ async function resolveAssetRefs(
     throw new Error("Asset group not found.");
   }
 
-  const subCount = await query<{ n: string }>(
+  const subCount = await db.query<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM hrms_sub_groups WHERE group_id = $1`,
     [input.group_id]
   );
@@ -641,7 +679,7 @@ async function resolveAssetRefs(
   }
 
   if (input.sub_group_id !== null) {
-    const sg = await query<{ n: string }>(
+    const sg = await db.query<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM hrms_sub_groups
        WHERE id = $1 AND group_id = $2`,
       [input.sub_group_id, input.group_id]
@@ -660,12 +698,13 @@ async function resolveAssetRefs(
 }
 
 async function assertDepartmentExists(
-  department_id: number | null
+  department_id: number | null,
+  db: QueryExecutor = pool
 ): Promise<void> {
   if (department_id === null) {
     return;
   }
-  const r = await query<{ id: number }>(
+  const r = await db.query<{ id: number }>(
     `SELECT id FROM hrms_departments WHERE id = $1`,
     [department_id]
   );
@@ -674,13 +713,12 @@ async function assertDepartmentExists(
   }
 }
 
-export async function createAsset(input: CreateAssetInput): Promise<Asset> {
-  await assertDepartmentExists(input.department_id);
-  const refs = await resolveAssetRefs(input);
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+async function createAssetWithClient(
+  input: CreateAssetInput,
+  client: pg.PoolClient
+): Promise<Asset> {
+  await assertDepartmentExists(input.department_id, client);
+  const refs = await resolveAssetRefs(input, client);
 
     const insert = await client.query<{
       id: number;
@@ -755,12 +793,25 @@ export async function createAsset(input: CreateAssetInput): Promise<Asset> {
       throw new Error("Could not generate a unique asset code. Please retry.");
     }
 
-    await client.query("COMMIT");
+  const out = updated.rows[0];
+  if (!out) {
+    throw new Error("Failed to load asset after save.");
+  }
+  return out;
+}
 
-    const out = updated.rows[0];
-    if (!out) {
-      throw new Error("Failed to load asset after save.");
-    }
+export async function createAsset(
+  input: CreateAssetInput,
+  existingClient?: pg.PoolClient
+): Promise<Asset> {
+  if (existingClient) {
+    return createAssetWithClient(input, existingClient);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const out = await createAssetWithClient(input, client);
+    await client.query("COMMIT");
     return out;
   } catch (err) {
     try {

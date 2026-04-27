@@ -50,7 +50,8 @@ export type DepreciationRunDetailRow = {
   fiscal_year: number;
   asset_name: string;
   purchase_date_bs: string;
-  purchase_price: string;
+  actual_purchase_price: string;
+  depreciation_cost_basis: string;
   dep_rate: string;
   dep_days: number;
   dep_amount: string;
@@ -228,11 +229,12 @@ export async function listDetailsForRun(
   const r = await query<DepreciationRunDetailRow>(
     `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code, d.fiscal_year,
       d.asset_name, a.purchase_date_bs,
+      (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS actual_purchase_price,
       (CASE
         WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
         THEN a.old_book_value
         ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
-      END)::text AS purchase_price,
+      END)::text AS depreciation_cost_basis,
       d.dep_rate::text, d.dep_days, d.dep_amount::text, d.group_name, d.sub_group_name,
       d.branch_name, d.book_value::text, d.accumulate_dep::text, d.dep_formula,
       d.dep_start_date_bs,

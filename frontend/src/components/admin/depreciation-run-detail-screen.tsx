@@ -32,7 +32,8 @@ type DetailRow = {
   asset_name: string;
   fiscal_year: number;
   purchase_date_bs: string;
-  purchase_price: string;
+  actual_purchase_price: string;
+  depreciation_cost_basis: string;
   dep_rate: string;
   dep_days: number;
   dep_amount: string;
@@ -344,6 +345,7 @@ export function DepreciationRunDetailScreen() {
       "Group",
       "PurchaseDate",
       "PurchasePrice",
+      "DepreciationCostBasis",
       "RegisterDepStartBS",
       "DepCommencementBS",
       "DepRate",
@@ -395,7 +397,8 @@ export function DepreciationRunDetailScreen() {
           `"${formatAssetCodeForDisplay(d.asset_code).replace(/"/g, '""')}"`,
           `"${d.group_name.replace(/"/g, '""')}"`,
           d.purchase_date_bs,
-          d.purchase_price,
+          d.actual_purchase_price,
+          d.depreciation_cost_basis,
           d.register_depreciation_start_bs ?? "",
           d.dep_start_date_bs,
           d.dep_rate,
@@ -468,7 +471,7 @@ export function DepreciationRunDetailScreen() {
                     depreciation start, if later) through the calculation date
                     (capped at fiscal year end). This Year Dep Amount = fiscal-year
                     depreciation only through that date; AccumulatedDep = lifetime
-                    depreciation through that date; Book value = purchase price minus
+                    depreciation through that date; Book value = depreciation base minus
                     accumulated depreciation (not below zero).
                   </>
                 ) : (
@@ -627,7 +630,7 @@ export function DepreciationRunDetailScreen() {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[1860px] w-full table-fixed border-collapse text-left text-sm">
+        <table className="min-w-[2020px] w-full table-fixed border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
               <th className="sticky top-0 z-30 w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
@@ -641,6 +644,9 @@ export function DepreciationRunDetailScreen() {
               </th>
               <th className="sticky top-0 z-30 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 Purchase Price
+              </th>
+              <th className="sticky top-0 z-30 w-[170px] min-w-[170px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
+                Depreciation Base
               </th>
               <th className="sticky top-0 z-30 w-[170px] min-w-[170px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 This Year Dep Amount
@@ -675,7 +681,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={14}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -684,7 +690,7 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={14}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
@@ -721,7 +727,10 @@ export function DepreciationRunDetailScreen() {
                     </span>
                   </td>
                   <td className="w-[150px] min-w-[150px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
-                    {formatAmount(d.purchase_price)}
+                    {formatAmount(d.actual_purchase_price)}
+                  </td>
+                  <td className="w-[170px] min-w-[170px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {formatAmount(d.depreciation_cost_basis)}
                   </td>
                   <td className="w-[170px] min-w-[170px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {formatAmount(d.dep_amount)}

@@ -14,10 +14,11 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
   const { id } = await context.params;
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
+  const search = _request.nextUrl.search;
 
   let res: Response;
   try {
-    res = await fetch(`${backendUrl}/api/admin/depreciation-runs/${id}`, {
+    res = await fetch(`${backendUrl}/api/admin/depreciation-runs/${id}${search}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });

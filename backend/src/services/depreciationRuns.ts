@@ -50,7 +50,8 @@ export type DepreciationRunDetailRow = {
   fiscal_year: number;
   asset_name: string;
   purchase_date_bs: string;
-  purchase_price: string;
+  actual_purchase_price: string;
+  depreciation_cost_basis: string;
   dep_rate: string;
   dep_days: number;
   dep_amount: string;
@@ -206,16 +207,34 @@ export async function getDepreciationRunById(
 }
 
 export async function listDetailsForRun(
-  runId: number
-): Promise<DepreciationRunDetailRow[]> {
+  runId: number,
+  options?: { page?: number; pageSize?: number }
+): Promise<{ rows: DepreciationRunDetailRow[]; total: number }> {
+  const pageRaw = options?.page ?? 1;
+  const pageSizeRaw = options?.pageSize ?? 100;
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+  const pageSize = Number.isFinite(pageSizeRaw)
+    ? Math.min(500, Math.max(1, Math.floor(pageSizeRaw)))
+    : 100;
+  const offset = (page - 1) * pageSize;
+
+  const countResult = await query<{ total: string }>(
+    `SELECT COUNT(*)::text AS total
+     FROM hrms_depreciation_run_details
+     WHERE depreciation_run_id = $1`,
+    [runId]
+  );
+  const total = Number.parseInt(countResult.rows[0]?.total ?? "0", 10) || 0;
+
   const r = await query<DepreciationRunDetailRow>(
     `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code, d.fiscal_year,
       d.asset_name, a.purchase_date_bs,
+      (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS actual_purchase_price,
       (CASE
         WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
         THEN a.old_book_value
         ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
-      END)::text AS purchase_price,
+      END)::text AS depreciation_cost_basis,
       d.dep_rate::text, d.dep_days, d.dep_amount::text, d.group_name, d.sub_group_name,
       d.branch_name, d.book_value::text, d.accumulate_dep::text, d.dep_formula,
       d.dep_start_date_bs,
@@ -224,10 +243,11 @@ export async function listDetailsForRun(
      FROM hrms_depreciation_run_details d
      INNER JOIN hrms_assets a ON a.id = d.asset_id
      WHERE d.depreciation_run_id = $1
-     ORDER BY d.asset_id ASC`,
-    [runId]
+     ORDER BY d.asset_id ASC
+     LIMIT $2 OFFSET $3`,
+    [runId, pageSize, offset]
   );
-  return r.rows;
+  return { rows: r.rows, total };
 }
 
 export type DepreciationSkippedAsset = {

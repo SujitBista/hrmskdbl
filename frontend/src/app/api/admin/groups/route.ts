@@ -14,17 +14,37 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams.toString();
   const qs = searchParams ? `?${searchParams}` : "";
 
-  const res = await fetch(`${backendUrl}/api/admin/groups${qs}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/api/admin/groups${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as {
+  let data = {} as {
     groups?: unknown;
     total?: number;
     page?: number;
     pageSize?: number;
     error?: string;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(

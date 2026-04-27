@@ -14,17 +14,37 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams.toString();
   const qs = searchParams ? `?${searchParams}` : "";
 
-  const res = await fetch(`${backendUrl}/api/admin/sub-groups${qs}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/api/admin/sub-groups${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as {
+  let data = {} as {
     subGroups?: unknown;
     total?: number;
     page?: number;
     pageSize?: number;
     error?: string;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(
@@ -51,19 +71,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const res = await fetch(`${backendUrl}/api/admin/sub-groups`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/api/admin/sub-groups`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as {
-    subGroup?: unknown;
-    error?: string;
-  };
+  let data = {} as { subGroup?: unknown; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(

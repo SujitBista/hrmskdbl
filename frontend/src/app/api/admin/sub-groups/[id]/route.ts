@@ -21,22 +21,39 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const res = await fetch(
-    `${backendUrl}/api/admin/sub-groups/${encodeURIComponent(id)}`,
-    {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+  let res: Response;
+  try {
+    res = await fetch(
+      `${backendUrl}/api/admin/sub-groups/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      }
+    );
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend and check BACKEND_URL.",
       },
-      body: JSON.stringify(body),
-    }
-  );
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as {
-    subGroup?: unknown;
-    error?: string;
-  };
+  let data = {} as { subGroup?: unknown; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid response from API server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(
@@ -58,13 +75,25 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
 
-  const res = await fetch(
-    `${backendUrl}/api/admin/sub-groups/${encodeURIComponent(id)}`,
-    {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  );
+  let res: Response;
+  try {
+    res = await fetch(
+      `${backendUrl}/api/admin/sub-groups/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
   if (res.status === 204) {
     return new NextResponse(null, { status: 204 });

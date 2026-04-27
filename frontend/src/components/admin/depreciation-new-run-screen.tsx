@@ -18,9 +18,26 @@ import {
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 
 const inputClass =
-  "w-full rounded border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-900 shadow-sm outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-1";
-const labelClass =
-  "pt-2 text-right text-sm font-medium leading-tight text-slate-700";
+  "w-full rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20";
+
+const fieldLabel =
+  "mb-1 block text-sm font-medium leading-5 text-slate-700";
+
+const formCardClass =
+  "mt-4 rounded-2xl border border-[rgb(15_81_50_/_0.12)] bg-white p-6 shadow-[0_4px_24px_-8px_rgba(15,81,50,0.1),0_2px_10px_-4px_rgba(15,23,42,0.06)] sm:p-8";
+
+const fieldGroupClass =
+  "flex flex-col gap-6 rounded-xl border border-slate-200/80 bg-slate-50/40 p-5 sm:gap-7 sm:p-6";
+
+const sectionGroupTitleClass =
+  "text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-500";
+
+const btnSaveClass =
+  "inline-flex min-w-[7.5rem] items-center justify-center gap-2 rounded-lg border border-blue-700/20 bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/10 transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60";
+
+/** Secondary action — light outline, brand green; does not compete with solid Save. */
+const btnCancelClass =
+  "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--brand-primary)]/35 bg-white px-4 py-2.5 text-sm font-normal text-[var(--brand-primary)] shadow-sm transition hover:bg-[var(--brand-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-primary)]/50";
 
 function CalendarGlyph({ className }: { className?: string }) {
   return (
@@ -42,18 +59,6 @@ function SaveIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden>
       <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V7.414A2 2 0 0017.414 6L14 2.586A2 2 0 0012.586 2H4zm4 2h4v4H8V5zm-1 6h6a1 1 0 011 1v5H7v-5a1 1 0 011-1z" />
-    </svg>
-  );
-}
-
-function XIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-      <path
-        fillRule="evenodd"
-        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-        clipRule="evenodd"
-      />
     </svg>
   );
 }
@@ -171,8 +176,8 @@ export function DepreciationNewRunScreen() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-8rem)] bg-slate-100/90 pb-10">
-      <div className="mx-auto max-w-4xl px-4 pt-4">
+    <div className="min-h-[calc(100vh-8rem)] bg-[var(--background)] pb-10">
+      <div className="mx-auto max-w-4xl px-4 pt-4 sm:px-5">
         <FixedAssetSectionTabs />
 
         <nav className="text-xs text-slate-500" aria-label="Breadcrumb">
@@ -200,23 +205,24 @@ export function DepreciationNewRunScreen() {
 
         <form
           onSubmit={(e) => void onSubmit(e)}
-          className="mt-4 rounded border border-slate-300 bg-white p-6 shadow-sm"
+          className={formCardClass}
         >
-          <div className="grid gap-6 md:grid-cols-2">
-            <div className="grid grid-cols-[minmax(132px,150px)_1fr] items-start gap-x-3">
-              <span id={`${formId}-calc-bs-label`} className={labelClass}>
-                CalculationDate
-              </span>
-              <div>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
+            <div className={fieldGroupClass}>
+              <p className={sectionGroupTitleClass}>Calculation date &amp; month</p>
+              <div className="min-w-0">
+                <span id={`${formId}-calc-bs-label`} className={fieldLabel}>
+                  CalculationDate
+                </span>
                 <p
                   id={`${formId}-calc-bs-hint`}
-                  className="text-xs text-slate-500"
+                  className="mt-0.5 text-xs leading-relaxed text-slate-500"
                 >
                   Bikram Sambat — calendar in Nepali script; value is stored as
                   English BS (YYYY/MM/DD).
                 </p>
                 <div
-                  className="relative mt-1 w-full max-w-md rounded-lg focus-within:ring-2 focus-within:ring-emerald-800/25 focus-within:ring-offset-1"
+                  className="relative mt-2 w-full rounded-lg focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:ring-offset-0"
                   aria-labelledby={`${formId}-calc-bs-label`}
                   aria-describedby={`${formId}-calc-bs-hint`}
                 >
@@ -241,7 +247,7 @@ export function DepreciationNewRunScreen() {
                           closeOnSelect: true,
                         }}
                       />
-                      <div className="pointer-events-none absolute inset-0 z-10 flex min-h-[44px] items-center justify-between gap-2 rounded-lg border-2 border-emerald-900/15 bg-white px-3 py-2 shadow-sm ring-1 ring-slate-900/5">
+                      <div className="pointer-events-none absolute inset-0 z-10 flex min-h-[44px] items-center justify-between gap-2 rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 shadow-sm">
                         <span className="min-w-0 truncate font-mono text-sm tabular-nums text-slate-900">
                           {calculationDateBs ? (
                             calculationDateBs
@@ -251,87 +257,87 @@ export function DepreciationNewRunScreen() {
                             </span>
                           )}
                         </span>
-                        <CalendarGlyph className="h-5 w-5 shrink-0 text-emerald-800/70" />
+                        <CalendarGlyph className="h-5 w-5 shrink-0 text-[var(--brand-primary)]/70" />
                       </div>
                     </>
                   ) : (
                     <div
-                      className={`${inputClass} min-h-[44px] rounded-lg border-2 border-dashed border-slate-200`}
+                      className={`${inputClass} min-h-[44px] border-dashed border-slate-200`}
                     />
                   )}
                 </div>
               </div>
+
+              <div className="min-w-0">
+                <label className={fieldLabel} htmlFor={`${formId}-month`}>
+                  Select Month
+                </label>
+                <select
+                  id={`${formId}-month`}
+                  className={`${inputClass} mt-2`}
+                  value={nepaliMonth}
+                  onChange={(e) => setNepaliMonth(e.target.value)}
+                  required
+                >
+                  {NEPALI_MONTHS_ORDERED_EN.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <div className="grid grid-cols-[minmax(132px,150px)_1fr] items-start gap-x-3">
-              <label className={labelClass} htmlFor={`${formId}-dep-title`}>
-                DepTitle
-              </label>
-              <div>
+            <div className={fieldGroupClass}>
+              <p className={sectionGroupTitleClass}>Run title &amp; notes</p>
+              <div className="min-w-0">
+                <label className={fieldLabel} htmlFor={`${formId}-dep-title`}>
+                  DepTitle
+                </label>
                 <input
                   id={`${formId}-dep-title`}
-                  className={inputClass}
+                  className={`${inputClass} mt-2`}
                   placeholder='Optional — e.g. "Q1 Depreciation 2082"'
                   value={depTitle}
                   onChange={(e) => setDepTitle(e.target.value)}
                 />
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
                   If empty, a default fiscal-year title is used.
                 </p>
               </div>
-            </div>
 
-            <div className="grid grid-cols-[minmax(132px,150px)_1fr] items-start gap-x-3">
-              <label className={labelClass} htmlFor={`${formId}-month`}>
-                Select Month
-              </label>
-              <select
-                id={`${formId}-month`}
-                className={inputClass}
-                value={nepaliMonth}
-                onChange={(e) => setNepaliMonth(e.target.value)}
-                required
-              >
-                {NEPALI_MONTHS_ORDERED_EN.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-[minmax(132px,150px)_1fr] items-start gap-x-3">
-              <label className={`${labelClass} pt-1`} htmlFor={`${formId}-remarks`}>
-                Remarks
-              </label>
-              <textarea
-                id={`${formId}-remarks`}
-                className={`${inputClass} min-h-[100px] resize-y`}
-                rows={4}
-                placeholder="Optional notes"
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-              />
+              <div className="min-w-0">
+                <label className={fieldLabel} htmlFor={`${formId}-remarks`}>
+                  Remarks
+                </label>
+                <textarea
+                  id={`${formId}-remarks`}
+                  className={`${inputClass} mt-2 min-h-[7.5rem] resize-y`}
+                  rows={4}
+                  placeholder="Optional notes"
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                />
+              </div>
             </div>
           </div>
 
           {error ? (
-            <p className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            <p className="mt-7 rounded-lg border border-red-200/90 bg-red-50/90 px-3.5 py-2.5 text-sm text-red-800">
               {error}
             </p>
           ) : null}
 
-          <div className="mt-8 flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-6">
+          <div className="mt-8 flex flex-col items-stretch gap-2.5 border-t border-slate-200/80 pt-6 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
             <Link
               href="/admin/dashboard/asset-register/depreciation"
-              className="inline-flex items-center gap-2 rounded border border-orange-400 bg-orange-500 px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-orange-600"
+              className={`${btnCancelClass} w-full min-w-0 sm:w-auto sm:min-w-[6.5rem]`}
             >
-              <XIcon className="h-4 w-4" />
               Cancel
             </Link>
             <button
               type="submit"
-              className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-600 px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className={`${btnSaveClass} w-full min-w-0 sm:w-auto`}
               disabled={submitting}
             >
               <SaveIcon className="h-4 w-4" />

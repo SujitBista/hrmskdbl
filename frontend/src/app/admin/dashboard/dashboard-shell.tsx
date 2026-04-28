@@ -22,11 +22,22 @@ export function AdminDashboardShell({
 }) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [desktopNavCollapsed, setDesktopNavCollapsed] = useState(false);
   const [pageTitle, setPageTitle] = useState(initialPageTitle);
 
   useEffect(() => {
     setPageTitle(adminDashboardPageTitle(pathname));
   }, [pathname]);
+
+  useEffect(() => {
+    try {
+      setDesktopNavCollapsed(
+        window.localStorage.getItem("hrmskdbl_admin_nav_collapsed") === "1"
+      );
+    } catch {
+      setDesktopNavCollapsed(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!mobileNavOpen) {
@@ -40,6 +51,17 @@ export function AdminDashboardShell({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [mobileNavOpen]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "hrmskdbl_admin_nav_collapsed",
+        desktopNavCollapsed ? "1" : "0"
+      );
+    } catch {
+      /* ignore storage errors */
+    }
+  }, [desktopNavCollapsed]);
 
   useEffect(() => {
     if (!mobileNavOpen) {
@@ -64,6 +86,38 @@ export function AdminDashboardShell({
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex flex-wrap items-center gap-3 sm:gap-6">
             <AdminNavMenuButton onClick={() => setMobileNavOpen(true)} />
+            <button
+              type="button"
+              className="hidden items-center justify-center rounded-lg border border-emerald-900/15 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-emerald-50 lg:inline-flex"
+              aria-label={
+                desktopNavCollapsed ? "Expand sidebar" : "Collapse sidebar"
+              }
+              title={desktopNavCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              onClick={() => setDesktopNavCollapsed((v) => !v)}
+            >
+              <svg
+                className="h-5 w-5"
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.6}
+                aria-hidden
+              >
+                {desktopNavCollapsed ? (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M7 5l5 5-5 5M3.5 4.5v11"
+                  />
+                ) : (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M13 5l-5 5 5 5M16.5 4.5v11"
+                  />
+                )}
+              </svg>
+            </button>
             <SaptakoshiLogo variant="header" />
             <div className="hidden h-10 w-px bg-emerald-900/15 sm:block" aria-hidden />
             <div>
@@ -79,9 +133,10 @@ export function AdminDashboardShell({
           </nav>
         </div>
       </header>
-      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col lg:min-h-0 lg:flex-row">
+      <div className="flex w-full flex-1 flex-col lg:min-h-0 lg:flex-row">
         <AdminLeftNav
           mobileOpen={mobileNavOpen}
+          desktopCollapsed={desktopNavCollapsed}
           onNavigate={() => setMobileNavOpen(false)}
         />
         <div className="min-w-0 flex-1 px-4 py-8 sm:px-6 lg:py-10">{children}</div>

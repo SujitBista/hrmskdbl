@@ -62,10 +62,15 @@ function BuildingOfficeIcon({ className }: { className?: string }) {
 
 type Props = {
   mobileOpen: boolean;
+  desktopCollapsed: boolean;
   onNavigate: () => void;
 };
 
-export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
+export function AdminLeftNav({
+  mobileOpen,
+  desktopCollapsed,
+  onNavigate,
+}: Props) {
   const pathname = usePathname();
   const linkClass =
     "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition hover:bg-emerald-50 hover:text-[var(--brand-primary)]";
@@ -191,9 +196,10 @@ export function AdminLeftNav({ mobileOpen, onNavigate }: Props) {
         onClick={onNavigate}
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-full max-w-[16.5rem] flex-col border-r border-emerald-900/10 bg-white shadow-xl transition-transform duration-300 ease-out lg:static lg:z-auto lg:max-w-none lg:w-56 lg:shrink-0 lg:shadow-none ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-full max-w-[16.5rem] flex-col border-r border-emerald-900/10 bg-white shadow-xl transition-transform duration-300 ease-out lg:static lg:z-auto lg:max-w-none lg:shrink-0 lg:overflow-hidden lg:shadow-none lg:transition-[width,border-color] lg:duration-200 ${
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        }`}
+        } ${desktopCollapsed ? "lg:w-0 lg:border-r-transparent" : "lg:w-56"}`}
+        aria-hidden={desktopCollapsed && !mobileOpen}
       >
         <div className="border-b border-emerald-900/10 px-4 py-4 lg:hidden">
           <p className="text-xs font-medium uppercase tracking-wide text-emerald-900/70">

@@ -42,6 +42,7 @@ export type CreateAssetInput = {
 };
 
 export type ImportAssetRowInput = {
+  asset_code?: string | null;
   asset_name?: string | null;
   group_name?: string | null;
   sub_group_name?: string | null;
@@ -361,6 +362,9 @@ export async function importAssetsFromRows(
   const departmentsResult = await query<{ id: number; name: string }>(
     `SELECT id, name FROM hrms_departments`
   );
+  const existingAssetCodesResult = await query<{ asset_code: string }>(
+    `SELECT asset_code FROM hrms_assets WHERE asset_code IS NOT NULL`
+  );
 
   const groupByName = new Map<string, { id: number; name: string }>();
   for (const g of groupsResult.rows) {
@@ -381,6 +385,12 @@ export async function importAssetsFromRows(
     number,
     Map<string, { id: number; group_id: number; name: string }>
   >();
+  const existingAssetCodes = new Set(
+    existingAssetCodesResult.rows
+      .map((r) => r.asset_code?.trim())
+      .filter((code): code is string => Boolean(code))
+  );
+  const uploadAssetCodes = new Set<string>();
   for (const sg of subGroupsResult.rows) {
     const key = sg.group_id;
     const existing = subGroupByGroupName.get(key);
@@ -403,6 +413,22 @@ export async function importAssetsFromRows(
     const row = payload.rows[idx];
     const rowNumber = idx + 1;
     try {
+      const sourceAssetCode =
+        typeof row.asset_code === "string" ? row.asset_code.trim() : "";
+      if (sourceAssetCode !== "") {
+        if (uploadAssetCodes.has(sourceAssetCode)) {
+          throw new Error(
+            `Duplicate AssetCode "${sourceAssetCode}" appears more than once in this file.`
+          );
+        }
+        if (existingAssetCodes.has(sourceAssetCode)) {
+          throw new Error(
+            `AssetCode "${sourceAssetCode}" already exists. This file (or asset) was already imported.`
+          );
+        }
+        uploadAssetCodes.add(sourceAssetCode);
+      }
+
       const assetName = typeof row.asset_name === "string" ? row.asset_name.trim() : "";
       if (assetName === "") {
         skippedCount += 1;

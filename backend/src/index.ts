@@ -787,12 +787,23 @@ app.get("/api/admin/depreciation-runs/:id", async (req, res) => {
     return;
   }
   try {
-    const run = await getDepreciationRunById(id);
+    let run = await getDepreciationRunById(id);
     if (!run) {
       res.status(404).json({ error: "Depreciation run not found." });
       return;
     }
-    const detailsResult = await listDetailsForRun(id, { page, pageSize });
+    let detailsResult = await listDetailsForRun(id, { page, pageSize });
+    if (detailsResult.total === 0) {
+      try {
+        const refreshed = await refreshDepreciationRunDetailsFromAssets(id, {
+          advanceCalculationDateToTodayBs: false,
+        });
+        run = refreshed.run;
+        detailsResult = await listDetailsForRun(id, { page, pageSize });
+      } catch {
+        // Keep backward-compatible empty state when auto-refresh cannot rebuild rows.
+      }
+    }
     res.json({
       run,
       details: detailsResult.rows,

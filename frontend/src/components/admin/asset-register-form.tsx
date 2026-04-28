@@ -44,6 +44,7 @@ const inputClass =
 const sectionHeadingClass =
   "border-b border-emerald-900/10 pb-2 text-sm font-semibold text-slate-800";
 type ImportAssetRow = {
+  asset_code: string | null;
   asset_name: string;
   group_name: string;
   sub_group_name: string | null;
@@ -56,6 +57,21 @@ type ImportAssetRow = {
   purchase_qty: number | null;
   purchase_amount: number | null;
   purchase_invoice_no: string | null;
+};
+
+type ImportIssueRow = {
+  row: number;
+  assetCode: string | null;
+  message: string;
+  kind: "duplicate" | "error";
+};
+
+type ImportSummary = {
+  status: "failed" | "partial" | "success";
+  importedCount: number;
+  skippedDuplicatesCount: number;
+  errorCount: number;
+  issues: ImportIssueRow[];
 };
 
 function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
@@ -137,6 +153,7 @@ export function AssetRegisterForm({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -459,6 +476,7 @@ export function AssetRegisterForm({
   async function onImportFile(file: File) {
     setError(null);
     setSuccess(null);
+    setImportSummary(null);
     setImporting(true);
     try {
       const buffer = await file.arrayBuffer();
@@ -505,6 +523,7 @@ export function AssetRegisterForm({
             return Number.isFinite(n) ? n : null;
           };
           return {
+            asset_code: String(r.AssetCode ?? "").trim() || null,
             asset_name: assetName,
             group_name: String(r.GroupName ?? "").trim(),
             sub_group_name: String(r.SubGroupName ?? "").trim() || null,
@@ -543,37 +562,50 @@ export function AssetRegisterForm({
         error?: string;
       };
       if (!res.ok) {
-        setError(json.error ?? "Could not import asset register.");
+        setError(
+          "Import could not be completed. Please review the file and try again."
+        );
         return;
       }
       const importedCount = json.importedCount ?? 0;
-      const skippedCount = json.skippedCount ?? 0;
       const rowErrors = json.errors ?? [];
+      const issues: ImportIssueRow[] = rowErrors.map((e) => {
+        const sourceRow = payloadRows[e.row - 1];
+        const assetCode = sourceRow?.asset_code ?? null;
+        const isDuplicate =
+          /assetcode/i.test(e.message) && /(duplicate|already exists)/i.test(e.message);
+        return {
+          row: e.row,
+          assetCode,
+          message: isDuplicate
+            ? "This asset code is already in your system or repeated in this file."
+            : "This row has invalid or missing values.",
+          kind: isDuplicate ? "duplicate" : "error",
+        };
+      });
+      const skippedDuplicatesCount = issues.filter(
+        (i) => i.kind === "duplicate"
+      ).length;
+      const errorCount = issues.length - skippedDuplicatesCount;
+      const status: ImportSummary["status"] =
+        importedCount === 0 && (skippedDuplicatesCount > 0 || errorCount > 0)
+          ? "failed"
+          : skippedDuplicatesCount > 0 || errorCount > 0
+            ? "partial"
+            : "success";
       setImportProgress({
         totalRows: payloadRows.length,
         processedRows: payloadRows.length,
       });
-      const parts = [`Imported ${importedCount} asset(s).`];
-      if (skippedCount > 0) {
-        parts.push(`Skipped ${skippedCount} empty row(s).`);
-      }
-      if (rowErrors.length > 0) {
-        const firstFew = rowErrors
-          .slice(0, 3)
-          .map((e) => `row ${e.row}: ${e.message}`)
-          .join("; ");
-        parts.push(
-          `${rowErrors.length} row(s) failed (${firstFew}${rowErrors.length > 3 ? "; ..." : ""}).`
-        );
-      }
-      const message = parts.join(" ");
-      if (rowErrors.length > 0 && importedCount === 0) {
-        setError(message);
-        setSuccess(null);
-      } else {
-        setError(null);
-        setSuccess(message);
-      }
+      setImportSummary({
+        status,
+        importedCount,
+        skippedDuplicatesCount,
+        errorCount,
+        issues,
+      });
+      setError(null);
+      setSuccess(null);
       onSaved?.();
     } catch {
       setError("Could not read/import the XLSX file.");
@@ -587,6 +619,37 @@ export function AssetRegisterForm({
     groupsLoading || subGroupsLoading || branchesLoading || departmentsLoading;
   const noGroups = !groupsLoading && groups.length === 0;
   const noBranches = !branchesLoading && branches.length === 0;
+  const duplicatePreview = (importSummary?.issues ?? [])
+    .filter((i) => i.kind === "duplicate")
+    .slice(0, 5);
+
+  function downloadImportErrorReport() {
+    if (!importSummary || importSummary.issues.length === 0) return;
+    const rows = importSummary.issues.map((issue) => ({
+      Row: issue.row,
+      AssetCode: issue.assetCode ?? "",
+      Type: issue.kind === "duplicate" ? "Duplicate" : "Validation error",
+      Message: issue.message,
+    }));
+    const summarySheet = XLSX.utils.json_to_sheet([
+      {
+        Status:
+          importSummary.status === "success"
+            ? "Success"
+            : importSummary.status === "partial"
+              ? "Partial success"
+              : "Import failed",
+        Imported: importSummary.importedCount,
+        SkippedDuplicates: importSummary.skippedDuplicatesCount,
+        Errors: importSummary.errorCount,
+      },
+    ]);
+    const errorsSheet = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, summarySheet, "Summary");
+    XLSX.utils.book_append_sheet(wb, errorsSheet, "Issues");
+    XLSX.writeFile(wb, `asset-import-error-report-${Date.now()}.xlsx`);
+  }
 
   return (
     <section
@@ -658,6 +721,88 @@ export function AssetRegisterForm({
         <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
           {success}
         </p>
+      ) : null}
+      {importSummary ? (
+        <div
+          className={`mt-3 rounded-lg border p-4 ${
+            importSummary.status === "success"
+              ? "border-emerald-200 bg-emerald-50/70"
+              : importSummary.status === "partial"
+                ? "border-amber-200 bg-amber-50/70"
+                : "border-red-200 bg-red-50/70"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-semibold text-slate-900">
+            {importSummary.status === "success"
+              ? "Success"
+              : importSummary.status === "partial"
+                ? "Partial success"
+                : "Import failed"}
+          </p>
+          <p className="mt-1 text-sm text-slate-700">
+            {importSummary.status === "success"
+              ? "All valid rows were imported successfully."
+              : importSummary.status === "partial"
+                ? "Some rows were imported, but a few rows need attention."
+                : "No rows were imported. Please fix the highlighted rows and try again."}
+          </p>
+
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs text-slate-500">Imported</p>
+              <p className="text-base font-semibold text-slate-900">
+                {importSummary.importedCount}
+              </p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs text-slate-500">Skipped duplicates</p>
+              <p className="text-base font-semibold text-slate-900">
+                {importSummary.skippedDuplicatesCount}
+              </p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs text-slate-500">Errors</p>
+              <p className="text-base font-semibold text-slate-900">
+                {importSummary.errorCount}
+              </p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs text-slate-500">Rows with issues</p>
+              <p className="text-base font-semibold text-slate-900">
+                {importSummary.issues.length}
+              </p>
+            </div>
+          </div>
+
+          {duplicatePreview.length > 0 ? (
+            <div className="mt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
+                Duplicate rows (first 5)
+              </p>
+              <ul className="mt-1 space-y-1 text-sm text-slate-700">
+                {duplicatePreview.map((row) => (
+                  <li key={`${row.row}-${row.assetCode ?? "no-code"}`}>
+                    Row {row.row}: {row.assetCode ?? "(no asset code)"}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {importSummary.issues.length > 0 ? (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={downloadImportErrorReport}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 sm:w-auto"
+              >
+                Download Full Error Report (.xlsx)
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       <form className="mt-6 flex flex-col gap-8" onSubmit={onSubmit}>

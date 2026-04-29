@@ -88,6 +88,8 @@ type AssetDepRow = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
+  /** Current carrying amount on the register; preferred depreciation cost basis when set. */
+  book_value: string | null;
   old_book_value: string | null;
 };
 
@@ -105,6 +107,7 @@ const ASSET_SELECT = `
     a.depreciation_start_date_bs,
     a.purchase_qty::text,
     a.unit_rate::text,
+    a.book_value::text,
     a.old_book_value::text
   FROM hrms_assets a
   INNER JOIN hrms_groups g ON g.id = a.group_id
@@ -124,19 +127,55 @@ function parsePurchaseAmount(
   return q * r;
 }
 
-/** Positive old book value overrides qty × rate for depreciation (migrated assets). */
-function depreciableAmountForRun(
-  oldBookValueText: string | null,
+/**
+ * Gross depreciation base for schedules: qty × unit rate (historical cost) first,
+ * then legacy `old_book_value`, then register `book_value` when nothing else exists.
+ * Using carrying `book_value` alone as cost made migrated assets lose imported
+ * accumulated depreciation (runs treated WDV as original cost).
+ */
+function grossDepreciableAmountForRun(
+  registerBookValueText: string | null,
   qty: string | null,
-  unitRate: string | null
+  unitRate: string | null,
+  legacyOldBookValueText: string | null
 ): number | null {
-  if (oldBookValueText != null && oldBookValueText !== "") {
-    const ob = Number.parseFloat(oldBookValueText);
+  const fromPurchase = parsePurchaseAmount(qty, unitRate);
+  if (fromPurchase !== null && fromPurchase > 0) {
+    return fromPurchase;
+  }
+  if (legacyOldBookValueText != null && legacyOldBookValueText !== "") {
+    const ob = Number.parseFloat(legacyOldBookValueText);
     if (Number.isFinite(ob) && ob > 0) {
       return ob;
     }
   }
-  return parsePurchaseAmount(qty, unitRate);
+  if (registerBookValueText != null && registerBookValueText !== "") {
+    const bv = Number.parseFloat(registerBookValueText);
+    if (Number.isFinite(bv) && bv > 0) {
+      return bv;
+    }
+  }
+  return null;
+}
+
+/**
+ * Prior accumulated depreciation implied by the register when WDV (`book_value`)
+ * is below gross cost (e.g. imported accumulated dep). Passed into quarter compute
+ * so accumulated = max(schedule prior, this floor) + this-year slice.
+ */
+function registerImpliedPriorAccumulatedDep(
+  gross: number,
+  registerBookValueText: string | null
+): number | undefined {
+  if (!(gross > 0)) return undefined;
+  if (registerBookValueText == null || registerBookValueText === "") {
+    return undefined;
+  }
+  const bv = Number.parseFloat(registerBookValueText);
+  if (!Number.isFinite(bv) || bv <= 0) return undefined;
+  const implied = gross - bv;
+  if (!(implied > 0)) return undefined;
+  return implied > gross ? gross : implied;
 }
 
 function parseDepRatePercent(rate: string | null): number | null {
@@ -231,6 +270,10 @@ export async function listDetailsForRun(
       d.asset_name, a.purchase_date_bs,
       (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS actual_purchase_price,
       (CASE
+        WHEN a.book_value IS NOT NULL AND a.book_value > 0
+        THEN a.book_value
+        WHEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0) > 0
+        THEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
         WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
         THEN a.old_book_value
         ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
@@ -301,10 +344,15 @@ async function insertDepreciationDetailRows(
   let loggedVerificationAsset = false;
 
   for (const a of assets) {
-    const purchaseAmount = depreciableAmountForRun(
-      a.old_book_value,
+    const purchaseAmount = grossDepreciableAmountForRun(
+      a.book_value,
       a.purchase_qty,
-      a.unit_rate
+      a.unit_rate,
+      a.old_book_value
+    );
+    const registerPriorAccum = registerImpliedPriorAccumulatedDep(
+      purchaseAmount ?? 0,
+      a.book_value
     );
     const depRate = parseDepRatePercent(a.asset_dep_rate ?? a.group_dep_rate);
     const method = parseDepreciationMethod(a.asset_dep_method ?? a.group_dep_method);
@@ -323,7 +371,7 @@ async function insertDepreciationDetailRows(
     ) {
       const reason =
         purchaseAmount === null || purchaseAmount <= 0
-          ? "Invalid or missing depreciable cost (qty × unit rate or old book value must be > 0)."
+          ? "Invalid or missing depreciable cost (register book value, qty × unit rate, or legacy old book value must be > 0)."
           : depRate === null || depRate <= 0
             ? "Asset group has no valid depreciation rate (> 0)."
             : method === null
@@ -350,6 +398,7 @@ async function insertDepreciationDetailRows(
       depreciationScopeMode,
       asOfDateBs:
         depreciationScopeMode === "AS_OF_DATE" ? calculationDateBs : null,
+      registerPriorAccumulatedDep: registerPriorAccum,
     });
 
     if (!computed.ok) {
@@ -603,7 +652,7 @@ export async function createDepreciationRun(
     if (detailsInserted === 0) {
       await client.query("ROLLBACK");
       throw new Error(
-        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate or old book value), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
+        "No depreciation rows were generated. Ensure assets have valid cost (register book value, qty × rate, or legacy old book value), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
       );
     }
 
@@ -791,7 +840,7 @@ export async function refreshDepreciationRunDetailsFromAssets(
     if (detailsInserted === 0) {
       await client.query("ROLLBACK");
       throw new Error(
-        "No depreciation rows were generated. Ensure assets have valid cost (qty × rate or old book value), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
+        "No depreciation rows were generated. Ensure assets have valid cost (register book value, qty × rate, or legacy old book value), group depreciation rate and method, and depreciation start dates that fall on or before the selected fiscal year end."
       );
     }
 

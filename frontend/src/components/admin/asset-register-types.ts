@@ -21,7 +21,9 @@ export type AssetRegisterRow = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
-  /** When set and positive, depreciation uses this instead of qty × unit rate. */
+  /** When set and positive, depreciation runs use this carrying amount as cost basis (overrides qty × rate and old book value). */
+  book_value?: string | null;
+  /** Legacy override; runs prefer `book_value` then qty × unit rate when those are set. */
   old_book_value: string | null;
   purchase_invoice_no: string | null;
   created_at: string;

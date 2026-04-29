@@ -56,6 +56,8 @@ type ImportAssetRow = {
   depreciation_start_date_bs: string;
   purchase_qty: number | null;
   purchase_amount: number | null;
+  /** Carrying amount from legacy export (column e.g. Book Value) — depreciation cost basis. */
+  book_value: number | null;
   purchase_invoice_no: string | null;
 };
 
@@ -92,8 +94,46 @@ function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
   return -1;
 }
 
+/** Reads current book / WDV from common Excel header spellings (legacy register export). */
+function pickImportedBookValue(r: Record<string, unknown>): number | null {
+  const explicitKeys = [
+    "BookValue",
+    "Book Value",
+    "BOOK VALUE",
+    "Book_Value",
+    "CurrentBookValue",
+    "WrittenDownValue",
+    "WDV",
+  ];
+  for (const k of explicitKeys) {
+    const raw = r[k];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const s = String(raw).replace(/,/g, "").trim();
+    if (s === "") continue;
+    const n = Number.parseFloat(s);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  for (const key of Object.keys(r)) {
+    const nk = key.trim().replace(/\s+/g, " ").toLowerCase();
+    if (
+      nk === "book value" ||
+      nk === "bookvalue" ||
+      nk === "current book value" ||
+      nk === "written down value"
+    ) {
+      const raw = r[key];
+      if (raw === null || raw === undefined || raw === "") continue;
+      const s = String(raw).replace(/,/g, "").trim();
+      if (s === "") continue;
+      const n = Number.parseFloat(s);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
 function formatBranchCodeSegmentForPreview(branchCode: string): string {
-  let t = branchCode
+  const t = branchCode
     .trim()
     .replace(/[()[\]{}]/g, "")
     .trim();
@@ -431,6 +471,7 @@ export function AssetRegisterForm({
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
+        book_value: null,
       };
 
       const res = await fetch("/api/admin/assets", {
@@ -536,6 +577,7 @@ export function AssetRegisterForm({
             depreciation_start_date_bs: String(r.DepStartDateNepali ?? "").trim(),
             purchase_qty: parseNumber(qtyRaw),
             purchase_amount: parseNumber(purchaseAmountRaw),
+            book_value: pickImportedBookValue(r as Record<string, unknown>),
             purchase_invoice_no: String(r.Remarks ?? "").trim() || null,
           };
         })
@@ -670,6 +712,9 @@ export function AssetRegisterForm({
       <div className="mt-4 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-700">
           Import from Excel (`.xlsx`) using your Assets Register export format.
+          Include a <strong className="font-medium">Book Value</strong> column
+          (current written-down value) so depreciation uses that as the cost
+          basis; purchase amount stays historical cost on the register.
         </p>
         <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">
           {importing ? "Importing..." : "Import XLSX"}

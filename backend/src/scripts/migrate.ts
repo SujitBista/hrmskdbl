@@ -179,6 +179,10 @@ async function migrate() {
     ADD COLUMN IF NOT EXISTS old_book_value NUMERIC(18, 4);
   `);
   await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS book_value NUMERIC(18, 4);
+  `);
+  await query(`
     ALTER TABLE hrms_assets DROP COLUMN IF EXISTS lifetime_years;
   `);
   await query(`

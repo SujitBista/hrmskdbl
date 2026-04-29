@@ -77,6 +77,8 @@ export function AssetRegisterEditDialog({
   const [purchaseQty, setPurchaseQty] = useState("");
   const [unitRate, setUnitRate] = useState("");
   const [purchaseInvoiceNo, setPurchaseInvoiceNo] = useState("");
+  /** Carrying amount (WDV); when set, depreciation runs use this instead of purchase amount. */
+  const [bookValue, setBookValue] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +107,11 @@ export function AssetRegisterEditDialog({
       setPurchaseQty(asset.purchase_qty ?? "");
       setUnitRate(asset.unit_rate ?? "");
       setPurchaseInvoiceNo(asset.purchase_invoice_no ?? "");
+      setBookValue(
+        asset.book_value != null && asset.book_value !== ""
+          ? asset.book_value
+          : ""
+      );
       setError(null);
       el.showModal();
     } else {
@@ -197,6 +204,13 @@ export function AssetRegisterEditDialog({
           unitRate.trim() === "" ? null : Number.parseFloat(unitRate),
         purchase_invoice_no:
           purchaseInvoiceNo.trim() === "" ? null : purchaseInvoiceNo.trim(),
+        book_value: (() => {
+          const t = bookValue.trim();
+          if (t === "") return null;
+          const n = Number.parseFloat(t.replace(/,/g, ""));
+          if (!Number.isFinite(n) || n <= 0) return null;
+          return n;
+        })(),
       };
 
       const res = await fetch(`/api/admin/assets/${asset.id}`, {
@@ -209,7 +223,11 @@ export function AssetRegisterEditDialog({
         setError(json.error ?? "Could not update asset.");
         return;
       }
-      if (asset.depreciation_start_date_bs !== depreciationStartDateBs.trim()) {
+      const prevBookTrim = (asset.book_value ?? "").trim();
+      if (
+        asset.depreciation_start_date_bs !== depreciationStartDateBs.trim() ||
+        prevBookTrim !== bookValue.trim()
+      ) {
         sessionStorage.setItem(
           DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY,
           "1"
@@ -599,6 +617,30 @@ export function AssetRegisterEditDialog({
                 value={purchaseInvoiceNo}
                 onChange={(e) => setPurchaseInvoiceNo(e.target.value)}
                 className={fieldClass}
+              />
+            </div>
+            <div className="sm:col-span-2 lg:col-span-3">
+              <label
+                htmlFor={`${formId}-book`}
+                className="block text-sm font-medium text-slate-700"
+              >
+                Book value (depreciation basis)
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Current written-down value from your legacy register. When set,
+                depreciation uses this amount as the cost basis instead of
+                purchase (qty × rate). Leave empty for new assets.
+              </p>
+              <input
+                id={`${formId}-book`}
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={bookValue}
+                onChange={(e) => setBookValue(e.target.value)}
+                className={fieldClass}
+                placeholder="Optional — e.g. from import Book Value column"
               />
             </div>
           </div>

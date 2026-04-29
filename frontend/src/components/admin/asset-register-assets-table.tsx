@@ -57,11 +57,23 @@ function formatMoney(amount: number): string {
   }).format(amount);
 }
 
-function formatOldBookValue(v: string | null): string {
-  if (v == null || v === "") return "—";
-  const n = Number.parseFloat(v);
-  if (!Number.isFinite(n)) return "—";
-  return formatMoney(n);
+/** Same basis order as depreciation runs: register book value → purchase → legacy old book. */
+function formatDepreciationBasis(a: AssetRegisterRow): string {
+  const bvRaw = a.book_value;
+  if (bvRaw != null && bvRaw !== "") {
+    const bv = Number.parseFloat(bvRaw);
+    if (Number.isFinite(bv) && bv > 0) return formatMoney(bv);
+  }
+  const q = a.purchase_qty != null ? Number.parseFloat(a.purchase_qty) : NaN;
+  const r = a.unit_rate != null ? Number.parseFloat(a.unit_rate) : NaN;
+  if (Number.isFinite(q) && Number.isFinite(r) && q > 0 && r >= 0) {
+    return formatMoney(q * r);
+  }
+  if (a.old_book_value != null && a.old_book_value !== "") {
+    const ob = Number.parseFloat(a.old_book_value);
+    if (Number.isFinite(ob) && ob > 0) return formatMoney(ob);
+  }
+  return "—";
 }
 
 export function AssetRegisterAssetsTable({
@@ -326,9 +338,9 @@ export function AssetRegisterAssetsTable({
               <th
                 scope="col"
                 className="px-4 py-3 font-medium whitespace-nowrap text-right"
-                title="When set, used as depreciation cost basis instead of purchase amount"
+                title="Carrying amount used for depreciation (register book value when set, else purchase amount)"
               >
-                Old book value
+                Depreciation base
               </th>
               <th
                 scope="col"
@@ -428,7 +440,7 @@ export function AssetRegisterAssetsTable({
                       {formatPurchaseAmount(a.purchase_qty, a.unit_rate)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {formatOldBookValue(a.old_book_value)}
+                      {formatDepreciationBasis(a)}
                     </td>
                     <td className="max-w-[140px] px-4 py-3 whitespace-normal text-slate-700">
                       {a.group_dep_method?.trim() ? a.group_dep_method : "—"}

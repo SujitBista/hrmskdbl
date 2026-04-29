@@ -21,6 +21,8 @@ export type Asset = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
+  /** Carrying amount on the register; preferred basis for depreciation runs when set. */
+  book_value: string | null;
   old_book_value: string | null;
   purchase_invoice_no: string | null;
   created_at: string;
@@ -39,6 +41,11 @@ export type CreateAssetInput = {
   purchase_qty: number | null;
   unit_rate: number | null;
   purchase_invoice_no: string | null;
+  /**
+   * Carrying amount (WDV) from legacy data; when set, depreciation uses this as
+   * cost basis instead of purchase amount.
+   */
+  book_value: number | null;
 };
 
 export type ImportAssetRowInput = {
@@ -54,6 +61,8 @@ export type ImportAssetRowInput = {
   depreciation_start_date_bs?: string | null;
   purchase_qty?: number | string | null;
   purchase_amount?: number | string | null;
+  /** Current book / written-down value from import (maps to `hrms_assets.book_value`). */
+  book_value?: number | string | null;
   purchase_invoice_no?: string | null;
 };
 
@@ -200,6 +209,14 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
       ? b.purchase_invoice_no.trim()
       : null;
 
+  let book_value: number | null = null;
+  if (b.book_value !== null && b.book_value !== undefined && b.book_value !== "") {
+    book_value = parseOptionalNumber(b.book_value);
+    if (book_value !== null && book_value <= 0) {
+      throw new Error("Book value must be positive when set.");
+    }
+  }
+
   if (!asset_name) {
     throw new Error("Asset name is required.");
   }
@@ -246,6 +263,7 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     purchase_qty,
     unit_rate,
     purchase_invoice_no,
+    book_value,
   };
 }
 
@@ -511,6 +529,10 @@ export async function importAssetsFromRows(
           ? row.purchase_invoice_no.trim()
           : null;
 
+      const bookVal = parseNumberish(row.book_value);
+      const book_value =
+        bookVal !== null && bookVal > 0 ? bookVal : null;
+
       const input: CreateAssetInput = {
         asset_name: assetName,
         group_id: group.id,
@@ -524,6 +546,7 @@ export async function importAssetsFromRows(
         purchase_qty: qty,
         unit_rate: unitRate,
         purchase_invoice_no: purchaseInvoiceNo,
+        book_value,
       };
       validatedInputs.push({ row: rowNumber, input });
     } catch (err) {
@@ -667,10 +690,10 @@ async function createAssetWithClient(
       `INSERT INTO hrms_assets (
         asset_name, group_id, sub_group_id, ownership_type, working_status,
         branch_id, department_id, purchase_date_bs, depreciation_start_date_bs,
-        purchase_qty, unit_rate, purchase_invoice_no, old_book_value,
+        purchase_qty, unit_rate, purchase_invoice_no, old_book_value, book_value,
         dep_method_snapshot, dep_rate_snapshot
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING id, created_at::text`,
       [
         input.asset_name,
@@ -686,6 +709,7 @@ async function createAssetWithClient(
         input.unit_rate,
         input.purchase_invoice_no,
         null,
+        input.book_value,
         refs.group_dep_method,
         refs.group_dep_rate,
       ]
@@ -709,7 +733,7 @@ async function createAssetWithClient(
              (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
              a.purchase_date_bs,
              a.depreciation_start_date_bs,
-             a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no,
+             a.purchase_qty::text, a.unit_rate::text, a.book_value::text, a.old_book_value::text, a.purchase_invoice_no,
              a.created_at::text`,
           [candidateCode, row.id]
         );
@@ -762,8 +786,12 @@ export async function updateAsset(
   id: number,
   input: CreateAssetInput
 ): Promise<Asset | null> {
-  const existing = await query<{ id: number; depreciation_start_date_bs: string }>(
-    `SELECT id, depreciation_start_date_bs
+  const existing = await query<{
+    id: number;
+    depreciation_start_date_bs: string;
+    book_value: string | null;
+  }>(
+    `SELECT id, depreciation_start_date_bs, book_value::text
      FROM hrms_assets
      WHERE id = $1`,
     [id]
@@ -796,14 +824,15 @@ export async function updateAsset(
           purchase_qty = $11,
           unit_rate = $12,
           purchase_invoice_no = $13,
-          old_book_value = $14
-        WHERE a.id = $15
+          old_book_value = $14,
+          book_value = $15
+        WHERE a.id = $16
         RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
           a.ownership_type, a.working_status, a.branch_id, a.department_id,
           (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
           a.purchase_date_bs,
           a.depreciation_start_date_bs,
-          a.purchase_qty::text, a.unit_rate::text, a.old_book_value::text, a.purchase_invoice_no,
+          a.purchase_qty::text, a.unit_rate::text, a.book_value::text, a.old_book_value::text, a.purchase_invoice_no,
           a.created_at::text`,
         [
           candidateCode,
@@ -820,6 +849,7 @@ export async function updateAsset(
           input.unit_rate,
           input.purchase_invoice_no,
           null,
+          input.book_value,
           id,
         ]
       );
@@ -840,7 +870,30 @@ export async function updateAsset(
     return null;
   }
 
-  if (prev.depreciation_start_date_bs !== input.depreciation_start_date_bs) {
+  const prevParsed =
+    prev.book_value != null && prev.book_value !== ""
+      ? Number.parseFloat(prev.book_value)
+      : NaN;
+  const prevNorm =
+    Number.isFinite(prevParsed) && prevParsed > 0 ? prevParsed : null;
+  const nextNorm =
+    input.book_value !== null &&
+    input.book_value !== undefined &&
+    Number.isFinite(input.book_value) &&
+    input.book_value > 0
+      ? input.book_value
+      : null;
+  const bookChanged =
+    prevNorm === null && nextNorm === null
+      ? false
+      : prevNorm === null ||
+        nextNorm === null ||
+        Math.abs(prevNorm - nextNorm) > 0.0001;
+
+  if (
+    prev.depreciation_start_date_bs !== input.depreciation_start_date_bs ||
+    bookChanged
+  ) {
     await refreshMutableDepreciationRunsForAsset(id);
   }
 
@@ -876,6 +929,7 @@ export type AssetListRow = {
   depreciation_start_date_bs: string;
   purchase_qty: string | null;
   unit_rate: string | null;
+  book_value: string | null;
   old_book_value: string | null;
   purchase_invoice_no: string | null;
   created_at: string;
@@ -916,6 +970,7 @@ const ASSET_LIST_SELECT = `
     a.depreciation_start_date_bs,
     a.purchase_qty::text,
     a.unit_rate::text,
+    a.book_value::text,
     a.old_book_value::text,
     a.purchase_invoice_no,
     a.created_at::text

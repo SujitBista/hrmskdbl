@@ -323,6 +323,14 @@ export function computeAssetQuarterCumulative(params: {
   depreciationScopeMode?: DepreciationScopeMode;
   /** Required when `depreciationScopeMode` is AS_OF_DATE (English BS YYYY/MM/DD). */
   asOfDateBs?: string | null;
+  /**
+   * Floors “prior accumulated depreciation” at least this amount (e.g. historical
+   * dep implied by imported register: gross cost minus carrying `book_value`).
+   * Combined with {@link purchaseAmount} as gross cost, yields accumulated =
+   * max(schedule prior, register floor) + this-year slice (clamped), so migrated
+   * assets do not lose imported accumulated depreciation.
+   */
+  registerPriorAccumulatedDep?: number | null;
 }): { ok: true; detail: ComputedQuarterAssetDetail } | { ok: false; errors: string[] } {
   void params.calculationMode;
 
@@ -410,15 +418,34 @@ export function computeAssetQuarterCumulative(params: {
     return { ok: false, errors: timeline.errors };
   }
 
+  const cost = roundMoney(params.purchaseAmount);
+  const rawRegisterPrior = params.registerPriorAccumulatedDep;
+  const registerPriorFloor =
+    rawRegisterPrior != null &&
+    Number.isFinite(rawRegisterPrior) &&
+    rawRegisterPrior > 0
+      ? roundMoney(Math.min(Math.max(rawRegisterPrior, 0), cost))
+      : 0;
+  const priorYearsDepAmount = roundMoney(
+    Math.min(
+      cost,
+      Math.max(timeline.timeline.priorYearsDepAmount, registerPriorFloor)
+    )
+  );
+
   /**
    * Daily proration policy:
-   * - Straight line: keep lifetime split from timeline (prior years + this-year slice).
-   * - Declining balance: treat `purchaseAmount` as FY opening WDV base and apply
-   *   annual rate prorated by depDays; do not subtract prior years again.
+   * - Straight line: prorate against full gross cost.
+   * - Declining balance: prorate against FY opening written-down value after the
+   *   blended prior (schedule vs register floor), so this-year dep matches opening WDV.
    */
   const isDeclining = params.method === "DECLINING_BALANCE";
-  const priorYearsDepAmount = isDeclining ? 0 : timeline.timeline.priorYearsDepAmount;
-  const dailyBaseAmount = roundMoney(params.purchaseAmount);
+  const openingBookValueAfterPrior = roundMoney(
+    Math.max(0, cost - priorYearsDepAmount)
+  );
+  const dailyBaseAmount = roundMoney(
+    isDeclining ? openingBookValueAfterPrior : params.purchaseAmount
+  );
   const dailyRawThisYearDep =
     (dailyBaseAmount * (params.depRatePercent / 100) * depDays) / 365;
   const clamped = clampDepreciationAmounts(

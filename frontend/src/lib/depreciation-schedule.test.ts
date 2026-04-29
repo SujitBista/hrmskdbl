@@ -458,6 +458,25 @@ describe("computeAssetQuarterCumulative", () => {
     expect(r.detail.accumulateDep).toBe(0);
   });
 
+  it("register prior floor: accumulated dep includes imported accumulated + FY YTD (straight line)", () => {
+    const r = computeAssetQuarterCumulative({
+      purchaseAmount: 100_000,
+      depreciationStartBs: depStart,
+      depRatePercent: 10,
+      method: "STRAIGHT_LINE",
+      fiscalYearStart: 2082,
+      quarter: 1,
+      registerPriorAccumulatedDep: 40_000,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.detail.erpTimeline.priorYearsDepAmount).toBe(40_000);
+    expect(r.detail.depAmount).toBeCloseTo(2547.95, 2);
+    expect(r.detail.accumulateDep).toBeCloseTo(40_000 + 2547.95, 2);
+    expect(r.detail.bookValue).toBeCloseTo(100_000 - r.detail.accumulateDep, 2);
+    expect(r.detail.accumulateDep).toBeGreaterThan(r.detail.depAmount);
+  });
+
   it("AS_OF_DATE: this-year dep and lifetime are through calculation date, before Q4 FY end", () => {
     const base = {
       purchaseAmount: 100_000,

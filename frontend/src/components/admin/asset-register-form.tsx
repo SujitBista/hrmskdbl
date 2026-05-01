@@ -518,6 +518,18 @@ export function AssetRegisterForm({
     setError(null);
     setSuccess(null);
     setImportSummary(null);
+    if (groupsLoading || branchesLoading) {
+      setError(
+        "Still loading branches and groups. Wait a moment, then try import again."
+      );
+      return;
+    }
+    if (noGroups || noBranches) {
+      setError(
+        "Import needs at least one asset group and one branch. Add them under Groups and Branch in the admin menu (or re-run import after creating masters), then try again."
+      );
+      return;
+    }
     setImporting(true);
     try {
       const buffer = await file.arrayBuffer();
@@ -722,7 +734,7 @@ export function AssetRegisterForm({
             type="file"
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             className="sr-only"
-            disabled={importing || submitting || lookupsBusy || noGroups || noBranches}
+            disabled={importing || submitting || lookupsBusy}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) {

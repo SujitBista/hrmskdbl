@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/scripts/seed.ts",
-    "clear-depreciation": "tsx src/scripts/clear-depreciation-data.ts"
+    "clear-depreciation": "tsx src/scripts/clear-depreciation-data.ts",
+    "clear-all-register": "tsx src/scripts/clear-all-register-data.ts",
+    "clear-assets": "tsx src/scripts/clear-assets-data.ts"
   },
   "dependencies": {
     "@hrmskdbl/depreciation-core": "file:../packages/depreciation-core",

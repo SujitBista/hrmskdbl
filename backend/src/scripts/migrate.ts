@@ -214,17 +214,32 @@ async function migrate() {
       asset_name VARCHAR(255) NOT NULL,
       dep_rate NUMERIC(12, 4) NOT NULL,
       dep_days INTEGER NOT NULL,
+      prev_dep_amount NUMERIC(18, 4) NOT NULL DEFAULT 0,
       dep_amount NUMERIC(18, 4) NOT NULL,
+      total_dep_amount NUMERIC(18, 4) NOT NULL DEFAULT 0,
       group_name VARCHAR(255) NOT NULL,
       sub_group_name VARCHAR(255),
       branch_name VARCHAR(255) NOT NULL,
       book_value NUMERIC(18, 4) NOT NULL,
+      opening_book_value NUMERIC(18, 4) NOT NULL DEFAULT 0,
       accumulate_dep NUMERIC(18, 4) NOT NULL,
       dep_formula TEXT NOT NULL,
       dep_start_date_bs VARCHAR(32) NOT NULL,
       balance_amount NUMERIC(18, 4) NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_run_details
+    ADD COLUMN IF NOT EXISTS prev_dep_amount NUMERIC(18, 4) NOT NULL DEFAULT 0;
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_run_details
+    ADD COLUMN IF NOT EXISTS total_dep_amount NUMERIC(18, 4) NOT NULL DEFAULT 0;
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_run_details
+    ADD COLUMN IF NOT EXISTS opening_book_value NUMERIC(18, 4) NOT NULL DEFAULT 0;
   `);
   await query(`
     CREATE INDEX IF NOT EXISTS hrms_depreciation_run_details_run_id
@@ -277,6 +292,91 @@ async function migrate() {
   await query(`
     CREATE INDEX IF NOT EXISTS hrms_depreciation_run_audit_logs_run_id
     ON hrms_depreciation_run_audit_logs (depreciation_run_id, created_at DESC);
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_asset_allocations (
+      id SERIAL PRIMARY KEY,
+      asset_id INTEGER NOT NULL REFERENCES hrms_assets(id) ON DELETE CASCADE,
+      allocation_type VARCHAR(32) NOT NULL
+        CHECK (allocation_type IN ('NEW_ALLOCATION', 'TRANSFER')),
+      allocation_date_bs VARCHAR(32) NOT NULL,
+      branch_id INTEGER REFERENCES hrms_branches(id) ON DELETE SET NULL,
+      department_id INTEGER REFERENCES hrms_departments(id) ON DELETE SET NULL,
+      status VARCHAR(16) NOT NULL CHECK (status IN ('ACTIVE', 'CLOSED')),
+      closed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_asset_allocations_asset_id
+    ON hrms_asset_allocations (asset_id);
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_asset_allocations_one_active_per_asset
+    ON hrms_asset_allocations (asset_id)
+    WHERE status = 'ACTIVE';
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS current_allocation_id INTEGER;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS current_branch_id INTEGER;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS current_department_id INTEGER;
+  `);
+  await query(`
+    DO $fk$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'hrms_assets_current_allocation_id_fkey'
+      ) THEN
+        ALTER TABLE hrms_assets
+        ADD CONSTRAINT hrms_assets_current_allocation_id_fkey
+        FOREIGN KEY (current_allocation_id)
+        REFERENCES hrms_asset_allocations(id)
+        ON DELETE SET NULL;
+      END IF;
+    END
+    $fk$;
+  `);
+  await query(`
+    DO $fk$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'hrms_assets_current_branch_id_fkey'
+      ) THEN
+        ALTER TABLE hrms_assets
+        ADD CONSTRAINT hrms_assets_current_branch_id_fkey
+        FOREIGN KEY (current_branch_id)
+        REFERENCES hrms_branches(id)
+        ON DELETE SET NULL;
+      END IF;
+    END
+    $fk$;
+  `);
+  await query(`
+    DO $fk$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'hrms_assets_current_department_id_fkey'
+      ) THEN
+        ALTER TABLE hrms_assets
+        ADD CONSTRAINT hrms_assets_current_department_id_fkey
+        FOREIGN KEY (current_department_id)
+        REFERENCES hrms_departments(id)
+        ON DELETE SET NULL;
+      END IF;
+    END
+    $fk$;
   `);
 
   console.log("Migration complete.");

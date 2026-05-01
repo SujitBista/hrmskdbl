@@ -6,6 +6,10 @@ import { usePathname } from "next/navigation";
 const tabs = [
   { href: "/admin/dashboard/asset-register", label: "Asset Register" },
   {
+    href: "/admin/dashboard/asset-register/allocation",
+    label: "Asset allocation",
+  },
+  {
     href: "/admin/dashboard/asset-register/depreciation",
     label: "Depreciation",
   },
@@ -19,6 +23,9 @@ export function FixedAssetSectionTabs() {
   const onDepreciation = pathname.startsWith(
     "/admin/dashboard/asset-register/depreciation"
   );
+  const onAllocation = pathname.startsWith(
+    "/admin/dashboard/asset-register/allocation"
+  );
 
   return (
     <div className="mb-4 border-b border-slate-300 bg-slate-50/80">
@@ -30,7 +37,9 @@ export function FixedAssetSectionTabs() {
           const active =
             t.href === "/admin/dashboard/asset-register/depreciation"
               ? onDepreciation
-              : pathname === t.href;
+              : t.href === "/admin/dashboard/asset-register/allocation"
+                ? onAllocation
+                : pathname === t.href;
           return (
             <Link
               key={t.href}

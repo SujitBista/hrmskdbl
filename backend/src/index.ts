@@ -22,6 +22,11 @@ import {
   updateDepartment,
 } from "./services/departments.js";
 import {
+  listAssetAllocationsView,
+  parseTransferAllocationBody,
+  transferAssetAllocation,
+} from "./services/assetAllocations.js";
+import {
   createAsset,
   deleteAsset,
   importAssetsFromRows,
@@ -1017,6 +1022,42 @@ app.get("/api/admin/assets", async (req, res) => {
   }
 });
 
+app.get("/api/admin/asset-allocations", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const result = await listAssetAllocationsView({
+      search,
+      page: p,
+      pageSize: ps,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list asset allocations." });
+  }
+});
+
 app.post("/api/admin/assets", async (req, res) => {
   const token = getBearerToken(req);
   if (!token) {
@@ -1102,6 +1143,38 @@ app.patch("/api/admin/assets/:id", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Could not update asset." });
+  }
+});
+
+app.post("/api/admin/assets/:id/allocation-transfer", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const payload = parseTransferAllocationBody(req.body);
+    const result = await transferAssetAllocation(id, payload);
+    res.status(201).json(result);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not record allocation transfer." });
   }
 });
 

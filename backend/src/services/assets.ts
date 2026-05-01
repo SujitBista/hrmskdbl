@@ -1,4 +1,5 @@
 import { pool, query } from "../db.js";
+import { ensureInitialAllocationForNewAsset } from "./assetAllocations.js";
 import { clampListParams } from "./groups.js";
 import { refreshMutableDepreciationRunsForAsset } from "./depreciationRuns.js";
 import type pg from "pg";
@@ -754,6 +755,14 @@ async function createAssetWithClient(
   if (!out) {
     throw new Error("Failed to load asset after save.");
   }
+
+  await ensureInitialAllocationForNewAsset(client, {
+    assetId: out.id,
+    branchId: input.branch_id,
+    departmentId: input.department_id,
+    purchaseDateBs: input.purchase_date_bs,
+  });
+
   return out;
 }
 

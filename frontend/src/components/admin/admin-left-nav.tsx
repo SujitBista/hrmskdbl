@@ -85,6 +85,9 @@ export function AdminLeftNav({
   const isGroupsPage = pathname === "/admin/dashboard/groups";
   const isSubGroupsPage = pathname === "/admin/dashboard/groups/sub-groups";
   const isAssetRegisterPage = pathname === "/admin/dashboard/asset-register";
+  const isAssetAllocationPage = pathname.startsWith(
+    "/admin/dashboard/asset-register/allocation"
+  );
   const isDepreciationPage = pathname.startsWith(
     "/admin/dashboard/asset-register/depreciation"
   );
@@ -164,11 +167,24 @@ export function AdminLeftNav({
           <Link
             href="/admin/dashboard/asset-register#asset-register"
             className={`${subLinkClass} ${
-              isAssetRegisterPage && !isDepreciationPage ? linkActive : linkInactive
+              isAssetRegisterPage &&
+              !isDepreciationPage &&
+              !isAssetAllocationPage
+                ? linkActive
+                : linkInactive
             }`}
             onClick={onNavigate}
           >
             Asset Register
+          </Link>
+          <Link
+            href="/admin/dashboard/asset-register/allocation"
+            className={`${subLinkClass} ${
+              isAssetAllocationPage ? linkActive : linkInactive
+            }`}
+            onClick={onNavigate}
+          >
+            Asset allocation
           </Link>
           <Link
             href="/admin/dashboard/asset-register/depreciation"

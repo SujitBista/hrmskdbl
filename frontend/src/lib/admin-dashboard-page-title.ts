@@ -15,6 +15,9 @@ export function adminDashboardPageTitle(pathname: string): string {
   if (pathname === "/admin/dashboard/asset-register/depreciation") {
     return "Depreciation";
   }
+  if (pathname.startsWith("/admin/dashboard/asset-register/allocation")) {
+    return "Asset allocation";
+  }
   if (pathname === "/admin/dashboard/asset-register") {
     return "Asset Register";
   }

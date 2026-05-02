@@ -66,11 +66,17 @@ export type LifetimeDepreciationTimeline = {
 export type ComputedQuarterAssetDetail = {
   depDays: number;
   depAmount: number;
+  /**
+   * Prior accumulated depreciation before this fiscal year’s slice (ERP register
+   * `AccumulateDep`): max(schedule prior, register floor), excluding `depAmount`.
+   */
   accumulateDep: number;
+  /** Opening written-down value at FY start after prior dep (`BookValue` on ERP register). */
   bookValue: number;
+  /** Closing WDV after this run’s period (`ClosingBookValue`). */
   balanceAmount: number;
   depFormula: string;
-  /** Prior FY + selected FY slice; matches `depAmount` / `accumulateDep` / `bookValue`. */
+  /** Full timeline: `accumulatedDep` = prior + this-year; ties `balanceAmount`. */
   erpTimeline: LifetimeDepreciationTimeline;
 };
 
@@ -303,9 +309,11 @@ export const calculateLifetimeDepreciationUpToFY = buildDepreciationTimeline;
  * It is computed directly from cumulative depDays (not month-by-month):
  * - Straight-line base: purchase amount
  * - Declining-balance base: opening FY written-down value
- * accumulate_dep = lifetime depreciation from depreciation start through that same end date.
- * Book value = cost minus lifetime accumulated depreciation (clamped). ERP calendar days;
- * `calculationMode` is ignored.
+ * accumulate_dep = prior accumulated depreciation only (ERP `AccumulateDep`), before
+ * this year’s `dep_amount`. book_value = opening WDV after that prior (`BookValue`);
+ * balance_amount = closing WDV (`ClosingBookValue`). Lifetime total =
+ * `erpTimeline.accumulatedDep` (= accumulate_dep + dep_amount after rounding).
+ * ERP calendar days; `calculationMode` is ignored.
  */
 export function computeAssetQuarterCumulative(params: {
   purchaseAmount: number;
@@ -459,8 +467,8 @@ export function computeAssetQuarterCumulative(params: {
     detail: {
       depDays,
       depAmount: clamped.thisYearDepAmount,
-      accumulateDep: clamped.accumulatedDep,
-      bookValue: clamped.closingBookValue,
+      accumulateDep: clamped.priorYearsDepAmount,
+      bookValue: clamped.openingBookValueOfFY,
       balanceAmount: clamped.closingBookValue,
       depFormula: formatDepFormula(params.method, params.depRatePercent),
       erpTimeline: clamped,

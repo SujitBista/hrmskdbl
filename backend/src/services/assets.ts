@@ -452,56 +452,6 @@ async function insertImportBranchRow(
   return row;
 }
 
-async function insertImportDepartmentRow(
-  name: string
-): Promise<{ id: number; name: string }> {
-  const trimmed = name.trim().slice(0, 255);
-  if (trimmed === "") {
-    throw new Error("Cannot auto-create department: name is required.");
-  }
-  const ins = await query<{ id: number; name: string }>(
-    `INSERT INTO hrms_departments (name)
-     VALUES ($1)
-     ON CONFLICT (name) DO NOTHING
-     RETURNING id, name`,
-    [trimmed]
-  );
-  if (ins.rows[0]) {
-    return ins.rows[0];
-  }
-  const sel = await query<{ id: number; name: string }>(
-    `SELECT id, name FROM hrms_departments WHERE name = $1`,
-    [trimmed]
-  );
-  const row = sel.rows[0];
-  if (!row) {
-    throw new Error("Could not create or load department.");
-  }
-  return row;
-}
-
-/**
- * Resolves a department for Excel import: matches existing masters or inserts
- * a new `hrms_departments` row so a non-empty name from the file is not dropped.
- */
-async function ensureDepartmentRowFromImportExcel(
-  departmentNameRaw: string,
-  departmentByName: Map<string, { id: number; name: string }>
-): Promise<{ id: number; name: string }> {
-  const trimmed = departmentNameRaw.trim().slice(0, 255);
-  if (trimmed === "") {
-    throw new Error("Department name is required.");
-  }
-  const key = normalizeComparableText(trimmed);
-  const existing = departmentByName.get(key);
-  if (existing) {
-    return existing;
-  }
-  const row = await insertImportDepartmentRow(trimmed);
-  departmentByName.set(normalizeComparableText(row.name), row);
-  return row;
-}
-
 function slugBranchCodeFromName(name: string): string {
   const base = normalizeComparableText(name)
     .replace(/[^a-z0-9]+/g, "-")
@@ -779,11 +729,12 @@ export async function importAssetsFromRows(
       const departmentName =
         typeof row.department_name === "string" ? row.department_name.trim() : "";
       if (departmentName !== "") {
-        const department = await ensureDepartmentRowFromImportExcel(
-          departmentName,
-          departmentByName
+        const department = departmentByName.get(
+          normalizeComparableText(departmentName)
         );
-        departmentId = department.id;
+        if (department) {
+          departmentId = department.id;
+        }
       }
 
       const purchaseDateBs = parseDateBsOrThrow(row.purchase_date_bs, "Purchase date");

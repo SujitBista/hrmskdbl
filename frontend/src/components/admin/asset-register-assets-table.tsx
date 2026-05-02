@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 import { formatAdminDateTime } from "@/lib/format-datetime";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
 import type { AssetRegisterRow } from "./asset-register-types";
@@ -413,7 +414,10 @@ export function AssetRegisterAssetsTable({
                       {a.sub_group_name ?? "—"}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                      {a.branch_code} — {a.branch_name}
+                      {formatBranchOptionLabel({
+                        branch_code: a.branch_code,
+                        branch_name: a.branch_name,
+                      })}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-700">
                       {a.ownership_type}

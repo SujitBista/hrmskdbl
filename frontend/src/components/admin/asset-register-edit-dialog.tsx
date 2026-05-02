@@ -9,6 +9,7 @@ import {
   normalizeBsDateEnglish,
 } from "@/lib/bs-date-english";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 import type { AssetRegisterRow } from "./asset-register-types";
 
 type GroupOption = { id: number; name: string; code?: string };
@@ -426,7 +427,7 @@ export function AssetRegisterEditDialog({
                 ) : (
                   branches.map((b) => (
                     <option key={b.id} value={String(b.id)}>
-                      {b.branch_code} — {b.branch_name}
+                      {formatBranchOptionLabel(b)}
                     </option>
                   ))
                 )}

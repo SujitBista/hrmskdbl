@@ -154,6 +154,24 @@ function stripBcHintFromBranchName(branchName: string): string {
     .trim();
 }
 
+/** Stored `branch_name` on import-created rows: `… (BC:{branch_code})`. */
+function appendBcHintToBranchNameForImport(
+  displayName: string,
+  branchCode: string
+): string {
+  const code = branchCode.trim().slice(0, 64);
+  const base = stripBcHintFromBranchName(displayName.trim()).trim();
+  const suffix = code !== "" ? ` (BC:${code})` : "";
+  const fallbackLabel = code !== "" ? `Branch ${code}` : "Branch";
+  let label = base !== "" ? base : fallbackLabel;
+  if (suffix === "") {
+    return label.slice(0, 255);
+  }
+  const maxLabelLen = Math.max(0, 255 - suffix.length);
+  label = label.slice(0, maxLabelLen);
+  return `${label}${suffix}`;
+}
+
 /**
  * Builds SKDBL/{branch}/{group}/{YYYY}/{MM}/{DD}/{######}.
  * The last segment is always `hrms_assets.id` (SERIAL primary key), zero-padded to 6 digits.
@@ -415,7 +433,16 @@ function registerBranchInImportMaps(
   branchByName: Map<string, ImportBranchRow>,
   branchByCodeKey: Map<string, ImportBranchRow>
 ): void {
-  branchByName.set(normalizeComparableText(branch.branch_name), branch);
+  const fullKey = normalizeComparableText(branch.branch_name);
+  branchByName.set(fullKey, branch);
+  const stripped = stripBcHintFromBranchName(branch.branch_name).trim();
+  const strippedKey =
+    stripped !== "" ? normalizeComparableText(stripped) : "";
+  if (strippedKey !== "" && strippedKey !== fullKey) {
+    if (!branchByName.has(strippedKey)) {
+      branchByName.set(strippedKey, branch);
+    }
+  }
   const ck = branchCodeLookupKey(branch.branch_code);
   if (!branchByCodeKey.has(ck)) {
     branchByCodeKey.set(ck, branch);
@@ -427,7 +454,7 @@ async function insertImportBranchRow(
   branch_name: string
 ): Promise<ImportBranchRow> {
   const code = branch_code.trim().slice(0, 64);
-  const name = branch_name.trim().slice(0, 255);
+  const name = appendBcHintToBranchNameForImport(branch_name, code).trim().slice(0, 255);
   if (code === "" || name === "") {
     throw new Error("Cannot auto-create branch: branch code and name are required.");
   }
@@ -519,8 +546,9 @@ async function ensureBranchRowFromImportExcel(params: {
         return row;
       }
       if (
-        normalizeComparableText(existing.branch_name) ===
-        normalizeComparableText(branch_name)
+        normalizeComparableText(
+          stripBcHintFromBranchName(existing.branch_name)
+        ) === normalizeComparableText(stripBcHintFromBranchName(branch_name))
       ) {
         return existing;
       }
@@ -582,11 +610,7 @@ export async function importAssetsFromRows(
     { id: number; branch_name: string; branch_code: string }
   >();
   for (const b of branchesResult.rows) {
-    branchByName.set(normalizeComparableText(b.branch_name), b);
-    const codeKey = branchCodeLookupKey(b.branch_code);
-    if (!branchByCodeKey.has(codeKey)) {
-      branchByCodeKey.set(codeKey, b);
-    }
+    registerBranchInImportMaps(b, branchByName, branchByCodeKey);
   }
 
   const departmentByName = new Map<string, { id: number; name: string }>();

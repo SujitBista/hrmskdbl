@@ -5,7 +5,11 @@ import { NepaliDatePicker } from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 import * as XLSX from "xlsx";
 
-import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import {
+  formatAssetCodeForDisplay,
+  parseBranchSegmentFromSkdblAssetCode,
+} from "@/lib/format-asset-code";
+import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 import {
   bsDateToPickerValue,
   normalizeBsDateEnglish,
@@ -566,9 +570,9 @@ export function AssetRegisterForm({
       );
       return;
     }
-    if (noGroups || noBranches) {
+    if (noGroups) {
       setError(
-        "Import needs at least one asset group and one branch. Add them under Groups and Branch in the admin menu (or re-run import after creating masters), then try again."
+        "Import needs at least one asset group. Add groups under Groups in the admin menu, then try again."
       );
       return;
     }
@@ -639,6 +643,22 @@ export function AssetRegisterForm({
 
       if (payloadRows.length === 0) {
         setError("No valid asset rows found in the selected file.");
+        return;
+      }
+
+      const rowMissingBranchSource = payloadRows.find((r) => {
+        const branchName = (r.branch_name ?? "").trim();
+        const code = (r.asset_code ?? "").trim();
+        const fromAsset =
+          code !== "" ? parseBranchSegmentFromSkdblAssetCode(code) : null;
+        const hasSkdblBranch =
+          fromAsset !== null && fromAsset !== "";
+        return branchName === "" && !hasSkdblBranch;
+      });
+      if (rowMissingBranchSource) {
+        setError(
+          "Each row needs a BranchName, or an AssetCode in SKDBL/{branch}/… form so the branch can be created from the file. Add a Branch column or SKDBL asset codes, then try again."
+        );
         return;
       }
 
@@ -781,11 +801,11 @@ export function AssetRegisterForm({
           <strong className="font-medium">Branches</strong> are created automatically
           when missing: from <strong className="font-medium">AssetCode</strong> (
           <code className="rounded bg-slate-100 px-1">SKDBL/…</code>, second segment =
-          branch code), from <code className="rounded bg-slate-100 px-1">
-            (BC:branchCode)
-          </code>{" "}
-          on BranchName, or from BranchName alone (a code is generated). You do not
-          need to add branches in Admin before importing.
+          branch code; stored branch name includes{" "}
+          <code className="rounded bg-slate-100 px-1">(BC:…)</code> from that segment),
+          from <code className="rounded bg-slate-100 px-1">(BC:branchCode)</code> on
+          BranchName, or from BranchName alone (a code is generated). You do not need
+          any branches in Admin before import when those rules apply.
         </p>
         <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">
           {importing ? "Importing..." : "Import XLSX"}
@@ -1152,7 +1172,7 @@ export function AssetRegisterForm({
                 ) : (
                   branches.map((b) => (
                     <option key={b.id} value={String(b.id)}>
-                      {b.branch_code} — {b.branch_name}
+                      {formatBranchOptionLabel(b)}
                     </option>
                   ))
                 )}

@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { formatAdminDateTime } from "@/lib/format-datetime";
+import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 
 export type BranchRow = {
   id: number;
@@ -384,9 +385,7 @@ export function BranchesTable({ refreshKey }: { refreshKey: number }) {
           <p className="mt-2 text-sm text-slate-600">
             Are you sure you want to delete{" "}
             <span className="font-medium text-slate-900">
-              {deleteTarget
-                ? `${deleteTarget.branch_code} — ${deleteTarget.branch_name}`
-                : ""}
+              {deleteTarget ? formatBranchOptionLabel(deleteTarget) : ""}
             </span>
             ? This cannot be undone.
           </p>

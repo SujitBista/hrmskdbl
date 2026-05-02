@@ -1,3 +1,5 @@
+const ASSET_CODE_PREFIX = "SKDBL";
+
 /** Mirrors backend `formatBranchCodeSegment` for display of stored asset codes. */
 export function formatBranchCodeSegment(branchCode: string): string {
   let t = branchCode
@@ -16,6 +18,31 @@ export function formatBranchCodeSegment(branchCode: string): string {
     return t.padStart(3, "0");
   }
   return t;
+}
+
+/**
+ * Reads the branch segment from `SKDBL/{branch}/…` asset codes (same rules as
+ * the server). Used for import validation and branch auto-creation from Excel.
+ */
+export function parseBranchSegmentFromSkdblAssetCode(
+  assetCode: string
+): string | null {
+  const trimmed = assetCode.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const parts = trimmed.split("/").map((p) => p.trim());
+  if (parts.length < 3) {
+    return null;
+  }
+  if ((parts[0] ?? "").toUpperCase() !== ASSET_CODE_PREFIX) {
+    return null;
+  }
+  const seg = parts[1] ?? "";
+  if (seg === "") {
+    return null;
+  }
+  return formatBranchCodeSegment(seg);
 }
 
 /** Normalizes the branch segment in a full SKDBL/... path for UI display. */

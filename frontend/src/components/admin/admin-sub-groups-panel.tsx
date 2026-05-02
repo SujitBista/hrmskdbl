@@ -11,7 +11,7 @@ export function AdminSubGroupsPanel() {
   return (
     <div className="flex flex-col gap-8">
       <CreateSubGroupForm groupsRefreshKey={refreshKey} onCreated={bump} />
-      <SubGroupsTable refreshKey={refreshKey} />
+      <SubGroupsTable refreshKey={refreshKey} onImported={bump} />
     </div>
   );
 }

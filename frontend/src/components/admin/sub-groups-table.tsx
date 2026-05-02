@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import * as XLSX from "xlsx";
 import { formatAdminDateTime } from "@/lib/format-datetime";
 
 export type SubGroupRow = {
@@ -30,7 +31,42 @@ type ListResponse = {
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
 
-export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
+type SubGroupImportPayloadRow = {
+  group_name: string;
+  sub_group_name: string;
+};
+
+type SubGroupImportSummary = {
+  importedCount: number;
+  skippedCount: number;
+  errors: Array<{ row: number; message: string }>;
+};
+
+function findSubGroupImportHeaderRow(sheet: XLSX.WorkSheet): number {
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: "",
+  });
+  const required = ["GroupName", "SubGroupName"];
+  const maxScan = Math.min(rows.length, 40);
+  for (let i = 0; i < maxScan; i += 1) {
+    const row = Array.isArray(rows[i]) ? rows[i] : [];
+    const normalized = row.map((cell) => String(cell ?? "").trim());
+    const hasAll = required.every((h) => normalized.includes(h));
+    if (hasAll) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+export function SubGroupsTable({
+  refreshKey,
+  onImported,
+}: {
+  refreshKey: number;
+  onImported?: () => void;
+}) {
   const searchId = useId();
   const deleteDialogRef = useRef<HTMLDialogElement>(null);
   const editDialogRef = useRef<HTMLDialogElement>(null);
@@ -52,6 +88,12 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
   const [editGroupsLoading, setEditGroupsLoading] = useState(false);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSummary, setImportSummary] = useState<SubGroupImportSummary | null>(
+    null
+  );
 
   useEffect(() => {
     const el = deleteDialogRef.current;
@@ -140,6 +182,82 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
+
+  async function onImportFile(file: File) {
+    setImportError(null);
+    setImportSummary(null);
+    setImporting(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        setImportError("The selected file has no worksheet.");
+        return;
+      }
+      const sheet = workbook.Sheets[firstSheetName];
+      if (!sheet) {
+        setImportError("Could not read worksheet from the selected file.");
+        return;
+      }
+      const headerRowIndex = findSubGroupImportHeaderRow(sheet);
+      if (headerRowIndex < 0) {
+        setImportError(
+          "Could not find import columns. Include headers GroupName and SubGroupName (same as the asset register export)."
+        );
+        return;
+      }
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+        defval: "",
+        range: headerRowIndex,
+      });
+      if (rows.length === 0) {
+        setImportError("The worksheet has no rows to import.");
+        return;
+      }
+      const payloadRows: SubGroupImportPayloadRow[] = rows
+        .map((r) => {
+          const groupName = String(r.GroupName ?? "").trim();
+          const subGroupName = String(
+            r.SubGroupName ?? r.SubgroupName ?? ""
+          ).trim();
+          if (groupName === "" && subGroupName === "") {
+            return null;
+          }
+          return { group_name: groupName, sub_group_name: subGroupName };
+        })
+        .filter((r): r is SubGroupImportPayloadRow => r !== null);
+
+      if (payloadRows.length === 0) {
+        setImportError("No data rows found under the header row.");
+        return;
+      }
+
+      const res = await fetch("/api/admin/sub-groups/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payloadRows }),
+      });
+      const json = (await res.json()) as SubGroupImportSummary & { error?: string };
+      if (!res.ok) {
+        setImportError(
+          json.error ?? "Import could not be completed. Please review the file."
+        );
+        return;
+      }
+      setImportSummary({
+        importedCount: json.importedCount ?? 0,
+        skippedCount: json.skippedCount ?? 0,
+        errors: json.errors ?? [],
+      });
+      await load();
+      onImported?.();
+    } catch {
+      setImportError("Could not read or import the XLSX file.");
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const total = data?.total ?? 0;
   const subGroups = data?.subGroups ?? [];
@@ -240,6 +358,75 @@ export function SubGroupsTable({ refreshKey }: { refreshKey: number }) {
           />
         </div>
       </div>
+
+      <div className="mt-4 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-slate-700">
+          Import sub groups from Excel (`.xlsx`). Each row needs{" "}
+          <strong className="font-medium">GroupName</strong> (must match an
+          existing asset group) and{" "}
+          <strong className="font-medium">SubGroupName</strong>. Rows that
+          already exist for that group are skipped.
+        </p>
+        <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">
+          {importing ? "Importing…" : "Import XLSX"}
+          <input
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="sr-only"
+            disabled={importing || loading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                void onImportFile(file);
+              }
+              e.currentTarget.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {importError ? (
+        <p
+          className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+          role="alert"
+        >
+          {importError}
+        </p>
+      ) : null}
+      {importSummary ? (
+        <div
+          className={`mt-3 rounded-lg border p-3 text-sm ${
+            importSummary.errors.length > 0
+              ? "border-red-200 bg-red-50/80 text-red-900"
+              : "border-emerald-200 bg-emerald-50/80 text-emerald-900"
+          }`}
+          role="status"
+        >
+          {importSummary.errors.length > 0 ? (
+            <>
+              <p className="font-semibold">Import failed</p>
+              <p className="mt-1">
+                {importSummary.errors[0]?.message ?? "Validation error."}
+                {importSummary.errors.length > 1
+                  ? ` (+${importSummary.errors.length - 1} more rows)`
+                  : ""}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-semibold">Import complete</p>
+              <p className="mt-1">
+                Imported {importSummary.importedCount} sub group
+                {importSummary.importedCount === 1 ? "" : "s"}
+                {importSummary.skippedCount > 0
+                  ? `; skipped ${importSummary.skippedCount} duplicate or blank row${
+                      importSummary.skippedCount === 1 ? "" : "s"
+                    }.`
+                  : "."}
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full min-w-[560px] text-left text-sm">

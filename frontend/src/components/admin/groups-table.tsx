@@ -16,7 +16,6 @@ export type GroupRow = {
   name: string;
   dep_method: string | null;
   dep_rate: number | null;
-  dep_rate_tax: number | null;
   created_at: string;
 };
 
@@ -58,7 +57,6 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
   const [editName, setEditName] = useState("");
   const [editDepMethod, setEditDepMethod] = useState("");
   const [editDepRate, setEditDepRate] = useState("");
-  const [editDepRateTax, setEditDepRateTax] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -82,9 +80,6 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       setEditDepMethod(editTarget.dep_method ?? "");
       setEditDepRate(
         editTarget.dep_rate != null ? String(editTarget.dep_rate) : ""
-      );
-      setEditDepRateTax(
-        editTarget.dep_rate_tax != null ? String(editTarget.dep_rate_tax) : ""
       );
       setActionError(null);
       el.showModal();
@@ -177,8 +172,18 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
   async function onEditSubmit(e: FormEvent) {
     e.preventDefault();
     if (!editTarget) return;
-    setEditSubmitting(true);
     setActionError(null);
+    if (!editDepMethod.trim()) {
+      setActionError("Depreciation method is required.");
+      return;
+    }
+    const parsedDepRate =
+      editDepRate.trim() === "" ? NaN : Number.parseFloat(editDepRate);
+    if (!Number.isFinite(parsedDepRate) || parsedDepRate <= 0) {
+      setActionError("Dep rate must be greater than zero.");
+      return;
+    }
+    setEditSubmitting(true);
     try {
       const res = await fetch(`/api/admin/groups/${editTarget.id}`, {
         method: "PATCH",
@@ -186,10 +191,8 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
         body: JSON.stringify({
           code: editCode,
           name: editName,
-          dep_method: editDepMethod === "" ? null : editDepMethod,
-          dep_rate: editDepRate.trim() === "" ? null : Number(editDepRate),
-          dep_rate_tax:
-            editDepRateTax.trim() === "" ? null : Number(editDepRateTax),
+          dep_method: editDepMethod,
+          dep_rate: parsedDepRate,
         }),
       });
       const json = (await res.json()) as { error?: string };
@@ -242,7 +245,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[820px] text-left text-sm">
+        <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
@@ -260,9 +263,6 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap text-right">
                 Dep rate
               </th>
-              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap text-right">
-                Dep rate tax
-              </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Created
               </th>
@@ -278,7 +278,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             {loading ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -287,7 +287,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             ) : error ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-red-600"
                   role="alert"
                 >
@@ -297,7 +297,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             ) : groups.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-slate-500"
                 >
                   {debouncedSearch
@@ -322,9 +322,6 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
                     {g.dep_rate != null ? g.dep_rate : "—"}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                    {g.dep_rate_tax != null ? g.dep_rate_tax : "—"}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                     {formatAdminDateTime(g.created_at)}
@@ -516,8 +513,8 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
             </div>
             <div className="space-y-3">
               <p className="text-sm font-semibold text-slate-800">Depreciation</p>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="sm:col-span-2 lg:col-span-1">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
                   <label
                     htmlFor={`${searchId}-edit-dep-method`}
                     className="block text-sm font-medium text-slate-700"
@@ -529,6 +526,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
                     value={editDepMethod}
                     onChange={(e) => setEditDepMethod(e.target.value)}
                     className={editFieldClass}
+                    required
                   >
                     <option value="">— Select —</option>
                     {DEPRECIATION_METHODS.map((m) => (
@@ -550,25 +548,9 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
                     type="number"
                     min={0}
                     step="any"
+                    required
                     value={editDepRate}
                     onChange={(e) => setEditDepRate(e.target.value)}
-                    className={editFieldClass}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor={`${searchId}-edit-dep-rate-tax`}
-                    className="block text-sm font-medium text-slate-700"
-                  >
-                    Dep rate tax (%)
-                  </label>
-                  <input
-                    id={`${searchId}-edit-dep-rate-tax`}
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={editDepRateTax}
-                    onChange={(e) => setEditDepRateTax(e.target.value)}
                     className={editFieldClass}
                   />
                 </div>

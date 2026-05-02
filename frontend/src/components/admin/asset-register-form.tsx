@@ -97,6 +97,25 @@ function distinctImportValidationMessages(
   return { samples, truncated };
 }
 
+/** Picks department label from common Excel export / manual header spellings. */
+function pickDepartmentNameFromImportRow(r: Record<string, unknown>): string {
+  const keys = [
+    "DepartmentName",
+    "Department",
+    "Department Name",
+    "DeptName",
+    "Dept",
+    "department_name",
+  ];
+  for (const k of keys) {
+    const s = String(r[k] ?? "").trim();
+    if (s !== "") {
+      return s;
+    }
+  }
+  return "";
+}
+
 function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
@@ -593,6 +612,7 @@ export function AssetRegisterForm({
           }
           const purchaseAmountRaw = String(r.PurchaseAmount ?? "").trim();
           const qtyRaw = String(r.Qty ?? "").trim();
+          const departmentName = pickDepartmentNameFromImportRow(r);
           const parseNumber = (v: string): number | null => {
             if (v === "") return null;
             const n = Number(v.replace(/,/g, ""));
@@ -606,8 +626,7 @@ export function AssetRegisterForm({
             ownership_type: String(r.OwnType ?? "").trim() || "Owner",
             working_status: String(r.WorkingStatus ?? "").trim() || "In use",
             branch_name: String(r.BranchName ?? "").trim(),
-            department_name:
-              String(r.DepartmentName ?? r.Department ?? "").trim() || null,
+            department_name: departmentName !== "" ? departmentName : null,
             purchase_date_bs: String(r.PurchaseDateNepali ?? "").trim(),
             depreciation_start_date_bs: String(r.DepStartDateNepali ?? "").trim(),
             purchase_qty: parseNumber(qtyRaw),

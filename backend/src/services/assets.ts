@@ -729,7 +729,9 @@ export async function importAssetsFromRows(
       const departmentName =
         typeof row.department_name === "string" ? row.department_name.trim() : "";
       if (departmentName !== "") {
-        const department = departmentByName.get(normalizeComparableText(departmentName));
+        const department = departmentByName.get(
+          normalizeComparableText(departmentName)
+        );
         if (department) {
           departmentId = department.id;
         }

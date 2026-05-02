@@ -13,7 +13,6 @@ export type Group = {
   name: string;
   dep_method: string | null;
   dep_rate: number | null;
-  dep_rate_tax: number | null;
   created_at: string;
 };
 
@@ -23,7 +22,6 @@ type GroupRowDb = {
   name: string;
   dep_method: string | null;
   dep_rate: string | null;
-  dep_rate_tax: string | null;
   created_at: string;
 };
 
@@ -40,7 +38,6 @@ function mapRow(row: GroupRowDb): Group {
     name: row.name,
     dep_method: row.dep_method,
     dep_rate: toNum(row.dep_rate),
-    dep_rate_tax: toNum(row.dep_rate_tax),
     created_at: row.created_at,
   };
 }
@@ -80,7 +77,7 @@ export function clampListParams(input: {
 }
 
 const SELECT_LIST = `SELECT id, code, name, dep_method,
-       dep_rate::text, dep_rate_tax::text, created_at::text`;
+       dep_rate::text, created_at::text`;
 
 function searchCondition(pattern: string): { sql: string; args: string[] } {
   return {
@@ -142,24 +139,20 @@ export async function listGroups(
 export type CreateGroupInput = {
   code: string;
   name: string;
-  dep_method: string | null;
-  dep_rate: number | null;
-  dep_rate_tax: number | null;
+  dep_method: string;
+  dep_rate: number;
 };
 
 export async function createGroup(input: CreateGroupInput): Promise<Group> {
   const code = input.code.trim();
   const name = input.name.trim();
-  const dep_method =
-    input.dep_method === null || input.dep_method.trim() === ""
-      ? null
-      : input.dep_method.trim();
+  const dep_method = input.dep_method.trim();
 
   const result = await query<GroupRowDb>(
-    `INSERT INTO hrms_groups (code, name, dep_method, dep_rate, dep_rate_tax)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, code, name, dep_method, dep_rate::text, dep_rate_tax::text, created_at::text`,
-    [code, name, dep_method, input.dep_rate, input.dep_rate_tax]
+    `INSERT INTO hrms_groups (code, name, dep_method, dep_rate)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, code, name, dep_method, dep_rate::text, created_at::text`,
+    [code, name, dep_method, input.dep_rate]
   );
   const row = result.rows[0];
   if (!row) {
@@ -176,17 +169,14 @@ export async function updateGroup(
 ): Promise<Group | null> {
   const code = input.code.trim();
   const name = input.name.trim();
-  const dep_method =
-    input.dep_method === null || input.dep_method.trim() === ""
-      ? null
-      : input.dep_method.trim();
+  const dep_method = input.dep_method.trim();
 
   const result = await query<GroupRowDb>(
     `UPDATE hrms_groups
-     SET code = $1, name = $2, dep_method = $3, dep_rate = $4, dep_rate_tax = $5
-     WHERE id = $6
-     RETURNING id, code, name, dep_method, dep_rate::text, dep_rate_tax::text, created_at::text`,
-    [code, name, dep_method, input.dep_rate, input.dep_rate_tax, id]
+     SET code = $1, name = $2, dep_method = $3, dep_rate = $4
+     WHERE id = $5
+     RETURNING id, code, name, dep_method, dep_rate::text, created_at::text`,
+    [code, name, dep_method, input.dep_rate, id]
   );
   const row = result.rows[0];
   return row ? mapRow(row) : null;
@@ -228,30 +218,35 @@ export function parseGroupPayload(body: unknown): CreateGroupInput {
     throw new Error("Group name is required.");
   }
 
-  let dep_method: string | null = null;
   const depRaw = b.dep_method;
-  if (depRaw !== null && depRaw !== undefined && depRaw !== "") {
-    if (typeof depRaw !== "string") {
-      throw new Error("Invalid depreciation method.");
-    }
-    const t = depRaw.trim();
-    if (t !== "") {
-      if (!DEPRECIATION_METHODS.includes(t as DepreciationMethod)) {
-        throw new Error("Invalid depreciation method.");
-      }
-      dep_method = t;
-    }
+  if (depRaw === null || depRaw === undefined || depRaw === "") {
+    throw new Error("Depreciation method is required.");
   }
+  if (typeof depRaw !== "string") {
+    throw new Error("Invalid depreciation method.");
+  }
+  const depMethodTrimmed = depRaw.trim();
+  if (depMethodTrimmed === "") {
+    throw new Error("Depreciation method is required.");
+  }
+  if (!DEPRECIATION_METHODS.includes(depMethodTrimmed as DepreciationMethod)) {
+    throw new Error("Invalid depreciation method.");
+  }
+  const dep_method = depMethodTrimmed;
 
   const dep_rate = parseOptionalRate("Dep rate", b.dep_rate);
-  const dep_rate_tax = parseOptionalRate("Dep rate tax", b.dep_rate_tax);
+  if (dep_rate === null) {
+    throw new Error("Dep rate is required.");
+  }
+  if (dep_rate <= 0) {
+    throw new Error("Dep rate must be greater than zero.");
+  }
 
   return {
     code,
     name,
     dep_method,
     dep_rate,
-    dep_rate_tax,
   };
 }
 

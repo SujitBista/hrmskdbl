@@ -20,7 +20,6 @@ export function CreateGroupForm({ onCreated }: Props) {
   const [name, setName] = useState("");
   const [depMethod, setDepMethod] = useState<string>("");
   const [depRate, setDepRate] = useState("");
-  const [depRateTax, setDepRateTax] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -29,6 +28,16 @@ export function CreateGroupForm({ onCreated }: Props) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+    if (!depMethod.trim()) {
+      setError("Depreciation method is required.");
+      return;
+    }
+    const parsedDepRate =
+      depRate.trim() === "" ? NaN : Number.parseFloat(depRate);
+    if (!Number.isFinite(parsedDepRate) || parsedDepRate <= 0) {
+      setError("Dep rate must be greater than zero.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/admin/groups", {
@@ -37,9 +46,8 @@ export function CreateGroupForm({ onCreated }: Props) {
         body: JSON.stringify({
           code,
           name,
-          dep_method: depMethod === "" ? null : depMethod,
-          dep_rate: depRate.trim() === "" ? null : Number(depRate),
-          dep_rate_tax: depRateTax.trim() === "" ? null : Number(depRateTax),
+          dep_method: depMethod,
+          dep_rate: parsedDepRate,
         }),
       });
       const data = (await res.json()) as { error?: string };
@@ -52,7 +60,6 @@ export function CreateGroupForm({ onCreated }: Props) {
       setName("");
       setDepMethod("");
       setDepRate("");
-      setDepRateTax("");
       onCreated?.();
     } catch {
       setError("Something went wrong. Try again.");
@@ -121,8 +128,8 @@ export function CreateGroupForm({ onCreated }: Props) {
 
         <div className="space-y-4">
           <h3 className={sectionHeadingClass}>Depreciation</h3>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 sm:gap-6">
-            <div className="sm:col-span-2 lg:col-span-1">
+          <div className="grid gap-5 sm:grid-cols-2 sm:gap-6">
+            <div>
               <label
                 htmlFor={`${formId}-dep-method`}
                 className="block text-sm font-medium text-slate-700"
@@ -134,6 +141,7 @@ export function CreateGroupForm({ onCreated }: Props) {
                 value={depMethod}
                 onChange={(ev) => setDepMethod(ev.target.value)}
                 className={inputClass}
+                required
               >
                 <option value="">— Select —</option>
                 {DEPRECIATION_METHODS.map((m) => (
@@ -155,25 +163,9 @@ export function CreateGroupForm({ onCreated }: Props) {
                 type="number"
                 min={0}
                 step="any"
+                required
                 value={depRate}
                 onChange={(ev) => setDepRate(ev.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor={`${formId}-dep-rate-tax`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Dep rate tax (%)
-              </label>
-              <input
-                id={`${formId}-dep-rate-tax`}
-                type="number"
-                min={0}
-                step="any"
-                value={depRateTax}
-                onChange={(ev) => setDepRateTax(ev.target.value)}
                 className={inputClass}
               />
             </div>

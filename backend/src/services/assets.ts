@@ -1,5 +1,9 @@
 import { pool, query } from "../db.js";
-import { clampListParams } from "./groups.js";
+import {
+  clampListParams,
+  indexGroupsForExcelImport,
+  resolveGroupLabelForExcelImport,
+} from "./groups.js";
 import { refreshMutableDepreciationRunsForAsset } from "./depreciationRuns.js";
 import type pg from "pg";
 
@@ -549,8 +553,8 @@ export async function importAssetsFromRows(
     throw new Error("No rows provided for import.");
   }
 
-  const groupsResult = await query<{ id: number; name: string }>(
-    `SELECT id, name FROM hrms_groups`
+  const groupsResult = await query<{ id: number; name: string; code: string }>(
+    `SELECT id, name, code FROM hrms_groups`
   );
   const subGroupsResult = await query<{ id: number; group_id: number; name: string }>(
     `SELECT id, group_id, name FROM hrms_sub_groups`
@@ -567,10 +571,7 @@ export async function importAssetsFromRows(
     `SELECT asset_code FROM hrms_assets WHERE asset_code IS NOT NULL`
   );
 
-  const groupByName = new Map<string, { id: number; name: string }>();
-  for (const g of groupsResult.rows) {
-    groupByName.set(normalizeComparableText(g.name), g);
-  }
+  const groupMaps = indexGroupsForExcelImport(groupsResult.rows);
 
   const branchByName = new Map<
     string,
@@ -651,9 +652,15 @@ export async function importAssetsFromRows(
       if (groupName === "") {
         throw new Error("Group name is required.");
       }
-      const group = groupByName.get(normalizeComparableText(groupName));
+      const group = resolveGroupLabelForExcelImport(
+        groupName,
+        groupMaps,
+        groupsResult.rows
+      );
       if (!group) {
-        throw new Error(`Group not found: ${groupName}`);
+        throw new Error(
+          `Group not found for "${groupName}". Use a group name or code that matches an existing asset group.`
+        );
       }
 
       const branchNameRaw =

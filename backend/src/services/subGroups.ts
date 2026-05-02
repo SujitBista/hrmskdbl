@@ -1,4 +1,8 @@
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
+import {
+  indexGroupsForExcelImport,
+  resolveGroupLabelForExcelImport,
+} from "./groups.js";
 
 export type SubGroup = {
   id: number;
@@ -146,4 +150,153 @@ export async function updateSubGroup(
 export async function deleteSubGroup(id: number): Promise<boolean> {
   const result = await query(`DELETE FROM hrms_sub_groups WHERE id = $1`, [id]);
   return (result.rowCount ?? 0) > 0;
+}
+
+export type ImportSubGroupRowInput = {
+  group_name?: string | null;
+  sub_group_name?: string | null;
+};
+
+export type ImportSubGroupsPayload = {
+  rows: ImportSubGroupRowInput[];
+};
+
+export type ImportSubGroupsResult = {
+  importedCount: number;
+  skippedCount: number;
+  errors: Array<{ row: number; message: string }>;
+};
+
+export function parseImportSubGroupsPayload(body: unknown): ImportSubGroupsPayload {
+  if (!body || typeof body !== "object") {
+    throw new Error("Invalid request body.");
+  }
+  const b = body as Record<string, unknown>;
+  if (!Array.isArray(b.rows)) {
+    throw new Error("rows must be an array.");
+  }
+  return { rows: b.rows as ImportSubGroupRowInput[] };
+}
+
+/**
+ * Bulk-creates asset sub groups from spreadsheet rows (GroupName + SubGroupName).
+ * Skips blank rows and duplicates already in the DB or repeated in the same file.
+ */
+export async function importSubGroupsFromRows(
+  payload: ImportSubGroupsPayload
+): Promise<ImportSubGroupsResult> {
+  if (payload.rows.length === 0) {
+    throw new Error("No rows provided for import.");
+  }
+
+  const groupsResult = await query<{ id: number; name: string; code: string }>(
+    `SELECT id, name, code FROM hrms_groups`
+  );
+  const groupMaps = indexGroupsForExcelImport(groupsResult.rows);
+
+  const existingSubs = await query<{ group_id: number; name: string }>(
+    `SELECT group_id, name FROM hrms_sub_groups`
+  );
+  const existingKey = new Set<string>();
+  for (const s of existingSubs.rows) {
+    existingKey.add(
+      `${s.group_id}|${s.name.trim().replace(/\s+/g, " ").toLowerCase()}`
+    );
+  }
+
+  const pendingKeys = new Set<string>();
+  let skippedCount = 0;
+  const errors: Array<{ row: number; message: string }> = [];
+  const toInsert: Array<{ groupId: number; name: string }> = [];
+
+  for (let idx = 0; idx < payload.rows.length; idx += 1) {
+    const row = payload.rows[idx];
+    const rowNumber = idx + 1;
+    try {
+      const groupName =
+        typeof row.group_name === "string" ? row.group_name.trim() : "";
+      const subName =
+        typeof row.sub_group_name === "string" ? row.sub_group_name.trim() : "";
+      if (groupName === "" && subName === "") {
+        skippedCount += 1;
+        continue;
+      }
+      if (groupName === "") {
+        throw new Error("Group name is required.");
+      }
+      if (subName === "") {
+        throw new Error("Sub group name is required.");
+      }
+      const group = resolveGroupLabelForExcelImport(
+        groupName,
+        groupMaps,
+        groupsResult.rows
+      );
+      if (!group) {
+        throw new Error(
+          `Group not found for "${groupName}". Use a group **name** or **code** that matches an existing asset group.`
+        );
+      }
+      const dedupeKey = `${group.id}|${subName.trim().replace(/\s+/g, " ").toLowerCase()}`;
+      if (existingKey.has(dedupeKey)) {
+        skippedCount += 1;
+        continue;
+      }
+      if (pendingKeys.has(dedupeKey)) {
+        skippedCount += 1;
+        continue;
+      }
+      pendingKeys.add(dedupeKey);
+      toInsert.push({ groupId: group.id, name: subName });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not import this row.";
+      errors.push({ row: rowNumber, message });
+    }
+  }
+
+  if (errors.length > 0) {
+    return {
+      importedCount: 0,
+      skippedCount,
+      errors: errors.sort((a, b) => a.row - b.row),
+    };
+  }
+
+  if (toInsert.length === 0) {
+    return { importedCount: 0, skippedCount, errors: [] };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const item of toInsert) {
+      await client.query(
+        `INSERT INTO hrms_sub_groups (group_id, name) VALUES ($1, $2)`,
+        [item.groupId, item.name]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    const message =
+      err instanceof Error ? err.message : "Import failed; upload rolled back.";
+    return {
+      importedCount: 0,
+      skippedCount,
+      errors: [{ row: 1, message: `Import failed and rolled back: ${message}` }],
+    };
+  } finally {
+    client.release();
+  }
+
+  return {
+    importedCount: toInsert.length,
+    skippedCount,
+    errors: [],
+  };
 }

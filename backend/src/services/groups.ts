@@ -254,3 +254,70 @@ export function parseGroupPayload(body: unknown): CreateGroupInput {
     dep_rate_tax,
   };
 }
+
+/** Normalizes labels from Excel (group name or group code column). */
+function normalizeGroupImportLabel(v: string): string {
+  return v.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export type GroupImportLookupRow = { id: number; name: string };
+
+export function indexGroupsForExcelImport(
+  rows: Array<{ id: number; name: string; code: string }>
+): {
+  byNormalizedName: Map<string, GroupImportLookupRow>;
+  byNormalizedCode: Map<string, GroupImportLookupRow>;
+} {
+  const byNormalizedName = new Map<string, GroupImportLookupRow>();
+  const byNormalizedCode = new Map<string, GroupImportLookupRow>();
+  for (const g of rows) {
+    byNormalizedName.set(normalizeGroupImportLabel(g.name), {
+      id: g.id,
+      name: g.name,
+    });
+    byNormalizedCode.set(normalizeGroupImportLabel(g.code), {
+      id: g.id,
+      name: g.name,
+    });
+  }
+  return { byNormalizedName, byNormalizedCode };
+}
+
+/**
+ * Resolves a spreadsheet group column to `hrms_groups` by **name**, then **code**,
+ * then **longest code-prefix** match (export labels like `VEHICLES` vs DB code `VEH`).
+ */
+export function resolveGroupLabelForExcelImport(
+  label: string,
+  maps: ReturnType<typeof indexGroupsForExcelImport>,
+  allRows: Array<{ id: number; name: string; code: string }>
+): GroupImportLookupRow | null {
+  const key = normalizeGroupImportLabel(label);
+  if (key === "") {
+    return null;
+  }
+  const direct =
+    maps.byNormalizedName.get(key) ?? maps.byNormalizedCode.get(key);
+  if (direct) {
+    return direct;
+  }
+
+  const compact = label.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (compact.length < 2) {
+    return null;
+  }
+
+  let best: GroupImportLookupRow | null = null;
+  let bestLen = 0;
+  for (const g of allRows) {
+    const c = g.code.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    if (c.length < 2) {
+      continue;
+    }
+    if (compact.startsWith(c) && c.length > bestLen) {
+      best = { id: g.id, name: g.name };
+      bestLen = c.length;
+    }
+  }
+  return best;
+}

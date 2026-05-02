@@ -52,7 +52,9 @@ import {
 import {
   createSubGroup,
   deleteSubGroup,
+  importSubGroupsFromRows,
   listSubGroups,
+  parseImportSubGroupsPayload,
   updateSubGroup,
 } from "./services/subGroups.js";
 import {
@@ -1379,6 +1381,37 @@ app.post("/api/admin/sub-groups", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Could not create sub group." });
+  }
+});
+
+app.post("/api/admin/sub-groups/import", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const payload = parseImportSubGroupsPayload(req.body);
+    const result = await importSubGroupsFromRows(payload);
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Import failed.";
+    if (message.includes("Invalid request") || message.includes("rows must be")) {
+      res.status(400).json({ error: message });
+      return;
+    }
+    if (message.includes("No rows provided")) {
+      res.status(400).json({ error: message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not import sub groups." });
   }
 });
 

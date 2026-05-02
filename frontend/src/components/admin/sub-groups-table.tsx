@@ -363,7 +363,9 @@ export function SubGroupsTable({
         <p className="text-sm text-slate-700">
           Import sub groups from Excel (`.xlsx`). Each row needs{" "}
           <strong className="font-medium">GroupName</strong> (must match an
-          existing asset group) and{" "}
+          existing asset group <strong className="font-medium">name</strong>,{" "}
+          <strong className="font-medium">code</strong>, or a label that starts with
+          the group code—same as the asset register export) and{" "}
           <strong className="font-medium">SubGroupName</strong>. Rows that
           already exist for that group are skipped.
         </p>

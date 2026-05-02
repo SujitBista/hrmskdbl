@@ -1,4 +1,8 @@
 import { pool, query } from "../db.js";
+import {
+  indexGroupsForExcelImport,
+  resolveGroupLabelForExcelImport,
+} from "./groups.js";
 
 export type SubGroup = {
   id: number;
@@ -163,10 +167,6 @@ export type ImportSubGroupsResult = {
   errors: Array<{ row: number; message: string }>;
 };
 
-function normalizeComparableText(v: string): string {
-  return v.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
 export function parseImportSubGroupsPayload(body: unknown): ImportSubGroupsPayload {
   if (!body || typeof body !== "object") {
     throw new Error("Invalid request body.");
@@ -189,20 +189,19 @@ export async function importSubGroupsFromRows(
     throw new Error("No rows provided for import.");
   }
 
-  const groupsResult = await query<{ id: number; name: string }>(
-    `SELECT id, name FROM hrms_groups`
+  const groupsResult = await query<{ id: number; name: string; code: string }>(
+    `SELECT id, name, code FROM hrms_groups`
   );
-  const groupByName = new Map<string, { id: number; name: string }>();
-  for (const g of groupsResult.rows) {
-    groupByName.set(normalizeComparableText(g.name), g);
-  }
+  const groupMaps = indexGroupsForExcelImport(groupsResult.rows);
 
   const existingSubs = await query<{ group_id: number; name: string }>(
     `SELECT group_id, name FROM hrms_sub_groups`
   );
   const existingKey = new Set<string>();
   for (const s of existingSubs.rows) {
-    existingKey.add(`${s.group_id}|${normalizeComparableText(s.name)}`);
+    existingKey.add(
+      `${s.group_id}|${s.name.trim().replace(/\s+/g, " ").toLowerCase()}`
+    );
   }
 
   const pendingKeys = new Set<string>();
@@ -228,13 +227,17 @@ export async function importSubGroupsFromRows(
       if (subName === "") {
         throw new Error("Sub group name is required.");
       }
-      const group = groupByName.get(normalizeComparableText(groupName));
+      const group = resolveGroupLabelForExcelImport(
+        groupName,
+        groupMaps,
+        groupsResult.rows
+      );
       if (!group) {
         throw new Error(
-          `Group not found for "${groupName}". Use a group name that exactly matches an existing asset group.`
+          `Group not found for "${groupName}". Use a group **name** or **code** that matches an existing asset group.`
         );
       }
-      const dedupeKey = `${group.id}|${normalizeComparableText(subName)}`;
+      const dedupeKey = `${group.id}|${subName.trim().replace(/\s+/g, " ").toLowerCase()}`;
       if (existingKey.has(dedupeKey)) {
         skippedCount += 1;
         continue;

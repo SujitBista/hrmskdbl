@@ -56,7 +56,7 @@ async function migrate() {
     ALTER TABLE hrms_groups ADD COLUMN IF NOT EXISTS dep_rate NUMERIC(12, 4);
   `);
   await query(`
-    ALTER TABLE hrms_groups ADD COLUMN IF NOT EXISTS dep_rate_tax NUMERIC(12, 4);
+    ALTER TABLE hrms_groups DROP COLUMN IF EXISTS dep_rate_tax;
   `);
   await query(`
     UPDATE hrms_groups SET code = 'G' || id::text

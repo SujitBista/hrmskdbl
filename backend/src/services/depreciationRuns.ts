@@ -265,17 +265,18 @@ export async function listDetailsForRun(
   );
   const total = Number.parseInt(countResult.rows[0]?.total ?? "0", 10) || 0;
 
+  // depreciation_cost_basis: same order as grossDepreciableAmountForRun (historical cost before carrying WDV).
   const r = await query<DepreciationRunDetailRow>(
     `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code, d.fiscal_year,
       d.asset_name, a.purchase_date_bs,
       (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS actual_purchase_price,
       (CASE
-        WHEN a.book_value IS NOT NULL AND a.book_value > 0
-        THEN a.book_value
         WHEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0) > 0
-        THEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
+        THEN (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::numeric
         WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
         THEN a.old_book_value
+        WHEN a.book_value IS NOT NULL AND a.book_value > 0
+        THEN a.book_value
         ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
       END)::text AS depreciation_cost_basis,
       d.dep_rate::text, d.dep_days, d.dep_amount::text, d.group_name, d.sub_group_name,
@@ -420,7 +421,7 @@ async function insertDepreciationDetailRows(
         priorYearsDepAmount: t.priorYearsDepAmount,
         thisYearDepAmount: t.thisYearDepAmount,
         accumulatedDep: t.accumulatedDep,
-        bookValue: t.closingBookValue,
+        closingBookValue: t.closingBookValue,
       });
       loggedVerificationAsset = true;
     }

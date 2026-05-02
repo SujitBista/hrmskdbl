@@ -66,6 +66,14 @@ function formatAmount(value: string): string {
   }).format(n);
 }
 
+/** ERP `TotalDepAmount` = depreciation base minus closing WDV (matches register export). */
+function formatTotalDepAmount(d: DetailRow): string {
+  const basis = Number.parseFloat(d.depreciation_cost_basis);
+  const closing = Number.parseFloat(d.balance_amount);
+  if (!Number.isFinite(basis) || !Number.isFinite(closing)) return "—";
+  return formatAmount(String(basis - closing));
+}
+
 const DEPRECIATION_HUB =
   "/admin/dashboard/asset-register/depreciation";
 const DEPRECIATION_AUTORELOAD_AFTER_ASSET_EDIT_KEY =
@@ -350,9 +358,11 @@ export function DepreciationRunDetailScreen() {
       "DepCommencementBS",
       "DepRate",
       "DepDays",
-      "ThisYearDepAmount",
-      "AccumulatedDep",
+      "DepAmount",
+      "AccumulateDep",
       "BookValue",
+      "TotalDepAmount",
+      "ClosingBookValue",
     ].join(",");
     try {
       const exportPageSize = 500;
@@ -406,6 +416,15 @@ export function DepreciationRunDetailScreen() {
           d.dep_amount,
           d.accumulate_dep,
           d.book_value,
+          (() => {
+            const basis = Number.parseFloat(d.depreciation_cost_basis);
+            const closing = Number.parseFloat(d.balance_amount);
+            if (!Number.isFinite(basis) || !Number.isFinite(closing)) {
+              return "";
+            }
+            return String(basis - closing);
+          })(),
+          d.balance_amount,
         ].join(",")
       );
       downloadCsv(
@@ -469,26 +488,27 @@ export function DepreciationRunDetailScreen() {
                   <>
                     DepDays = inclusive calendar days from FY Shrawan 1 (or
                     depreciation start, if later) through the calculation date
-                    (capped at fiscal year end). This Year Dep Amount = fiscal-year
-                    depreciation only through that date; AccumulatedDep = lifetime
-                    depreciation through that date; Book value = depreciation base minus
-                    accumulated depreciation (not below zero).
+                    (capped at fiscal year end). Column names follow the ERP assets
+                    register: DepAmount / ThisYearDep = fiscal-year depreciation
+                    through that date; AccumulateDep = prior accumulated only (before
+                    that slice); BookValue = opening WDV after prior dep; TotalDepAmount
+                    = prior + this slice; ClosingBookValue = base minus TotalDepAmount.
                   </>
                 ) : (
                   <>
                     DepDays = inclusive calendar days from FY Shrawan 1 (or
                     depreciation start, if later) through the selected quarter end.
-                    This Year Dep Amount = current fiscal-year depreciation through
-                    that quarter end; AccumulatedDep = lifetime depreciation through
-                    that same date.
+                    AccumulateDep, BookValue, TotalDepAmount, and ClosingBookValue match
+                    the ERP assets register export (e.g. AccumulateDep is opening
+                    accumulated, not including the current DepAmount).
                   </>
                 )}
               </span>
               <span className="block pt-2 text-slate-500">
                 <strong className="font-medium text-slate-600">Register dep. start</strong>{" "}
                 is the authoritative depreciation start date from the asset register.
-                Recalculation uses this value for depreciation amount, accumulated
-                depreciation, and book value.
+                Recalculation uses this value for depreciation amount, prior
+                accumulated (AccumulateDep), opening book value, and closing value.
               </span>
             </p>
           ) : null}
@@ -649,10 +669,16 @@ export function DepreciationRunDetailScreen() {
                 Depreciation Base
               </th>
               <th className="sticky top-0 z-30 w-[170px] min-w-[170px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
-                This Year Dep Amount
+                DepAmount (ThisYearDep)
               </th>
               <th className="sticky top-0 z-30 w-[160px] min-w-[160px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
-                AccumulatedDep
+                AccumulateDep
+              </th>
+              <th className="sticky top-0 z-30 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
+                BookValue
+              </th>
+              <th className="sticky top-0 z-30 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
+                TotalDepAmount
               </th>
               <th className="sticky top-0 z-30 w-[110px] min-w-[110px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 Dep Rate
@@ -672,8 +698,8 @@ export function DepreciationRunDetailScreen() {
               <th className="sticky top-0 z-30 w-[190px] min-w-[190px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
                 Depreciation Start (BS)
               </th>
-              <th className="sticky right-0 top-0 z-40 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-white px-2 py-2 text-right shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
-                Book Value
+              <th className="sticky right-0 top-0 z-40 w-[160px] min-w-[160px] whitespace-nowrap border border-slate-300 bg-white px-2 py-2 text-right shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
+                ClosingBookValue
               </th>
             </tr>
           </thead>
@@ -681,7 +707,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={14}
+                  colSpan={16}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -690,7 +716,7 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={14}
+                  colSpan={16}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
@@ -738,6 +764,12 @@ export function DepreciationRunDetailScreen() {
                   <td className="w-[160px] min-w-[160px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {formatAmount(d.accumulate_dep)}
                   </td>
+                  <td className="w-[150px] min-w-[150px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {formatAmount(d.book_value)}
+                  </td>
+                  <td className="w-[150px] min-w-[150px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
+                    {formatTotalDepAmount(d)}
+                  </td>
                   <td className="w-[110px] min-w-[110px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {d.dep_rate}%
                   </td>
@@ -759,8 +791,8 @@ export function DepreciationRunDetailScreen() {
                   >
                     {d.dep_start_date_bs}
                   </td>
-                  <td className="sticky right-0 z-20 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-white px-2 py-1.5 text-right font-mono text-xs tabular-nums font-semibold text-emerald-900 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
-                    {formatAmount(d.book_value)}
+                  <td className="sticky right-0 z-20 w-[160px] min-w-[160px] whitespace-nowrap border border-slate-300 bg-white px-2 py-1.5 text-right font-mono text-xs tabular-nums font-semibold text-emerald-900 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
+                    {formatAmount(d.balance_amount)}
                   </td>
                 </tr>
               ))

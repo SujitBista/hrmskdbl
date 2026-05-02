@@ -407,23 +407,28 @@ describe("computeAssetQuarterCumulative", () => {
     expect(d3.detail.depDays).toBe(271);
     expect(d4.detail.depDays).toBe(365);
 
-    expect(d1.detail.accumulateDep).toBeGreaterThan(0);
-    expect(d2.detail.accumulateDep).toBeGreaterThan(d1.detail.accumulateDep);
-    expect(d3.detail.accumulateDep).toBeGreaterThan(d2.detail.accumulateDep);
-    expect(d4.detail.accumulateDep).toBeGreaterThan(d3.detail.accumulateDep);
+    // No imported prior: ERP AccumulateDep stays zero the whole first FY.
+    expect(d1.detail.accumulateDep).toBe(0);
+    expect(d2.detail.accumulateDep).toBe(0);
+    expect(d3.detail.accumulateDep).toBe(0);
+    expect(d4.detail.accumulateDep).toBe(0);
 
-    // First fiscal year of the asset (dep start = FY Shrawan 1): no prior FY
-    // depreciation, so lifetime-to-date equals this-FY-to-date only.
-    expect(d1.detail.depAmount).toBe(d1.detail.accumulateDep);
+    expect(d1.detail.bookValue).toBeCloseTo(base.purchaseAmount, 2);
     expect(d2.detail.depAmount).toBeGreaterThan(d1.detail.depAmount);
-    expect(d2.detail.depAmount).toBe(d2.detail.accumulateDep);
-    expect(d3.detail.depAmount).toBe(d3.detail.accumulateDep);
-    expect(d4.detail.depAmount).toBe(d4.detail.accumulateDep);
-    expect(d1.detail.erpTimeline.accumulatedDep).toBe(d1.detail.accumulateDep);
+    expect(d3.detail.depAmount).toBeGreaterThan(d2.detail.depAmount);
+    expect(d4.detail.depAmount).toBeGreaterThan(d3.detail.depAmount);
+    expect(d1.detail.erpTimeline.accumulatedDep).toBeCloseTo(
+      d1.detail.accumulateDep + d1.detail.depAmount,
+      2
+    );
+    expect(d4.detail.erpTimeline.accumulatedDep).toBeCloseTo(
+      d4.detail.accumulateDep + d4.detail.depAmount,
+      2
+    );
     expect(d1.detail.erpTimeline.thisYearDepAmount).toBe(d1.detail.depAmount);
   });
 
-  it("this FY dep amount is only selected FY slice; accumulate is lifetime when prior FYs exist", () => {
+  it("this FY dep amount is only selected FY slice; accumulateDep is prior-only when prior FYs exist", () => {
     const base = {
       purchaseAmount: 100_000,
       depreciationStartBs: "2082/04/01",
@@ -434,13 +439,17 @@ describe("computeAssetQuarterCumulative", () => {
     const d4 = computeAssetQuarterCumulative({ ...base, quarter: 4 });
     expect(d4.ok).toBe(true);
     if (!d4.ok) return;
-    expect(d4.detail.depAmount).toBeLessThan(d4.detail.accumulateDep);
+    expect(d4.detail.depAmount).toBeLessThan(d4.detail.erpTimeline.accumulatedDep);
     expect(d4.detail.bookValue).toBeCloseTo(
       base.purchaseAmount - d4.detail.accumulateDep,
       2
     );
     expect(d4.detail.erpTimeline.priorYearsDepAmount).toBeGreaterThan(0);
-    expect(d4.detail.accumulateDep).toBe(d4.detail.erpTimeline.accumulatedDep);
+    expect(d4.detail.accumulateDep).toBe(d4.detail.erpTimeline.priorYearsDepAmount);
+    expect(d4.detail.erpTimeline.accumulatedDep).toBeCloseTo(
+      d4.detail.accumulateDep + d4.detail.depAmount,
+      2
+    );
   });
 
   it("returns zero days when depreciation starts after quarter end", () => {
@@ -458,7 +467,7 @@ describe("computeAssetQuarterCumulative", () => {
     expect(r.detail.accumulateDep).toBe(0);
   });
 
-  it("register prior floor: accumulated dep includes imported accumulated + FY YTD (straight line)", () => {
+  it("register prior floor: AccumulateDep column is prior only; lifetime in erpTimeline", () => {
     const r = computeAssetQuarterCumulative({
       purchaseAmount: 100_000,
       depreciationStartBs: depStart,
@@ -472,8 +481,16 @@ describe("computeAssetQuarterCumulative", () => {
     if (!r.ok) return;
     expect(r.detail.erpTimeline.priorYearsDepAmount).toBe(40_000);
     expect(r.detail.depAmount).toBeCloseTo(2547.95, 2);
-    expect(r.detail.accumulateDep).toBeCloseTo(40_000 + 2547.95, 2);
-    expect(r.detail.bookValue).toBeCloseTo(100_000 - r.detail.accumulateDep, 2);
+    expect(r.detail.accumulateDep).toBe(40_000);
+    expect(r.detail.bookValue).toBeCloseTo(100_000 - 40_000, 2);
+    expect(r.detail.balanceAmount).toBeCloseTo(
+      100_000 - (40_000 + 2547.95),
+      2
+    );
+    expect(r.detail.erpTimeline.accumulatedDep).toBeCloseTo(
+      40_000 + 2547.95,
+      2
+    );
     expect(r.detail.accumulateDep).toBeGreaterThan(r.detail.depAmount);
   });
 
@@ -496,8 +513,8 @@ describe("computeAssetQuarterCumulative", () => {
     if (!full.ok || !asOf.ok) return;
     expect(asOf.detail.depDays).toBeLessThan(full.detail.depDays);
     expect(asOf.detail.depAmount).toBeLessThan(full.detail.depAmount);
-    expect(asOf.detail.accumulateDep).toBeLessThan(full.detail.accumulateDep);
-    expect(asOf.detail.bookValue).toBeGreaterThan(full.detail.bookValue);
+    expect(asOf.detail.accumulateDep).toBe(full.detail.accumulateDep);
+    expect(asOf.detail.balanceAmount).toBeGreaterThan(full.detail.balanceAmount);
   });
 });
 

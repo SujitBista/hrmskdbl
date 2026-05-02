@@ -76,18 +76,41 @@ type ImportSummary = {
   issues: ImportIssueRow[];
 };
 
+function distinctImportValidationMessages(
+  issues: ImportIssueRow[],
+  maxDistinct: number
+): { samples: Array<{ message: string; count: number }>; truncated: boolean } {
+  const counts = new Map<string, number>();
+  for (const issue of issues) {
+    if (issue.kind !== "error") continue;
+    const text =
+      issue.message.trim() === ""
+        ? "This row could not be imported. Check required columns and values."
+        : issue.message;
+    counts.set(text, (counts.get(text) ?? 0) + 1);
+  }
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const truncated = sorted.length > maxDistinct;
+  const samples = sorted
+    .slice(0, maxDistinct)
+    .map(([message, count]) => ({ message, count }));
+  return { samples, truncated };
+}
+
 function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     defval: "",
   });
-  const expectedHeaders = ["AssetName", "GroupName", "BranchName"];
+  const withBranch = ["AssetName", "GroupName", "BranchName"];
+  const withAssetCode = ["AssetName", "GroupName", "AssetCode"];
   const maxScan = Math.min(rows.length, 40);
   for (let i = 0; i < maxScan; i += 1) {
     const row = Array.isArray(rows[i]) ? rows[i] : [];
     const normalized = row.map((cell) => String(cell ?? "").trim());
-    const hasAll = expectedHeaders.every((h) => normalized.includes(h));
-    if (hasAll) {
+    const hasBranchCols = withBranch.every((h) => normalized.includes(h));
+    const hasCodeCols = withAssetCode.every((h) => normalized.includes(h));
+    if (hasBranchCols || hasCodeCols) {
       return i;
     }
   }
@@ -518,6 +541,18 @@ export function AssetRegisterForm({
     setError(null);
     setSuccess(null);
     setImportSummary(null);
+    if (groupsLoading || branchesLoading) {
+      setError(
+        "Still loading branches and groups. Wait a moment, then try import again."
+      );
+      return;
+    }
+    if (noGroups || noBranches) {
+      setError(
+        "Import needs at least one asset group and one branch. Add them under Groups and Branch in the admin menu (or re-run import after creating masters), then try again."
+      );
+      return;
+    }
     setImporting(true);
     try {
       const buffer = await file.arrayBuffer();
@@ -536,7 +571,7 @@ export function AssetRegisterForm({
       const headerRowIndex = findImportHeaderRow(sheet);
       if (headerRowIndex < 0) {
         setError(
-          "Could not find import columns. Make sure the sheet contains headers like AssetName, GroupName, and BranchName."
+          "Could not find import columns. Include AssetName and GroupName, plus either BranchName or AssetCode (SKDBL/…)."
         );
         return;
       }
@@ -616,12 +651,16 @@ export function AssetRegisterForm({
         const assetCode = sourceRow?.asset_code ?? null;
         const isDuplicate =
           /assetcode/i.test(e.message) && /(duplicate|already exists)/i.test(e.message);
+        const detail =
+          typeof e.message === "string" && e.message.trim() !== ""
+            ? e.message.trim()
+            : "This row could not be imported. Check required columns and values.";
         return {
           row: e.row,
           assetCode,
           message: isDuplicate
             ? "This asset code is already in your system or repeated in this file."
-            : "This row has invalid or missing values.",
+            : detail,
           kind: isDuplicate ? "duplicate" : "error",
         };
       });
@@ -664,6 +703,11 @@ export function AssetRegisterForm({
   const duplicatePreview = (importSummary?.issues ?? [])
     .filter((i) => i.kind === "duplicate")
     .slice(0, 5);
+
+  const importValidationDistinct = useMemo(() => {
+    if (!importSummary || importSummary.errorCount === 0) return null;
+    return distinctImportValidationMessages(importSummary.issues, 8);
+  }, [importSummary]);
 
   function downloadImportErrorReport() {
     if (!importSummary || importSummary.issues.length === 0) return;
@@ -714,7 +758,15 @@ export function AssetRegisterForm({
           Import from Excel (`.xlsx`) using your Assets Register export format.
           Include a <strong className="font-medium">Book Value</strong> column
           (current written-down value) so depreciation uses that as the cost
-          basis; purchase amount stays historical cost on the register.
+          basis; purchase amount stays historical cost on the register.{" "}
+          <strong className="font-medium">Branches</strong> are created automatically
+          when missing: from <strong className="font-medium">AssetCode</strong> (
+          <code className="rounded bg-slate-100 px-1">SKDBL/…</code>, second segment =
+          branch code), from <code className="rounded bg-slate-100 px-1">
+            (BC:branchCode)
+          </code>{" "}
+          on BranchName, or from BranchName alone (a code is generated). You do not
+          need to add branches in Admin before importing.
         </p>
         <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">
           {importing ? "Importing..." : "Import XLSX"}
@@ -722,7 +774,7 @@ export function AssetRegisterForm({
             type="file"
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             className="sr-only"
-            disabled={importing || submitting || lookupsBusy || noGroups || noBranches}
+            disabled={importing || submitting || lookupsBusy || noGroups}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) {
@@ -790,8 +842,14 @@ export function AssetRegisterForm({
             {importSummary.status === "success"
               ? "All valid rows were imported successfully."
               : importSummary.status === "partial"
-                ? "Some rows were imported, but a few rows need attention."
-                : "No rows were imported. Please fix the highlighted rows and try again."}
+                ? importSummary.errorCount > 0
+                  ? "Some rows were imported. Update the remaining rows in your file using the validation messages below (or the downloaded report), then import again."
+                  : "Some rows were imported, but a few rows need attention."
+                : importSummary.errorCount > 0
+                  ? "No rows were imported. Fix the issues below (for example asset group names must match the register, dates must be valid BS YYYY/MM/DD, and duplicate asset codes must be removed), then import again."
+                  : importSummary.skippedDuplicatesCount > 0
+                    ? "No new rows were imported; rows were skipped because the asset code already exists or is repeated in this file."
+                    : "No rows were imported. Please fix the issues below and try again."}
           </p>
 
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -820,6 +878,35 @@ export function AssetRegisterForm({
               </p>
             </div>
           </div>
+
+          {importSummary.errorCount > 0 && importValidationDistinct ? (
+            <div className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
+                What to correct in your file
+              </p>
+              <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-slate-800">
+                {importValidationDistinct.samples.map(({ message, count }) => (
+                  <li key={message}>
+                    {count > 1 ? (
+                      <>
+                        {message}{" "}
+                        <span className="whitespace-nowrap text-slate-600">
+                          ({count} rows)
+                        </span>
+                      </>
+                    ) : (
+                      message
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {importValidationDistinct.truncated ? (
+                <p className="mt-2 text-xs text-slate-600">
+                  More issue types are included in the downloaded error report.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           {duplicatePreview.length > 0 ? (
             <div className="mt-3">

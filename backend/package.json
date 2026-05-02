@@ -11,6 +11,7 @@
     "seed": "tsx src/scripts/seed.ts",
     "clear-depreciation": "tsx src/scripts/clear-depreciation-data.ts",
     "clear-all-register": "tsx src/scripts/clear-all-register-data.ts",
+    "clear-branches": "tsx src/scripts/clear-branches-data.ts",
     "clear-assets": "tsx src/scripts/clear-assets-data.ts"
   },
   "dependencies": {

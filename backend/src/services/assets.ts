@@ -100,6 +100,56 @@ export function formatBranchCodeSegment(branchCode: string): string {
   return t;
 }
 
+/** Normalized key for matching `hrms_branches.branch_code` to an SKDBL path segment. */
+function branchCodeLookupKey(branchCode: string): string {
+  return formatBranchCodeSegment(branchCode).toLowerCase();
+}
+
+/**
+ * Reads the branch segment from a full asset code `SKDBL/{branch}/...`.
+ * Returns the same normalized form used in `buildAssetCode`, or null if not parseable.
+ */
+export function parseBranchSegmentFromSkdblAssetCode(assetCode: string): string | null {
+  const trimmed = assetCode.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const parts = trimmed.split("/").map((p) => p.trim());
+  if (parts.length < 3) {
+    return null;
+  }
+  if ((parts[0] ?? "").toUpperCase() !== ASSET_CODE_PREFIX) {
+    return null;
+  }
+  const seg = parts[1] ?? "";
+  if (seg === "") {
+    return null;
+  }
+  return formatBranchCodeSegment(seg);
+}
+
+/** `BranchName` may include a hint like `Main office (BC:001)` or `[BC:001]`. */
+function extractBcHintFromBranchName(branchName: string): string | null {
+  const paren = branchName.match(/\(\s*BC\s*:\s*([^)]+?)\s*\)/i);
+  if (paren?.[1]) {
+    return paren[1].trim();
+  }
+  const square = branchName.match(/\[\s*BC\s*:\s*([^\]]+?)\s*\]/i);
+  if (square?.[1]) {
+    return square[1].trim();
+  }
+  return null;
+}
+
+/** Removes `(BC:…)` / `[BC:…]` hints for branch-name-only matching. */
+function stripBcHintFromBranchName(branchName: string): string {
+  return branchName
+    .replace(/\(\s*BC\s*:[^)]+\)/gi, "")
+    .replace(/\[\s*BC\s*:[^\]]+\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Builds SKDBL/{branch}/{group}/{YYYY}/{MM}/{DD}/{######}.
  * The last segment is always `hrms_assets.id` (SERIAL primary key), zero-padded to 6 digits.
@@ -350,6 +400,137 @@ function parseNumberish(v: unknown): number | null {
   return null;
 }
 
+type ImportBranchRow = {
+  id: number;
+  branch_name: string;
+  branch_code: string;
+};
+
+function registerBranchInImportMaps(
+  branch: ImportBranchRow,
+  branchByName: Map<string, ImportBranchRow>,
+  branchByCodeKey: Map<string, ImportBranchRow>
+): void {
+  branchByName.set(normalizeComparableText(branch.branch_name), branch);
+  const ck = branchCodeLookupKey(branch.branch_code);
+  if (!branchByCodeKey.has(ck)) {
+    branchByCodeKey.set(ck, branch);
+  }
+}
+
+async function insertImportBranchRow(
+  branch_code: string,
+  branch_name: string
+): Promise<ImportBranchRow> {
+  const code = branch_code.trim().slice(0, 64);
+  const name = branch_name.trim().slice(0, 255);
+  if (code === "" || name === "") {
+    throw new Error("Cannot auto-create branch: branch code and name are required.");
+  }
+  const ins = await query<ImportBranchRow>(
+    `INSERT INTO hrms_branches (branch_code, branch_name)
+     VALUES ($1, $2)
+     ON CONFLICT (branch_code) DO NOTHING
+     RETURNING id, branch_name, branch_code`,
+    [code, name]
+  );
+  if (ins.rows[0]) {
+    return ins.rows[0];
+  }
+  const sel = await query<ImportBranchRow>(
+    `SELECT id, branch_name, branch_code FROM hrms_branches WHERE branch_code = $1`,
+    [code]
+  );
+  const row = sel.rows[0];
+  if (!row) {
+    throw new Error("Could not create or load branch.");
+  }
+  return row;
+}
+
+function slugBranchCodeFromName(name: string): string {
+  const base = normalizeComparableText(name)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toUpperCase()
+    .slice(0, 48);
+  return base.length > 0 ? base : "BRANCH";
+}
+
+/**
+ * Creates a missing `hrms_branches` row from Excel import context so users do not
+ * have to pre-register branches before importing assets.
+ */
+async function ensureBranchRowFromImportExcel(params: {
+  hasSkdblBranchSegment: boolean;
+  segmentFromCode: string | null;
+  bcHint: string | null;
+  branchNameRaw: string;
+  branchByName: Map<string, ImportBranchRow>;
+  branchByCodeKey: Map<string, ImportBranchRow>;
+}): Promise<ImportBranchRow> {
+  const {
+    hasSkdblBranchSegment,
+    segmentFromCode,
+    bcHint,
+    branchNameRaw,
+    branchByName,
+    branchByCodeKey,
+  } = params;
+
+  const fromCode =
+    hasSkdblBranchSegment &&
+    segmentFromCode !== null &&
+    segmentFromCode !== "";
+  const fromBc = bcHint !== null && bcHint !== "";
+
+  if (fromCode || fromBc) {
+    const branch_code = (
+      fromCode && segmentFromCode ? segmentFromCode : formatBranchCodeSegment(bcHint!)
+    ).slice(0, 64);
+    const stripped =
+      branchNameRaw !== "" ? stripBcHintFromBranchName(branchNameRaw).trim() : "";
+    const branch_name = (
+      stripped !== ""
+        ? stripped
+        : branchNameRaw.trim() !== ""
+          ? branchNameRaw.trim()
+          : `Branch ${branch_code}`
+    ).slice(0, 255);
+    const row = await insertImportBranchRow(branch_code, branch_name);
+    registerBranchInImportMaps(row, branchByName, branchByCodeKey);
+    return row;
+  }
+
+  if (branchNameRaw.trim() !== "") {
+    const branch_name = branchNameRaw.trim().slice(0, 255);
+    const base = slugBranchCodeFromName(branch_name);
+    for (let i = 0; i < 50; i += 1) {
+      const candidate = (i === 0 ? base : `${base}-${i + 1}`).slice(0, 64);
+      const key = branchCodeLookupKey(candidate);
+      const existing = branchByCodeKey.get(key);
+      if (!existing) {
+        const row = await insertImportBranchRow(candidate, branch_name);
+        registerBranchInImportMaps(row, branchByName, branchByCodeKey);
+        return row;
+      }
+      if (
+        normalizeComparableText(existing.branch_name) ===
+        normalizeComparableText(branch_name)
+      ) {
+        return existing;
+      }
+    }
+    throw new Error(
+      "Could not allocate a unique branch code from BranchName. Try adding (BC:yourCode) to BranchName."
+    );
+  }
+
+  throw new Error(
+    "Branch could not be determined. Add BranchName, (BC:code) on BranchName, or an SKDBL AssetCode so a branch can be created or matched."
+  );
+}
+
 export function parseImportAssetsPayload(body: unknown): ImportAssetsPayload {
   if (!body || typeof body !== "object") {
     throw new Error("Invalid request body.");
@@ -374,9 +555,11 @@ export async function importAssetsFromRows(
   const subGroupsResult = await query<{ id: number; group_id: number; name: string }>(
     `SELECT id, group_id, name FROM hrms_sub_groups`
   );
-  const branchesResult = await query<{ id: number; branch_name: string }>(
-    `SELECT id, branch_name FROM hrms_branches`
-  );
+  const branchesResult = await query<{
+    id: number;
+    branch_name: string;
+    branch_code: string;
+  }>(`SELECT id, branch_name, branch_code FROM hrms_branches`);
   const departmentsResult = await query<{ id: number; name: string }>(
     `SELECT id, name FROM hrms_departments`
   );
@@ -389,9 +572,20 @@ export async function importAssetsFromRows(
     groupByName.set(normalizeComparableText(g.name), g);
   }
 
-  const branchByName = new Map<string, { id: number; branch_name: string }>();
+  const branchByName = new Map<
+    string,
+    { id: number; branch_name: string; branch_code: string }
+  >();
+  const branchByCodeKey = new Map<
+    string,
+    { id: number; branch_name: string; branch_code: string }
+  >();
   for (const b of branchesResult.rows) {
     branchByName.set(normalizeComparableText(b.branch_name), b);
+    const codeKey = branchCodeLookupKey(b.branch_code);
+    if (!branchByCodeKey.has(codeKey)) {
+      branchByCodeKey.set(codeKey, b);
+    }
   }
 
   const departmentByName = new Map<string, { id: number; name: string }>();
@@ -462,13 +656,52 @@ export async function importAssetsFromRows(
         throw new Error(`Group not found: ${groupName}`);
       }
 
-      const branchName = typeof row.branch_name === "string" ? row.branch_name.trim() : "";
-      if (branchName === "") {
-        throw new Error("Branch name is required.");
+      const branchNameRaw =
+        typeof row.branch_name === "string" ? row.branch_name.trim() : "";
+
+      const segmentFromCode =
+        sourceAssetCode !== ""
+          ? parseBranchSegmentFromSkdblAssetCode(sourceAssetCode)
+          : null;
+      const hasSkdblBranchSegment =
+        segmentFromCode !== null && segmentFromCode !== "";
+
+      if (branchNameRaw === "" && !hasSkdblBranchSegment) {
+        throw new Error(
+          "BranchName is required unless AssetCode is in SKDBL/… form so the branch can be read from the code."
+        );
       }
-      const branch = branchByName.get(normalizeComparableText(branchName));
+
+      const bcHint =
+        branchNameRaw !== "" ? extractBcHintFromBranchName(branchNameRaw) : null;
+
+      let branch: { id: number; branch_name: string; branch_code: string } | undefined;
+
+      if (hasSkdblBranchSegment) {
+        branch = branchByCodeKey.get(segmentFromCode.toLowerCase());
+      }
+      if (!branch && bcHint !== null && bcHint !== "") {
+        branch = branchByCodeKey.get(branchCodeLookupKey(bcHint));
+      }
+      if (!branch && branchNameRaw !== "") {
+        branch = branchByName.get(normalizeComparableText(branchNameRaw));
+      }
+      if (!branch && branchNameRaw !== "") {
+        const stripped = stripBcHintFromBranchName(branchNameRaw);
+        if (stripped !== "" && stripped !== branchNameRaw) {
+          branch = branchByName.get(normalizeComparableText(stripped));
+        }
+      }
+
       if (!branch) {
-        throw new Error(`Branch not found: ${branchName}`);
+        branch = await ensureBranchRowFromImportExcel({
+          hasSkdblBranchSegment,
+          segmentFromCode,
+          bcHint,
+          branchNameRaw,
+          branchByName,
+          branchByCodeKey,
+        });
       }
 
       let subGroupId: number | null = null;

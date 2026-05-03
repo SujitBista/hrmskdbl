@@ -63,6 +63,11 @@ type ImportAssetRow = {
   /** Carrying amount from legacy export (column e.g. Book Value) — depreciation cost basis. */
   book_value: number | null;
   purchase_invoice_no: string | null;
+  allocation_remarks: string;
+  allocation_category_name: string;
+  allocation_branch_name: string;
+  allocation_emp_name: string;
+  allocation_serial_number: string | null;
 };
 
 type ImportIssueRow = {
@@ -120,6 +125,25 @@ function pickDepartmentNameFromImportRow(r: Record<string, unknown>): string {
   return "";
 }
 
+function pickPurchaseInvoiceNoFromImportRow(
+  r: Record<string, unknown>
+): string | null {
+  const keys = [
+    "PurchaseInvoiceNo",
+    "InvoiceNo",
+    "Invoice",
+    "Purchase Invoice No",
+    "purchase_invoice_no",
+  ];
+  for (const k of keys) {
+    const s = String(r[k] ?? "").trim();
+    if (s !== "") {
+      return s;
+    }
+  }
+  return null;
+}
+
 function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
@@ -127,13 +151,20 @@ function findImportHeaderRow(sheet: XLSX.WorkSheet): number {
   });
   const withBranch = ["AssetName", "GroupName", "BranchName"];
   const withAssetCode = ["AssetName", "GroupName", "AssetCode"];
+  const withAllocationCode = [
+    "AssetName",
+    "SubGroupName",
+    "AssetCode",
+    "AllocationCategoryName",
+  ];
   const maxScan = Math.min(rows.length, 40);
   for (let i = 0; i < maxScan; i += 1) {
     const row = Array.isArray(rows[i]) ? rows[i] : [];
     const normalized = row.map((cell) => String(cell ?? "").trim());
     const hasBranchCols = withBranch.every((h) => normalized.includes(h));
     const hasCodeCols = withAssetCode.every((h) => normalized.includes(h));
-    if (hasBranchCols || hasCodeCols) {
+    const hasAllocCols = withAllocationCode.every((h) => normalized.includes(h));
+    if (hasBranchCols || hasCodeCols || hasAllocCols) {
       return i;
     }
   }
@@ -594,7 +625,7 @@ export function AssetRegisterForm({
       const headerRowIndex = findImportHeaderRow(sheet);
       if (headerRowIndex < 0) {
         setError(
-          "Could not find import columns. Include AssetName and GroupName, plus either BranchName or AssetCode (SKDBL/…)."
+          "Could not find import columns. Use AssetName + GroupName + BranchName, or AssetName + GroupName + AssetCode (SKDBL/…), or an allocation-style row with AssetName + SubGroupName + AssetCode + AllocationCategoryName."
         );
         return;
       }
@@ -622,6 +653,7 @@ export function AssetRegisterForm({
             const n = Number(v.replace(/,/g, ""));
             return Number.isFinite(n) ? n : null;
           };
+          const serialRaw = String(r.SerialNumber ?? "").trim();
           return {
             asset_code: String(r.AssetCode ?? "").trim() || null,
             asset_name: assetName,
@@ -636,7 +668,18 @@ export function AssetRegisterForm({
             purchase_qty: parseNumber(qtyRaw),
             purchase_amount: parseNumber(purchaseAmountRaw),
             book_value: pickImportedBookValue(r as Record<string, unknown>),
-            purchase_invoice_no: String(r.Remarks ?? "").trim() || null,
+            purchase_invoice_no: pickPurchaseInvoiceNoFromImportRow(
+              r as Record<string, unknown>
+            ),
+            allocation_remarks: String(r.Remarks ?? "").trim(),
+            allocation_category_name: String(
+              r.AllocationCategoryName ?? ""
+            ).trim(),
+            allocation_branch_name: String(
+              r.AllocationBranchName ?? ""
+            ).trim(),
+            allocation_emp_name: String(r.EmpName ?? "").trim(),
+            allocation_serial_number: serialRaw === "" ? null : serialRaw,
           };
         })
         .filter((r): r is ImportAssetRow => r !== null);

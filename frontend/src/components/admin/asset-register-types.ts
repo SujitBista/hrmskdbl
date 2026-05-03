@@ -27,4 +27,9 @@ export type AssetRegisterRow = {
   old_book_value: string | null;
   purchase_invoice_no: string | null;
   created_at: string;
+  allocation_remarks: string;
+  allocation_category_name: string;
+  allocation_branch_name: string;
+  allocation_emp_name: string;
+  allocation_serial_number: string | null;
 };

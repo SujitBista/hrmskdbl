@@ -279,6 +279,55 @@ async function migrate() {
     ON hrms_depreciation_run_audit_logs (depreciation_run_id, created_at DESC);
   `);
 
+  await query(`
+    DO $replace_legacy_alloc$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'hrms_asset_allocations'
+          AND column_name = 'allocation_date_bs'
+      ) THEN
+        DROP TABLE hrms_asset_allocations CASCADE;
+      END IF;
+    END
+    $replace_legacy_alloc$;
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_asset_allocations (
+      asset_id INTEGER PRIMARY KEY REFERENCES hrms_assets(id) ON DELETE CASCADE,
+      remarks TEXT NOT NULL DEFAULT '',
+      allocation_category_name VARCHAR(255) NOT NULL DEFAULT '',
+      allocation_branch_name VARCHAR(255) NOT NULL DEFAULT '',
+      emp_name VARCHAR(255) NOT NULL DEFAULT '',
+      serial_number VARCHAR(128),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    INSERT INTO hrms_asset_allocations (
+      asset_id,
+      remarks,
+      allocation_category_name,
+      allocation_branch_name,
+      emp_name,
+      serial_number
+    )
+    SELECT
+      a.id,
+      '',
+      '',
+      LEFT(TRIM(b.branch_name), 255),
+      '',
+      NULL
+    FROM hrms_assets a
+    INNER JOIN hrms_branches b ON b.id = a.branch_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM hrms_asset_allocations x WHERE x.asset_id = a.id
+    );
+  `);
+
   console.log("Migration complete.");
 }
 

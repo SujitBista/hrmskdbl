@@ -32,6 +32,15 @@ export type Asset = {
   created_at: string;
 };
 
+/** Mirrors allocation / ERP export columns stored beside the asset register. */
+export type AssetAllocationUpsert = {
+  remarks: string;
+  allocation_category_name: string;
+  allocation_branch_name: string;
+  emp_name: string;
+  serial_number: string | null;
+};
+
 export type CreateAssetInput = {
   asset_name: string;
   group_id: number;
@@ -50,6 +59,11 @@ export type CreateAssetInput = {
    * cost basis instead of purchase amount.
    */
   book_value: number | null;
+  /**
+   * When set (any allocation field in JSON), replaces allocation row on update.
+   * When omitted on update, allocation is left unchanged. On create, defaults apply when omitted.
+   */
+  allocation?: AssetAllocationUpsert;
 };
 
 export type ImportAssetRowInput = {
@@ -68,6 +82,11 @@ export type ImportAssetRowInput = {
   /** Current book / written-down value from import (maps to `hrms_assets.book_value`). */
   book_value?: number | string | null;
   purchase_invoice_no?: string | null;
+  allocation_remarks?: string | null;
+  allocation_category_name?: string | null;
+  allocation_branch_name?: string | null;
+  allocation_emp_name?: string | null;
+  allocation_serial_number?: string | null;
 };
 
 export type ImportAssetsPayload = {
@@ -231,6 +250,60 @@ function buildAssetCodeRetryCandidate(baseCode: string, attempt: number): string
   return `${baseCode.slice(0, Math.max(0, maxBaseLength))}${suffix}`;
 }
 
+const ALLOCATION_BODY_KEYS = [
+  "allocation_remarks",
+  "allocation_category_name",
+  "allocation_branch_name",
+  "allocation_emp_name",
+  "allocation_serial_number",
+] as const;
+
+function parseOptionalAllocationFromBody(
+  b: Record<string, unknown>
+): AssetAllocationUpsert | undefined {
+  if (!ALLOCATION_BODY_KEYS.some((k) => b[k] !== undefined)) {
+    return undefined;
+  }
+  const str = (v: unknown, max: number): string => {
+    if (v === null || v === undefined) {
+      return "";
+    }
+    const t = typeof v === "string" ? v : String(v);
+    return t.trim().slice(0, max);
+  };
+  const serialRaw =
+    b.allocation_serial_number === null || b.allocation_serial_number === undefined
+      ? ""
+      : typeof b.allocation_serial_number === "string"
+        ? b.allocation_serial_number.trim()
+        : String(b.allocation_serial_number).trim();
+  return {
+    remarks: str(b.allocation_remarks, 4000),
+    allocation_category_name: str(b.allocation_category_name, 255),
+    allocation_branch_name: str(b.allocation_branch_name, 255),
+    emp_name: str(b.allocation_emp_name, 255),
+    serial_number: serialRaw === "" ? null : serialRaw.slice(0, 128),
+  };
+}
+
+function allocationFromImportRow(row: ImportAssetRowInput): AssetAllocationUpsert {
+  const t = (v: unknown, max: number): string => {
+    if (v === null || v === undefined) {
+      return "";
+    }
+    const s = typeof v === "string" ? v.trim() : String(v).trim();
+    return s.slice(0, max);
+  };
+  const serialRaw = t(row.allocation_serial_number, 256);
+  return {
+    remarks: t(row.allocation_remarks, 4000),
+    allocation_category_name: t(row.allocation_category_name, 255),
+    allocation_branch_name: t(row.allocation_branch_name, 255),
+    emp_name: t(row.allocation_emp_name, 255),
+    serial_number: serialRaw === "" ? null : serialRaw.slice(0, 128),
+  };
+}
+
 export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
   if (!body || typeof body !== "object") {
     throw new Error("Invalid request body.");
@@ -322,7 +395,8 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     );
   }
 
-  return {
+  const allocation = parseOptionalAllocationFromBody(b);
+  const out: CreateAssetInput = {
     asset_name,
     group_id,
     sub_group_id,
@@ -337,6 +411,10 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
     purchase_invoice_no,
     book_value,
   };
+  if (allocation !== undefined) {
+    out.allocation = allocation;
+  }
+  return out;
 }
 
 function resolveAssetCodeForRow(
@@ -813,6 +891,7 @@ export async function importAssetsFromRows(
         unit_rate: unitRate,
         purchase_invoice_no: purchaseInvoiceNo,
         book_value,
+        allocation: allocationFromImportRow(row),
       };
       validatedInputs.push({ row: rowNumber, input });
     } catch (err) {
@@ -864,17 +943,54 @@ export async function importAssetsFromRows(
 
 type QueryExecutor = Pick<pg.Pool, "query"> | pg.PoolClient;
 
+async function upsertAssetAllocation(
+  db: QueryExecutor,
+  assetId: number,
+  registerBranchDisplayName: string,
+  fields: AssetAllocationUpsert
+): Promise<void> {
+  const reg =
+    registerBranchDisplayName.trim() === ""
+      ? "Branch"
+      : registerBranchDisplayName.trim().slice(0, 255);
+  const allocBranch =
+    fields.allocation_branch_name.trim() !== ""
+      ? fields.allocation_branch_name.trim().slice(0, 255)
+      : reg;
+  await db.query(
+    `INSERT INTO hrms_asset_allocations (
+      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (asset_id) DO UPDATE SET
+      remarks = EXCLUDED.remarks,
+      allocation_category_name = EXCLUDED.allocation_category_name,
+      allocation_branch_name = EXCLUDED.allocation_branch_name,
+      emp_name = EXCLUDED.emp_name,
+      serial_number = EXCLUDED.serial_number,
+      updated_at = NOW()`,
+    [
+      assetId,
+      fields.remarks.trim().slice(0, 4000),
+      fields.allocation_category_name.trim().slice(0, 255),
+      allocBranch,
+      fields.emp_name.trim().slice(0, 255),
+      fields.serial_number,
+    ]
+  );
+}
+
 async function resolveAssetRefs(
   input: CreateAssetInput,
   db: QueryExecutor = pool
 ): Promise<{
   branch_code: string;
+  branch_name: string;
   group_code: string;
   group_dep_method: string | null;
   group_dep_rate: string | null;
 }> {
-  const branchRow = await db.query<{ branch_code: string }>(
-    `SELECT branch_code FROM hrms_branches WHERE id = $1`,
+  const branchRow = await db.query<{ branch_code: string; branch_name: string }>(
+    `SELECT branch_code, branch_name FROM hrms_branches WHERE id = $1`,
     [input.branch_id]
   );
   const branch = branchRow.rows[0];
@@ -920,6 +1036,7 @@ async function resolveAssetRefs(
 
   return {
     branch_code: branch.branch_code,
+    branch_name: branch.branch_name,
     group_code: grp.code,
     group_dep_method: grp.dep_method,
     group_dep_rate: grp.dep_rate,
@@ -1020,6 +1137,24 @@ async function createAssetWithClient(
   if (!out) {
     throw new Error("Failed to load asset after save.");
   }
+
+  const registerBranch =
+    stripBcHintFromBranchName(refs.branch_name).trim() ||
+    refs.branch_name.trim();
+  const allocationDefaults: AssetAllocationUpsert = {
+    remarks: "",
+    allocation_category_name: "",
+    allocation_branch_name: "",
+    emp_name: "",
+    serial_number: null,
+  };
+  await upsertAssetAllocation(
+    client,
+    out.id,
+    registerBranch,
+    input.allocation ?? allocationDefaults
+  );
+
   return out;
 }
 
@@ -1163,6 +1298,17 @@ export async function updateAsset(
     await refreshMutableDepreciationRunsForAsset(id);
   }
 
+  if (input.allocation !== undefined) {
+    const bRow = await query<{ branch_name: string }>(
+      `SELECT branch_name FROM hrms_branches WHERE id = $1`,
+      [input.branch_id]
+    );
+    const nm = bRow.rows[0]?.branch_name ?? "";
+    const registerBranch =
+      stripBcHintFromBranchName(nm).trim() || nm.trim() || "Branch";
+    await upsertAssetAllocation(pool, id, registerBranch, input.allocation);
+  }
+
   return updated;
 }
 
@@ -1199,6 +1345,46 @@ export type AssetListRow = {
   old_book_value: string | null;
   purchase_invoice_no: string | null;
   created_at: string;
+  allocation_remarks: string;
+  allocation_category_name: string;
+  allocation_branch_name: string;
+  allocation_emp_name: string;
+  allocation_serial_number: string | null;
+};
+
+export type AssetAllocationListRow = {
+  remarks: string;
+  asset_code: string | null;
+  asset_id: number;
+  asset_name: string;
+  purchase_date_nepali: string;
+  dep_start_date_nepali: string;
+  qty: string | null;
+  purchase_amount: string | null;
+  sub_group_name: string | null;
+  own_type: string;
+  working_status: string;
+  branch_name: string;
+  allocation_category_name: string;
+  allocation_branch_name: string;
+  emp_name: string;
+  book_qty: string | null;
+  /** Same basis as depreciation run detail `depreciation_cost_basis`. */
+  purchase_with_additional_amount: string | null;
+  accumulate_dep: string | null;
+  book_value: string | null;
+  group_name: string;
+  dep_amount: string | null;
+  disposal_dep_amt: string | null;
+  this_year_dep: string | null;
+  /** Same as depreciation UI: cost basis minus closing WDV (not accumulate_dep + dep_amount). */
+  total_dep_amount: string | null;
+  closing_book_value: string | null;
+  serial_number: string | null;
+  /** Latest posted depreciation detail row per asset (matches run detail screen for that posting). */
+  dep_fiscal_year: string | null;
+  dep_rate: string | null;
+  dep_days: string | null;
 };
 
 export type ListAssetsParams = {
@@ -1209,6 +1395,19 @@ export type ListAssetsParams = {
 
 export type ListAssetsResult = {
   assets: AssetListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type ListAssetAllocationsParams = {
+  search?: string;
+  page: number;
+  pageSize: number;
+};
+
+export type ListAssetAllocationsResult = {
+  rows: AssetAllocationListRow[];
   total: number;
   page: number;
   pageSize: number;
@@ -1239,12 +1438,95 @@ const ASSET_LIST_SELECT = `
     a.book_value::text,
     a.old_book_value::text,
     a.purchase_invoice_no,
-    a.created_at::text
+    a.created_at::text,
+    COALESCE(aloc.remarks, '') AS allocation_remarks,
+    COALESCE(aloc.allocation_category_name, '') AS allocation_category_name,
+    COALESCE(aloc.allocation_branch_name, '') AS allocation_branch_name,
+    COALESCE(aloc.emp_name, '') AS allocation_emp_name,
+    aloc.serial_number AS allocation_serial_number
   FROM hrms_assets a
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
   LEFT JOIN hrms_departments d ON d.id = a.department_id
+  LEFT JOIN hrms_asset_allocations aloc ON aloc.asset_id = a.id
+`;
+
+const ASSET_ALLOCATION_LIST_SELECT = `
+  SELECT
+    COALESCE(al.remarks, '') AS remarks,
+    a.asset_code,
+    a.id AS asset_id,
+    a.asset_name,
+    a.purchase_date_bs AS purchase_date_nepali,
+    COALESCE(ld.dep_start_date_bs, a.depreciation_start_date_bs) AS dep_start_date_nepali,
+    a.purchase_qty::text AS qty,
+    (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS purchase_amount,
+    sg.name AS sub_group_name,
+    a.ownership_type AS own_type,
+    a.working_status,
+    b.branch_name,
+    COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
+    COALESCE(
+      NULLIF(TRIM(al.allocation_branch_name), ''),
+      LEFT(TRIM(b.branch_name), 255)
+    ) AS allocation_branch_name,
+    COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
+    a.purchase_qty::text AS book_qty,
+    (CASE
+      WHEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0) > 0
+      THEN (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::numeric
+      WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
+      THEN a.old_book_value
+      WHEN a.book_value IS NOT NULL AND a.book_value > 0
+      THEN a.book_value
+      ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
+    END)::text AS purchase_with_additional_amount,
+    ld.accumulate_dep::text AS accumulate_dep,
+    COALESCE(ld.book_value::text, a.book_value::text) AS book_value,
+    g.name AS group_name,
+    ld.dep_amount::text AS dep_amount,
+    NULL::text AS disposal_dep_amt,
+    ld.dep_amount::text AS this_year_dep,
+    CASE
+      WHEN ld.balance_amount IS NULL THEN NULL
+      ELSE (
+        (CASE
+          WHEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0) > 0
+          THEN (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::numeric
+          WHEN a.old_book_value IS NOT NULL AND a.old_book_value > 0
+          THEN a.old_book_value
+          WHEN a.book_value IS NOT NULL AND a.book_value > 0
+          THEN a.book_value
+          ELSE COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0)
+        END) - ld.balance_amount
+      )::text
+    END AS total_dep_amount,
+    ld.balance_amount::text AS closing_book_value,
+    al.serial_number,
+    ld.fiscal_year::text AS dep_fiscal_year,
+    ld.dep_rate::text AS dep_rate,
+    ld.dep_days::text AS dep_days
+  FROM hrms_assets a
+  INNER JOIN hrms_groups g ON g.id = a.group_id
+  INNER JOIN hrms_branches b ON b.id = a.branch_id
+  LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+  LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
+  LEFT JOIN LATERAL (
+    SELECT
+      d.dep_amount,
+      d.accumulate_dep,
+      d.balance_amount,
+      d.book_value,
+      d.dep_start_date_bs,
+      d.dep_rate,
+      d.dep_days,
+      d.fiscal_year
+    FROM hrms_depreciation_run_details d
+    WHERE d.asset_id = a.id
+    ORDER BY d.depreciation_run_id DESC, d.id DESC
+    LIMIT 1
+  ) ld ON true
 `;
 
 export async function listAssets(
@@ -1276,13 +1558,19 @@ export async function listAssets(
      INNER JOIN hrms_branches b ON b.id = a.branch_id
      LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
      LEFT JOIN hrms_departments d ON d.id = a.department_id
+     LEFT JOIN hrms_asset_allocations aloc ON aloc.asset_id = a.id
      WHERE (
        a.asset_name ILIKE $1 OR
        COALESCE(a.asset_code, '') ILIKE $1 OR
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(d.name, '') ILIKE $1
+       COALESCE(d.name, '') ILIKE $1 OR
+       COALESCE(aloc.remarks, '') ILIKE $1 OR
+       COALESCE(aloc.allocation_category_name, '') ILIKE $1 OR
+       COALESCE(aloc.allocation_branch_name, '') ILIKE $1 OR
+       COALESCE(aloc.emp_name, '') ILIKE $1 OR
+       COALESCE(aloc.serial_number, '') ILIKE $1
      )`,
     [pattern]
   );
@@ -1295,11 +1583,81 @@ export async function listAssets(
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(d.name, '') ILIKE $1
+       COALESCE(d.name, '') ILIKE $1 OR
+       COALESCE(aloc.remarks, '') ILIKE $1 OR
+       COALESCE(aloc.allocation_category_name, '') ILIKE $1 OR
+       COALESCE(aloc.allocation_branch_name, '') ILIKE $1 OR
+       COALESCE(aloc.emp_name, '') ILIKE $1 OR
+       COALESCE(aloc.serial_number, '') ILIKE $1
      )
      ORDER BY a.created_at DESC, a.id DESC
      LIMIT $2 OFFSET $3`,
     [pattern, pageSize, offset]
   );
   return { assets: list.rows, total, page, pageSize };
+}
+
+export async function listAssetAllocations(
+  params: ListAssetAllocationsParams
+): Promise<ListAssetAllocationsResult> {
+  const { page, pageSize } = clampListParams(params);
+  const search = params.search?.trim() ?? "";
+  const offset = (page - 1) * pageSize;
+
+  if (search === "") {
+    const countResult = await query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM hrms_assets`
+    );
+    const total = Number(countResult.rows[0]?.n ?? 0);
+    const list = await query<AssetAllocationListRow>(
+      `${ASSET_ALLOCATION_LIST_SELECT}
+       ORDER BY a.created_at DESC, a.id DESC
+       LIMIT $1 OFFSET $2`,
+      [pageSize, offset]
+    );
+    return { rows: list.rows, total, page, pageSize };
+  }
+
+  const pattern = `%${search}%`;
+  const countResult = await query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n
+     FROM hrms_assets a
+     INNER JOIN hrms_groups g ON g.id = a.group_id
+     INNER JOIN hrms_branches b ON b.id = a.branch_id
+     LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+     LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
+     WHERE (
+       a.asset_name ILIKE $1 OR
+       COALESCE(a.asset_code, '') ILIKE $1 OR
+       g.name ILIKE $1 OR g.code ILIKE $1 OR
+       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
+       COALESCE(sg.name, '') ILIKE $1 OR
+       COALESCE(al.remarks, '') ILIKE $1 OR
+       COALESCE(al.allocation_category_name, '') ILIKE $1 OR
+       COALESCE(al.allocation_branch_name, '') ILIKE $1 OR
+       COALESCE(al.emp_name, '') ILIKE $1 OR
+       COALESCE(al.serial_number, '') ILIKE $1
+     )`,
+    [pattern]
+  );
+  const total = Number(countResult.rows[0]?.n ?? 0);
+  const list = await query<AssetAllocationListRow>(
+    `${ASSET_ALLOCATION_LIST_SELECT}
+     WHERE (
+       a.asset_name ILIKE $1 OR
+       COALESCE(a.asset_code, '') ILIKE $1 OR
+       g.name ILIKE $1 OR g.code ILIKE $1 OR
+       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
+       COALESCE(sg.name, '') ILIKE $1 OR
+       COALESCE(al.remarks, '') ILIKE $1 OR
+       COALESCE(al.allocation_category_name, '') ILIKE $1 OR
+       COALESCE(al.allocation_branch_name, '') ILIKE $1 OR
+       COALESCE(al.emp_name, '') ILIKE $1 OR
+       COALESCE(al.serial_number, '') ILIKE $1
+     )
+     ORDER BY a.created_at DESC, a.id DESC
+     LIMIT $2 OFFSET $3`,
+    [pattern, pageSize, offset]
+  );
+  return { rows: list.rows, total, page, pageSize };
 }

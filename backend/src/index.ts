@@ -22,8 +22,10 @@ import {
   updateDepartment,
 } from "./services/departments.js";
 import {
+  applyAssetAllocationChange,
   createAsset,
   deleteAsset,
+  getAssetAllocationProfile,
   importAssetsFromRows,
   exportAllAssetAllocations,
   listAssetAllocations,
@@ -1073,6 +1075,72 @@ app.get("/api/admin/assets/allocations", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not list asset allocations." });
+  }
+});
+
+app.get("/api/admin/assets/:id/allocation-profile", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const profile = await getAssetAllocationProfile(id);
+    if (!profile) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.json(profile);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not load asset allocation profile." });
+  }
+});
+
+app.post("/api/admin/assets/:id/allocation-change", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const profile = await applyAssetAllocationChange(id, req.body);
+    if (!profile) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.json(profile);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not apply allocation change." });
   }
 });
 

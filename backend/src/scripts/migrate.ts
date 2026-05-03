@@ -285,20 +285,6 @@ async function migrate() {
   `);
 
   await query(`
-    DO $replace_legacy_alloc$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'hrms_asset_allocations'
-          AND column_name = 'allocation_date_bs'
-      ) THEN
-        DROP TABLE hrms_asset_allocations CASCADE;
-      END IF;
-    END
-    $replace_legacy_alloc$;
-  `);
-  await query(`
     CREATE TABLE IF NOT EXISTS hrms_asset_allocations (
       asset_id INTEGER PRIMARY KEY REFERENCES hrms_assets(id) ON DELETE CASCADE,
       remarks TEXT NOT NULL DEFAULT '',
@@ -309,6 +295,10 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+  await query(`
+    ALTER TABLE hrms_asset_allocations
+    ADD COLUMN IF NOT EXISTS allocation_date_bs VARCHAR(32) NOT NULL DEFAULT '';
   `);
   await query(`
     INSERT INTO hrms_asset_allocations (

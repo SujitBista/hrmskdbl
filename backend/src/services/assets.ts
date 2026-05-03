@@ -39,6 +39,11 @@ export type AssetAllocationUpsert = {
   allocation_branch_name: string;
   emp_name: string;
   serial_number: string | null;
+  /**
+   * Nepali BS date `YYYY/MM/DD` (English digits). When omitted (partial PATCH),
+   * `allocation_date_bs` in the database is left unchanged.
+   */
+  allocation_date_bs?: string;
 };
 
 export type CreateAssetInput = {
@@ -87,6 +92,7 @@ export type ImportAssetRowInput = {
   allocation_branch_name?: string | null;
   allocation_emp_name?: string | null;
   allocation_serial_number?: string | null;
+  allocation_date_bs?: string | null;
 };
 
 export type ImportAssetsPayload = {
@@ -256,6 +262,7 @@ const ALLOCATION_BODY_KEYS = [
   "allocation_branch_name",
   "allocation_emp_name",
   "allocation_serial_number",
+  "allocation_date_bs",
 ] as const;
 
 function parseOptionalAllocationFromBody(
@@ -277,13 +284,17 @@ function parseOptionalAllocationFromBody(
       : typeof b.allocation_serial_number === "string"
         ? b.allocation_serial_number.trim()
         : String(b.allocation_serial_number).trim();
-  return {
+  const out: AssetAllocationUpsert = {
     remarks: str(b.allocation_remarks, 4000),
     allocation_category_name: str(b.allocation_category_name, 255),
     allocation_branch_name: str(b.allocation_branch_name, 255),
     emp_name: str(b.allocation_emp_name, 255),
     serial_number: serialRaw === "" ? null : serialRaw.slice(0, 128),
   };
+  if (Object.prototype.hasOwnProperty.call(b, "allocation_date_bs")) {
+    out.allocation_date_bs = str(b.allocation_date_bs, 32);
+  }
+  return out;
 }
 
 function allocationFromImportRow(row: ImportAssetRowInput): AssetAllocationUpsert {
@@ -301,6 +312,7 @@ function allocationFromImportRow(row: ImportAssetRowInput): AssetAllocationUpser
     allocation_branch_name: t(row.allocation_branch_name, 255),
     emp_name: t(row.allocation_emp_name, 255),
     serial_number: serialRaw === "" ? null : serialRaw.slice(0, 128),
+    allocation_date_bs: t(row.allocation_date_bs ?? "", 32),
   };
 }
 
@@ -957,8 +969,33 @@ async function upsertAssetAllocation(
     fields.allocation_branch_name.trim() !== ""
       ? fields.allocation_branch_name.trim().slice(0, 255)
       : reg;
-  await db.query(
-    `INSERT INTO hrms_asset_allocations (
+  const baseVals: unknown[] = [
+    assetId,
+    fields.remarks.trim().slice(0, 4000),
+    fields.allocation_category_name.trim().slice(0, 255),
+    allocBranch,
+    fields.emp_name.trim().slice(0, 255),
+    fields.serial_number,
+  ];
+  if (fields.allocation_date_bs !== undefined) {
+    const dateBs = fields.allocation_date_bs.trim().slice(0, 32);
+    await db.query(
+      `INSERT INTO hrms_asset_allocations (
+      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number, allocation_date_bs
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (asset_id) DO UPDATE SET
+      remarks = EXCLUDED.remarks,
+      allocation_category_name = EXCLUDED.allocation_category_name,
+      allocation_branch_name = EXCLUDED.allocation_branch_name,
+      emp_name = EXCLUDED.emp_name,
+      serial_number = EXCLUDED.serial_number,
+      allocation_date_bs = EXCLUDED.allocation_date_bs,
+      updated_at = NOW()`,
+      [...baseVals, dateBs]
+    );
+  } else {
+    await db.query(
+      `INSERT INTO hrms_asset_allocations (
       asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number
     ) VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (asset_id) DO UPDATE SET
@@ -968,15 +1005,9 @@ async function upsertAssetAllocation(
       emp_name = EXCLUDED.emp_name,
       serial_number = EXCLUDED.serial_number,
       updated_at = NOW()`,
-    [
-      assetId,
-      fields.remarks.trim().slice(0, 4000),
-      fields.allocation_category_name.trim().slice(0, 255),
-      allocBranch,
-      fields.emp_name.trim().slice(0, 255),
-      fields.serial_number,
-    ]
-  );
+      baseVals
+    );
+  }
 }
 
 async function resolveAssetRefs(
@@ -1147,6 +1178,7 @@ async function createAssetWithClient(
     allocation_branch_name: "",
     emp_name: "",
     serial_number: null,
+    allocation_date_bs: "",
   };
   await upsertAssetAllocation(
     client,
@@ -1416,6 +1448,441 @@ export type ExportAssetAllocationsResult = {
   /** True when at least one more row existed beyond {@link ALLOCATION_EXPORT_MAX_ROWS}. */
   truncated: boolean;
 };
+
+/** Single-asset allocation profile + current allocation row (one row per asset in DB). */
+export type AssetAllocationProfileApiProfile = {
+  asset_id: number;
+  asset_code: string | null;
+  asset_name: string;
+  purchase_date_bs: string;
+  working_status: string;
+  group_name: string;
+  purchase_amount: string | null;
+  dep_method: string | null;
+  asset_user: string | null;
+  branch_name: string;
+  department_name: string | null;
+  branch_id: number;
+  department_id: number | null;
+  /** Nepali BS `YYYY/MM/DD` when set on the allocation row. */
+  allocation_date_bs: string;
+};
+
+export type AssetAllocationHistoryRow = {
+  allocation_id: number;
+  purchase_date_bs: string;
+  allocation_date_display: string;
+  fiscal_year: string | null;
+  allocation_type: string;
+  old_asset_code: string | null;
+  asset_user: string | null;
+  responsible_unit_name: string | null;
+  branch_name: string;
+  department_name: string | null;
+};
+
+export type AssetAllocationProfileApiResponse = {
+  profile: AssetAllocationProfileApiProfile;
+  history: AssetAllocationHistoryRow[];
+};
+
+type AssetAllocationProfileDbRow = {
+  asset_id: number;
+  asset_code: string | null;
+  asset_name: string;
+  purchase_date_bs: string;
+  working_status: string;
+  group_name: string;
+  group_dep_method: string | null;
+  dep_method_snapshot: string | null;
+  purchase_amount: string | null;
+  branch_id: number;
+  department_id: number | null;
+  branch_name: string;
+  department_name: string | null;
+  allocation_category_name: string;
+  allocation_branch_name: string;
+  emp_name: string;
+  allocation_date_bs: string;
+  allocation_created_at: string | null;
+  allocation_updated_at: string | null;
+  dep_fiscal_year: string | null;
+};
+
+function formatProfileAllocationDate(iso: string | null | undefined): string {
+  if (iso == null || String(iso).trim() === "") {
+    return "—";
+  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return String(iso).slice(0, 10);
+  }
+  return d.toLocaleDateString("en-GB", {
+    timeZone: "Asia/Kathmandu",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function resolveDepMethodForProfile(
+  snapshot: string | null,
+  groupMethod: string | null
+): string | null {
+  const s = snapshot?.trim() ?? "";
+  if (s !== "") {
+    return s;
+  }
+  const g = groupMethod?.trim() ?? "";
+  return g !== "" ? g : null;
+}
+
+const ASSET_ALLOCATION_PROFILE_SELECT = `
+  SELECT
+    a.id AS asset_id,
+    a.asset_code,
+    a.asset_name,
+    a.purchase_date_bs,
+    a.working_status,
+    g.name AS group_name,
+    g.dep_method AS group_dep_method,
+    NULLIF(TRIM(a.dep_method_snapshot), '') AS dep_method_snapshot,
+    (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS purchase_amount,
+    a.branch_id,
+    a.department_id,
+    b.branch_name,
+    d.name AS department_name,
+    COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
+    COALESCE(
+      NULLIF(TRIM(al.allocation_branch_name), ''),
+      LEFT(TRIM(b.branch_name), 255)
+    ) AS allocation_branch_name,
+    COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
+    COALESCE(NULLIF(TRIM(al.allocation_date_bs), ''), '') AS allocation_date_bs,
+    al.created_at::text AS allocation_created_at,
+    al.updated_at::text AS allocation_updated_at,
+    ld.fiscal_year::text AS dep_fiscal_year
+  FROM hrms_assets a
+  INNER JOIN hrms_groups g ON g.id = a.group_id
+  INNER JOIN hrms_branches b ON b.id = a.branch_id
+  LEFT JOIN hrms_departments d ON d.id = a.department_id
+  LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
+  LEFT JOIN LATERAL (
+    SELECT
+      d2.fiscal_year
+    FROM hrms_depreciation_run_details d2
+    WHERE d2.asset_id = a.id
+    ORDER BY d2.depreciation_run_id DESC, d2.id DESC
+    LIMIT 1
+  ) ld ON true
+  WHERE a.id = $1
+`;
+
+/** Same as {@link ASSET_ALLOCATION_PROFILE_SELECT} when `allocation_date_bs` is not migrated yet. */
+const ASSET_ALLOCATION_PROFILE_SELECT_LEGACY = `
+  SELECT
+    a.id AS asset_id,
+    a.asset_code,
+    a.asset_name,
+    a.purchase_date_bs,
+    a.working_status,
+    g.name AS group_name,
+    g.dep_method AS group_dep_method,
+    NULLIF(TRIM(a.dep_method_snapshot), '') AS dep_method_snapshot,
+    (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS purchase_amount,
+    a.branch_id,
+    a.department_id,
+    b.branch_name,
+    d.name AS department_name,
+    COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
+    COALESCE(
+      NULLIF(TRIM(al.allocation_branch_name), ''),
+      LEFT(TRIM(b.branch_name), 255)
+    ) AS allocation_branch_name,
+    COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
+    ''::text AS allocation_date_bs,
+    al.created_at::text AS allocation_created_at,
+    al.updated_at::text AS allocation_updated_at,
+    ld.fiscal_year::text AS dep_fiscal_year
+  FROM hrms_assets a
+  INNER JOIN hrms_groups g ON g.id = a.group_id
+  INNER JOIN hrms_branches b ON b.id = a.branch_id
+  LEFT JOIN hrms_departments d ON d.id = a.department_id
+  LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
+  LEFT JOIN LATERAL (
+    SELECT
+      d2.fiscal_year
+    FROM hrms_depreciation_run_details d2
+    WHERE d2.asset_id = a.id
+    ORDER BY d2.depreciation_run_id DESC, d2.id DESC
+    LIMIT 1
+  ) ld ON true
+  WHERE a.id = $1
+`;
+
+let assetAllocationProfileSelectMode: "auto" | "full" | "legacy" = "auto";
+
+function isPgUndefinedColumnForAllocDate(err: unknown): boolean {
+  const code =
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    typeof (err as { code: unknown }).code === "string"
+      ? (err as { code: string }).code
+      : "";
+  const msg = err instanceof Error ? err.message : String(err);
+  return code === "42703" && /allocation_date_bs/i.test(msg);
+}
+
+export async function hrmsAssetAllocationsHasAllocationDateBsColumn(): Promise<boolean> {
+  const r = await query<{ ok: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'hrms_asset_allocations'
+        AND column_name = 'allocation_date_bs'
+    ) AS ok`
+  );
+  return r.rows[0]?.ok === true;
+}
+
+export async function getAssetAllocationProfile(
+  assetId: number
+): Promise<AssetAllocationProfileApiResponse | null> {
+  if (!Number.isFinite(assetId) || assetId < 1) {
+    return null;
+  }
+
+  if (assetAllocationProfileSelectMode === "legacy") {
+    if (await hrmsAssetAllocationsHasAllocationDateBsColumn()) {
+      assetAllocationProfileSelectMode = "full";
+    }
+  }
+
+  const pickSql = (): string => {
+    if (assetAllocationProfileSelectMode === "legacy") {
+      return ASSET_ALLOCATION_PROFILE_SELECT_LEGACY;
+    }
+    if (assetAllocationProfileSelectMode === "full") {
+      return ASSET_ALLOCATION_PROFILE_SELECT;
+    }
+    return ASSET_ALLOCATION_PROFILE_SELECT;
+  };
+
+  let result: { rows: AssetAllocationProfileDbRow[] };
+  try {
+    result = await query<AssetAllocationProfileDbRow>(pickSql(), [assetId]);
+    if (assetAllocationProfileSelectMode === "auto") {
+      assetAllocationProfileSelectMode = "full";
+    }
+  } catch (err) {
+    if (
+      assetAllocationProfileSelectMode === "auto" &&
+      isPgUndefinedColumnForAllocDate(err)
+    ) {
+      assetAllocationProfileSelectMode = "legacy";
+      result = await query<AssetAllocationProfileDbRow>(
+        ASSET_ALLOCATION_PROFILE_SELECT_LEGACY,
+        [assetId]
+      );
+    } else {
+      throw err;
+    }
+  }
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const depMethod = resolveDepMethodForProfile(
+    row.dep_method_snapshot,
+    row.group_dep_method
+  );
+  const branch = row.branch_name.trim();
+  const allocBranch = row.allocation_branch_name.trim();
+  const responsibleUnit =
+    allocBranch !== "" && allocBranch !== branch ? allocBranch : null;
+
+  const assetUser = row.emp_name.trim() === "" ? null : row.emp_name.trim();
+  const allocationType =
+    row.allocation_category_name.trim() === ""
+      ? "New Allocation"
+      : row.allocation_category_name.trim();
+
+  const allocationWhen =
+    row.allocation_updated_at ?? row.allocation_created_at ?? null;
+  const dateBsTrim = row.allocation_date_bs.trim();
+  const allocationDateLabel =
+    dateBsTrim !== ""
+      ? dateBsTrim
+      : formatProfileAllocationDate(allocationWhen);
+
+  const profile: AssetAllocationProfileApiProfile = {
+    asset_id: row.asset_id,
+    asset_code: row.asset_code,
+    asset_name: row.asset_name,
+    purchase_date_bs: row.purchase_date_bs,
+    working_status: row.working_status,
+    group_name: row.group_name,
+    purchase_amount: row.purchase_amount,
+    dep_method: depMethod,
+    asset_user: assetUser,
+    branch_name: row.branch_name,
+    department_name: row.department_name,
+    branch_id: row.branch_id,
+    department_id: row.department_id,
+    allocation_date_bs: dateBsTrim,
+  };
+
+  const historyRow: AssetAllocationHistoryRow = {
+    allocation_id: row.asset_id,
+    purchase_date_bs: row.purchase_date_bs,
+    allocation_date_display: allocationDateLabel,
+    fiscal_year:
+      row.dep_fiscal_year != null && String(row.dep_fiscal_year).trim() !== ""
+        ? String(row.dep_fiscal_year).trim()
+        : null,
+    allocation_type: allocationType,
+    old_asset_code: null,
+    asset_user: assetUser,
+    responsible_unit_name: responsibleUnit,
+    branch_name: row.branch_name,
+    department_name: row.department_name,
+  };
+
+  return { profile, history: [historyRow] };
+}
+
+export function parseApplyAssetAllocationChangeBody(body: unknown): {
+  allocation_type: "Transfer" | "Return";
+  allocation_date_bs: string;
+  branch_id: number;
+  department_id: number | null;
+} {
+  if (!body || typeof body !== "object") {
+    throw new Error("Invalid request body.");
+  }
+  const b = body as Record<string, unknown>;
+  const typeRaw =
+    typeof b.allocation_type === "string" ? b.allocation_type.trim() : "";
+  if (typeRaw !== "Transfer" && typeRaw !== "Return") {
+    throw new Error("allocation_type must be Transfer or Return.");
+  }
+  const rawDate =
+    typeof b.allocation_date_bs === "string" ? b.allocation_date_bs.trim() : "";
+  const allocation_date_bs = rawDate.replace(/-/g, "/").slice(0, 32);
+  if (allocation_date_bs === "") {
+    throw new Error("allocation_date_bs is required.");
+  }
+  const branch_id = Number.isFinite(Number(b.branch_id))
+    ? Math.floor(Number(b.branch_id))
+    : NaN;
+  if (!Number.isFinite(branch_id) || branch_id < 1) {
+    throw new Error("Invalid branch_id.");
+  }
+  let department_id: number | null = null;
+  if (
+    b.department_id !== null &&
+    b.department_id !== undefined &&
+    b.department_id !== ""
+  ) {
+    const raw =
+      typeof b.department_id === "number"
+        ? b.department_id
+        : Number(b.department_id);
+    if (!Number.isFinite(raw) || raw < 1) {
+      throw new Error("Invalid department_id.");
+    }
+    department_id = Math.floor(raw);
+  }
+  return {
+    allocation_type: typeRaw,
+    allocation_date_bs,
+    branch_id,
+    department_id,
+  };
+}
+
+/**
+ * Updates register branch/department and the allocation row (type, BS date, branch label).
+ * Preserves remarks, employee name, and serial on the allocation row.
+ */
+export async function applyAssetAllocationChange(
+  assetId: number,
+  body: unknown
+): Promise<AssetAllocationProfileApiResponse | null> {
+  if (!Number.isFinite(assetId) || assetId < 1) {
+    return null;
+  }
+  const input = parseApplyAssetAllocationChangeBody(body);
+  const exists = await query<{ id: number }>(
+    `SELECT id FROM hrms_assets WHERE id = $1`,
+    [assetId]
+  );
+  if (!exists.rows[0]) {
+    return null;
+  }
+  if (!(await hrmsAssetAllocationsHasAllocationDateBsColumn())) {
+    throw new Error(
+      "Database is missing column allocation_date_bs on hrms_asset_allocations. From the backend folder run: npm run migrate"
+    );
+  }
+  await assertDepartmentExists(input.department_id);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const bRow = await client.query<{ branch_name: string }>(
+      `SELECT branch_name FROM hrms_branches WHERE id = $1`,
+      [input.branch_id]
+    );
+    const br = bRow.rows[0];
+    if (!br) {
+      throw new Error("Branch not found.");
+    }
+    const branchName = br.branch_name.trim();
+    await client.query(
+      `UPDATE hrms_assets SET branch_id = $1, department_id = $2 WHERE id = $3`,
+      [input.branch_id, input.department_id, assetId]
+    );
+    const curAlloc = await client.query<{
+      remarks: string;
+      emp_name: string;
+      serial_number: string | null;
+    }>(
+      `SELECT remarks, emp_name, serial_number FROM hrms_asset_allocations WHERE asset_id = $1`,
+      [assetId]
+    );
+    const cur = curAlloc.rows[0];
+    const fields: AssetAllocationUpsert = {
+      remarks: cur?.remarks ?? "",
+      allocation_category_name: input.allocation_type,
+      allocation_branch_name: branchName.slice(0, 255),
+      emp_name: cur?.emp_name ?? "",
+      serial_number: cur?.serial_number ?? null,
+      allocation_date_bs: input.allocation_date_bs,
+    };
+    const registerBranch =
+      stripBcHintFromBranchName(branchName).trim() ||
+      branchName ||
+      "Branch";
+    await upsertAssetAllocation(client, assetId, registerBranch, fields);
+    await client.query("COMMIT");
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  await refreshMutableDepreciationRunsForAsset(assetId);
+  return getAssetAllocationProfile(assetId);
+}
 
 const ASSET_LIST_SELECT = `
   SELECT a.id,

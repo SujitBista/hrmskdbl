@@ -22,7 +22,10 @@ export default function AssetRegisterAllocationsPage() {
           Refresh list
         </button>
       </div>
-      <AssetRegisterAllocationTable refreshKey={refreshKey} />
+      <AssetRegisterAllocationTable
+        refreshKey={refreshKey}
+        onProfileSaved={onRefresh}
+      />
     </div>
   );
 }

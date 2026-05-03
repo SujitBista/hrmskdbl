@@ -12,7 +12,8 @@
     "clear-depreciation": "tsx src/scripts/clear-depreciation-data.ts",
     "clear-all-register": "tsx src/scripts/clear-all-register-data.ts",
     "clear-branches": "tsx src/scripts/clear-branches-data.ts",
-    "clear-assets": "tsx src/scripts/clear-assets-data.ts"
+    "clear-assets": "tsx src/scripts/clear-assets-data.ts",
+    "reset-allocations": "tsx src/scripts/reset-asset-allocations.ts"
   },
   "dependencies": {
     "@hrmskdbl/depreciation-core": "file:../packages/depreciation-core",

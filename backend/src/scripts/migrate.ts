@@ -286,7 +286,8 @@ async function migrate() {
 
   await query(`
     CREATE TABLE IF NOT EXISTS hrms_asset_allocations (
-      asset_id INTEGER PRIMARY KEY REFERENCES hrms_assets(id) ON DELETE CASCADE,
+      id SERIAL PRIMARY KEY,
+      asset_id INTEGER NOT NULL REFERENCES hrms_assets(id) ON DELETE CASCADE,
       remarks TEXT NOT NULL DEFAULT '',
       allocation_category_name VARCHAR(255) NOT NULL DEFAULT '',
       allocation_branch_name VARCHAR(255) NOT NULL DEFAULT '',
@@ -300,6 +301,84 @@ async function migrate() {
     ALTER TABLE hrms_asset_allocations
     ADD COLUMN IF NOT EXISTS allocation_date_bs VARCHAR(32) NOT NULL DEFAULT '';
   `);
+  /** Legacy tables used asset_id as PK; add surrogate `id` PK for per-row allocation history. */
+  await query(`
+    DO $alloc_pk$
+    DECLARE
+      pkname text;
+    BEGIN
+      SELECT tc.constraint_name INTO pkname
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_schema = kcu.table_schema
+        AND tc.constraint_name = kcu.constraint_name
+        AND tc.table_name = kcu.table_name
+      WHERE tc.table_schema = 'public'
+        AND tc.table_name = 'hrms_asset_allocations'
+        AND tc.constraint_type = 'PRIMARY KEY'
+        AND kcu.column_name = 'asset_id'
+      LIMIT 1;
+
+      IF pkname IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND table_name = 'hrms_asset_allocations'
+             AND column_name = 'id'
+         ) THEN
+        ALTER TABLE hrms_asset_allocations ADD COLUMN id SERIAL NOT NULL;
+        EXECUTE format('ALTER TABLE hrms_asset_allocations DROP CONSTRAINT %I', pkname);
+        ALTER TABLE hrms_asset_allocations
+          ADD CONSTRAINT hrms_asset_allocations_pkey PRIMARY KEY (id);
+      END IF;
+    END
+    $alloc_pk$;
+  `);
+  /** Allow multiple allocation rows per asset (transfer/return history). */
+  await query(`
+    DO $drop_asset_id_unique$
+    DECLARE
+      r RECORD;
+    BEGIN
+      FOR r IN
+        SELECT c.conname AS cname
+        FROM pg_constraint c
+        INNER JOIN pg_class t ON c.conrelid = t.oid
+        INNER JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+          AND t.relname = 'hrms_asset_allocations'
+          AND c.contype = 'u'
+          AND (
+            SELECT COUNT(*)::int FROM unnest(c.conkey::smallint[]) AS _u(attnum)
+          ) = 1
+          AND EXISTS (
+            SELECT 1
+            FROM pg_attribute a
+            WHERE a.attrelid = c.conrelid
+              AND a.attnum = c.conkey[1]
+              AND a.attname = 'asset_id'
+              AND NOT a.attisdropped
+          )
+      LOOP
+        EXECUTE format(
+          'ALTER TABLE public.hrms_asset_allocations DROP CONSTRAINT %I',
+          r.cname
+        );
+      END LOOP;
+    END
+    $drop_asset_id_unique$;
+  `);
+  await query(`
+    ALTER TABLE hrms_asset_allocations
+      DROP CONSTRAINT IF EXISTS hrms_asset_allocations_asset_id_key;
+  `);
+  await query(`
+    DROP INDEX IF EXISTS hrms_asset_allocations_asset_id_key;
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_asset_allocations_asset_id_id_desc
+    ON hrms_asset_allocations (asset_id, id DESC);
+  `);
   await query(`
     INSERT INTO hrms_asset_allocations (
       asset_id,
@@ -307,7 +386,8 @@ async function migrate() {
       allocation_category_name,
       allocation_branch_name,
       emp_name,
-      serial_number
+      serial_number,
+      allocation_date_bs
     )
     SELECT
       a.id,
@@ -315,7 +395,8 @@ async function migrate() {
       '',
       LEFT(TRIM(b.branch_name), 255),
       '',
-      NULL
+      NULL,
+      COALESCE(NULLIF(TRIM(a.purchase_date_bs), ''), '')
     FROM hrms_assets a
     INNER JOIN hrms_branches b ON b.id = a.branch_id
     WHERE NOT EXISTS (

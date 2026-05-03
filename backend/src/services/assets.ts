@@ -969,45 +969,79 @@ async function upsertAssetAllocation(
     fields.allocation_branch_name.trim() !== ""
       ? fields.allocation_branch_name.trim().slice(0, 255)
       : reg;
-  const baseVals: unknown[] = [
-    assetId,
-    fields.remarks.trim().slice(0, 4000),
-    fields.allocation_category_name.trim().slice(0, 255),
-    allocBranch,
-    fields.emp_name.trim().slice(0, 255),
-    fields.serial_number,
-  ];
-  if (fields.allocation_date_bs !== undefined) {
-    const dateBs = fields.allocation_date_bs.trim().slice(0, 32);
-    await db.query(
-      `INSERT INTO hrms_asset_allocations (
-      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number, allocation_date_bs
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    ON CONFLICT (asset_id) DO UPDATE SET
-      remarks = EXCLUDED.remarks,
-      allocation_category_name = EXCLUDED.allocation_category_name,
-      allocation_branch_name = EXCLUDED.allocation_branch_name,
-      emp_name = EXCLUDED.emp_name,
-      serial_number = EXCLUDED.serial_number,
-      allocation_date_bs = EXCLUDED.allocation_date_bs,
-      updated_at = NOW()`,
-      [...baseVals, dateBs]
-    );
-  } else {
-    await db.query(
-      `INSERT INTO hrms_asset_allocations (
-      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number
-    ) VALUES ($1, $2, $3, $4, $5, $6)
-    ON CONFLICT (asset_id) DO UPDATE SET
-      remarks = EXCLUDED.remarks,
-      allocation_category_name = EXCLUDED.allocation_category_name,
-      allocation_branch_name = EXCLUDED.allocation_branch_name,
-      emp_name = EXCLUDED.emp_name,
-      serial_number = EXCLUDED.serial_number,
-      updated_at = NOW()`,
-      baseVals
-    );
+  const latest = await db.query<{ id: number }>(
+    `SELECT id FROM hrms_asset_allocations WHERE asset_id = $1 ORDER BY id DESC LIMIT 1`,
+    [assetId]
+  );
+  const targetId = latest.rows[0]?.id;
+  const r = fields.remarks.trim().slice(0, 4000);
+  const c = fields.allocation_category_name.trim().slice(0, 255);
+  const e = fields.emp_name.trim().slice(0, 255);
+  const s = fields.serial_number;
+
+  if (targetId !== undefined) {
+    if (fields.allocation_date_bs !== undefined) {
+      const dateBs = fields.allocation_date_bs.trim().slice(0, 32);
+      await db.query(
+        `UPDATE hrms_asset_allocations SET
+          remarks = $2,
+          allocation_category_name = $3,
+          allocation_branch_name = $4,
+          emp_name = $5,
+          serial_number = $6,
+          allocation_date_bs = $7,
+          updated_at = NOW()
+        WHERE id = $1`,
+        [targetId, r, c, allocBranch, e, s, dateBs]
+      );
+    } else {
+      await db.query(
+        `UPDATE hrms_asset_allocations SET
+          remarks = $2,
+          allocation_category_name = $3,
+          allocation_branch_name = $4,
+          emp_name = $5,
+          serial_number = $6,
+          updated_at = NOW()
+        WHERE id = $1`,
+        [targetId, r, c, allocBranch, e, s]
+      );
+    }
+    return;
   }
+
+  const dateBsInsert =
+    fields.allocation_date_bs !== undefined
+      ? fields.allocation_date_bs.trim().slice(0, 32)
+      : "";
+  await db.query(
+    `INSERT INTO hrms_asset_allocations (
+      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number, allocation_date_bs
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [assetId, r, c, allocBranch, e, s, dateBsInsert]
+  );
+}
+
+async function insertAssetAllocationHistoryRow(
+  db: QueryExecutor,
+  assetId: number,
+  fields: AssetAllocationUpsert & { allocation_date_bs: string }
+): Promise<void> {
+  const dateBs = fields.allocation_date_bs.trim().slice(0, 32);
+  await db.query(
+    `INSERT INTO hrms_asset_allocations (
+      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number, allocation_date_bs
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      assetId,
+      fields.remarks.trim().slice(0, 4000),
+      fields.allocation_category_name.trim().slice(0, 255),
+      fields.allocation_branch_name.trim().slice(0, 255),
+      fields.emp_name.trim().slice(0, 255),
+      fields.serial_number,
+      dateBs,
+    ]
+  );
 }
 
 async function resolveAssetRefs(
@@ -1469,12 +1503,17 @@ export type AssetAllocationProfileApiProfile = {
 };
 
 export type AssetAllocationHistoryRow = {
-  allocation_id: number;
+  /**
+   * Surrogate key from `hrms_asset_allocations.id` (globally unique per allocation row).
+   * Null only when no allocation row exists for the asset yet.
+   */
+  allocation_id: number | null;
   purchase_date_bs: string;
   allocation_date_display: string;
   fiscal_year: string | null;
   allocation_type: string;
-  old_asset_code: string | null;
+  /** Register asset primary key (`hrms_assets.id`) for this row. */
+  old_asset_code: string;
   asset_user: string | null;
   responsible_unit_name: string | null;
   branch_name: string;
@@ -1504,6 +1543,8 @@ type AssetAllocationProfileDbRow = {
   allocation_branch_name: string;
   emp_name: string;
   allocation_date_bs: string;
+  /** Surrogate PK on `hrms_asset_allocations`; null when no allocation row. */
+  allocation_row_id: number | null;
   allocation_created_at: string | null;
   allocation_updated_at: string | null;
   dep_fiscal_year: string | null;
@@ -1559,6 +1600,7 @@ const ASSET_ALLOCATION_PROFILE_SELECT = `
     ) AS allocation_branch_name,
     COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
     COALESCE(NULLIF(TRIM(al.allocation_date_bs), ''), '') AS allocation_date_bs,
+    al.id AS allocation_row_id,
     al.created_at::text AS allocation_created_at,
     al.updated_at::text AS allocation_updated_at,
     ld.fiscal_year::text AS dep_fiscal_year
@@ -1566,7 +1608,20 @@ const ASSET_ALLOCATION_PROFILE_SELECT = `
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_departments d ON d.id = a.department_id
-  LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
+  LEFT JOIN LATERAL (
+    SELECT
+      id,
+      allocation_category_name,
+      allocation_branch_name,
+      emp_name,
+      allocation_date_bs,
+      created_at,
+      updated_at
+    FROM hrms_asset_allocations
+    WHERE asset_id = a.id
+    ORDER BY id DESC
+    LIMIT 1
+  ) al ON true
   LEFT JOIN LATERAL (
     SELECT
       d2.fiscal_year
@@ -1578,63 +1633,92 @@ const ASSET_ALLOCATION_PROFILE_SELECT = `
   WHERE a.id = $1
 `;
 
-/** Same as {@link ASSET_ALLOCATION_PROFILE_SELECT} when `allocation_date_bs` is not migrated yet. */
-const ASSET_ALLOCATION_PROFILE_SELECT_LEGACY = `
+const ASSET_ALLOCATION_HISTORY_SELECT = `
   SELECT
+    al.id AS allocation_row_id,
     a.id AS asset_id,
-    a.asset_code,
-    a.asset_name,
     a.purchase_date_bs,
-    a.working_status,
-    g.name AS group_name,
-    g.dep_method AS group_dep_method,
-    NULLIF(TRIM(a.dep_method_snapshot), '') AS dep_method_snapshot,
-    (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS purchase_amount,
-    a.branch_id,
-    a.department_id,
-    b.branch_name,
-    d.name AS department_name,
-    COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
-    COALESCE(
-      NULLIF(TRIM(al.allocation_branch_name), ''),
-      LEFT(TRIM(b.branch_name), 255)
-    ) AS allocation_branch_name,
-    COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
-    ''::text AS allocation_date_bs,
+    COALESCE(NULLIF(TRIM(al.allocation_date_bs), ''), '') AS allocation_date_bs,
     al.created_at::text AS allocation_created_at,
     al.updated_at::text AS allocation_updated_at,
-    ld.fiscal_year::text AS dep_fiscal_year
-  FROM hrms_assets a
-  INNER JOIN hrms_groups g ON g.id = a.group_id
+    COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
+    COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
+    COALESCE(NULLIF(TRIM(al.allocation_branch_name), ''), '') AS allocation_branch_name,
+    d.name AS department_name,
+    b.branch_name AS register_branch_name,
+    (SELECT d2.fiscal_year::text FROM hrms_depreciation_run_details d2
+     WHERE d2.asset_id = a.id
+     ORDER BY d2.depreciation_run_id DESC, d2.id DESC
+     LIMIT 1) AS dep_fiscal_year
+  FROM hrms_asset_allocations al
+  INNER JOIN hrms_assets a ON a.id = al.asset_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_departments d ON d.id = a.department_id
-  LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
-  LEFT JOIN LATERAL (
-    SELECT
-      d2.fiscal_year
-    FROM hrms_depreciation_run_details d2
-    WHERE d2.asset_id = a.id
-    ORDER BY d2.depreciation_run_id DESC, d2.id DESC
-    LIMIT 1
-  ) ld ON true
-  WHERE a.id = $1
+  WHERE al.asset_id = $1
+  ORDER BY al.id DESC
 `;
 
-let assetAllocationProfileSelectMode: "auto" | "full" | "legacy" = "auto";
+type AssetAllocationHistoryDbRow = {
+  allocation_row_id: number;
+  asset_id: number;
+  purchase_date_bs: string;
+  allocation_date_bs: string;
+  allocation_created_at: string | null;
+  allocation_updated_at: string | null;
+  allocation_category_name: string;
+  emp_name: string;
+  allocation_branch_name: string;
+  department_name: string | null;
+  register_branch_name: string;
+  dep_fiscal_year: string | null;
+};
 
-function isPgUndefinedColumnForAllocDate(err: unknown): boolean {
-  const code =
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    typeof (err as { code: unknown }).code === "string"
-      ? (err as { code: string }).code
-      : "";
-  const msg = err instanceof Error ? err.message : String(err);
-  return code === "42703" && /allocation_date_bs/i.test(msg);
+function mapAllocationHistoryDbRow(
+  row: AssetAllocationHistoryDbRow
+): AssetAllocationHistoryRow {
+  const registerBranch = row.register_branch_name.trim();
+  const allocBranch = row.allocation_branch_name.trim();
+  const responsibleUnit =
+    allocBranch !== "" && allocBranch !== registerBranch ? allocBranch : null;
+  const assetUser = row.emp_name.trim() === "" ? null : row.emp_name.trim();
+  const allocationType =
+    row.allocation_category_name.trim() === ""
+      ? "New Allocation"
+      : row.allocation_category_name.trim();
+  const allocationWhen =
+    row.allocation_updated_at ?? row.allocation_created_at ?? null;
+  const dateBsTrim = row.allocation_date_bs.trim();
+  const allocationDateLabel =
+    dateBsTrim !== ""
+      ? dateBsTrim
+      : formatProfileAllocationDate(allocationWhen);
+  const fyRaw = row.dep_fiscal_year;
+  const fiscalYear =
+    fyRaw != null && String(fyRaw).trim() !== "" ? String(fyRaw).trim() : null;
+  const branchDisplay =
+    allocBranch !== "" ? allocBranch : registerBranch || "—";
+  const dept =
+    row.department_name != null && String(row.department_name).trim() !== ""
+      ? String(row.department_name).trim()
+      : null;
+  return {
+    allocation_id: row.allocation_row_id,
+    purchase_date_bs: row.purchase_date_bs,
+    allocation_date_display: allocationDateLabel,
+    fiscal_year: fiscalYear,
+    allocation_type: allocationType,
+    old_asset_code: String(row.asset_id),
+    asset_user: assetUser,
+    responsible_unit_name: responsibleUnit,
+    branch_name: branchDisplay,
+    department_name: dept,
+  };
 }
 
-export async function hrmsAssetAllocationsHasAllocationDateBsColumn(): Promise<boolean> {
+const HRMS_ASSET_ALLOCATIONS_SCHEMA_MSG =
+  "Database is missing column allocation_date_bs on hrms_asset_allocations. From the backend folder run: npm run migrate";
+
+async function assertHrmsAssetAllocationsSchema(): Promise<void> {
   const r = await query<{ ok: boolean }>(
     `SELECT EXISTS (
       SELECT 1 FROM information_schema.columns
@@ -1643,7 +1727,9 @@ export async function hrmsAssetAllocationsHasAllocationDateBsColumn(): Promise<b
         AND column_name = 'allocation_date_bs'
     ) AS ok`
   );
-  return r.rows[0]?.ok === true;
+  if (r.rows[0]?.ok !== true) {
+    throw new Error(HRMS_ASSET_ALLOCATIONS_SCHEMA_MSG);
+  }
 }
 
 export async function getAssetAllocationProfile(
@@ -1653,42 +1739,12 @@ export async function getAssetAllocationProfile(
     return null;
   }
 
-  if (assetAllocationProfileSelectMode === "legacy") {
-    if (await hrmsAssetAllocationsHasAllocationDateBsColumn()) {
-      assetAllocationProfileSelectMode = "full";
-    }
-  }
+  await assertHrmsAssetAllocationsSchema();
 
-  const pickSql = (): string => {
-    if (assetAllocationProfileSelectMode === "legacy") {
-      return ASSET_ALLOCATION_PROFILE_SELECT_LEGACY;
-    }
-    if (assetAllocationProfileSelectMode === "full") {
-      return ASSET_ALLOCATION_PROFILE_SELECT;
-    }
-    return ASSET_ALLOCATION_PROFILE_SELECT;
-  };
-
-  let result: { rows: AssetAllocationProfileDbRow[] };
-  try {
-    result = await query<AssetAllocationProfileDbRow>(pickSql(), [assetId]);
-    if (assetAllocationProfileSelectMode === "auto") {
-      assetAllocationProfileSelectMode = "full";
-    }
-  } catch (err) {
-    if (
-      assetAllocationProfileSelectMode === "auto" &&
-      isPgUndefinedColumnForAllocDate(err)
-    ) {
-      assetAllocationProfileSelectMode = "legacy";
-      result = await query<AssetAllocationProfileDbRow>(
-        ASSET_ALLOCATION_PROFILE_SELECT_LEGACY,
-        [assetId]
-      );
-    } else {
-      throw err;
-    }
-  }
+  const result = await query<AssetAllocationProfileDbRow>(
+    ASSET_ALLOCATION_PROFILE_SELECT,
+    [assetId]
+  );
 
   const row = result.rows[0];
   if (!row) {
@@ -1699,24 +1755,10 @@ export async function getAssetAllocationProfile(
     row.dep_method_snapshot,
     row.group_dep_method
   );
-  const branch = row.branch_name.trim();
-  const allocBranch = row.allocation_branch_name.trim();
-  const responsibleUnit =
-    allocBranch !== "" && allocBranch !== branch ? allocBranch : null;
 
   const assetUser = row.emp_name.trim() === "" ? null : row.emp_name.trim();
-  const allocationType =
-    row.allocation_category_name.trim() === ""
-      ? "New Allocation"
-      : row.allocation_category_name.trim();
 
-  const allocationWhen =
-    row.allocation_updated_at ?? row.allocation_created_at ?? null;
   const dateBsTrim = row.allocation_date_bs.trim();
-  const allocationDateLabel =
-    dateBsTrim !== ""
-      ? dateBsTrim
-      : formatProfileAllocationDate(allocationWhen);
 
   const profile: AssetAllocationProfileApiProfile = {
     asset_id: row.asset_id,
@@ -1735,23 +1777,13 @@ export async function getAssetAllocationProfile(
     allocation_date_bs: dateBsTrim,
   };
 
-  const historyRow: AssetAllocationHistoryRow = {
-    allocation_id: row.asset_id,
-    purchase_date_bs: row.purchase_date_bs,
-    allocation_date_display: allocationDateLabel,
-    fiscal_year:
-      row.dep_fiscal_year != null && String(row.dep_fiscal_year).trim() !== ""
-        ? String(row.dep_fiscal_year).trim()
-        : null,
-    allocation_type: allocationType,
-    old_asset_code: null,
-    asset_user: assetUser,
-    responsible_unit_name: responsibleUnit,
-    branch_name: row.branch_name,
-    department_name: row.department_name,
-  };
+  const histResult = await query<AssetAllocationHistoryDbRow>(
+    ASSET_ALLOCATION_HISTORY_SELECT,
+    [assetId]
+  );
+  const history = histResult.rows.map(mapAllocationHistoryDbRow);
 
-  return { profile, history: [historyRow] };
+  return { profile, history };
 }
 
 export function parseApplyAssetAllocationChangeBody(body: unknown): {
@@ -1805,8 +1837,8 @@ export function parseApplyAssetAllocationChangeBody(body: unknown): {
 }
 
 /**
- * Updates register branch/department and the allocation row (type, BS date, branch label).
- * Preserves remarks, employee name, and serial on the allocation row.
+ * Updates register branch/department and appends a new allocation history row
+ * (Transfer / Return). Earlier allocation rows for the asset are kept for history.
  */
 export async function applyAssetAllocationChange(
   assetId: number,
@@ -1823,11 +1855,7 @@ export async function applyAssetAllocationChange(
   if (!exists.rows[0]) {
     return null;
   }
-  if (!(await hrmsAssetAllocationsHasAllocationDateBsColumn())) {
-    throw new Error(
-      "Database is missing column allocation_date_bs on hrms_asset_allocations. From the backend folder run: npm run migrate"
-    );
-  }
+  await assertHrmsAssetAllocationsSchema();
   await assertDepartmentExists(input.department_id);
 
   const client = await pool.connect();
@@ -1851,11 +1879,12 @@ export async function applyAssetAllocationChange(
       emp_name: string;
       serial_number: string | null;
     }>(
-      `SELECT remarks, emp_name, serial_number FROM hrms_asset_allocations WHERE asset_id = $1`,
+      `SELECT remarks, emp_name, serial_number FROM hrms_asset_allocations
+       WHERE asset_id = $1 ORDER BY id DESC LIMIT 1`,
       [assetId]
     );
     const cur = curAlloc.rows[0];
-    const fields: AssetAllocationUpsert = {
+    const fields: AssetAllocationUpsert & { allocation_date_bs: string } = {
       remarks: cur?.remarks ?? "",
       allocation_category_name: input.allocation_type,
       allocation_branch_name: branchName.slice(0, 255),
@@ -1863,11 +1892,7 @@ export async function applyAssetAllocationChange(
       serial_number: cur?.serial_number ?? null,
       allocation_date_bs: input.allocation_date_bs,
     };
-    const registerBranch =
-      stripBcHintFromBranchName(branchName).trim() ||
-      branchName ||
-      "Branch";
-    await upsertAssetAllocation(client, assetId, registerBranch, fields);
+    await insertAssetAllocationHistoryRow(client, assetId, fields);
     await client.query("COMMIT");
   } catch (err) {
     try {
@@ -1920,7 +1945,13 @@ const ASSET_LIST_SELECT = `
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
   LEFT JOIN hrms_departments d ON d.id = a.department_id
-  LEFT JOIN hrms_asset_allocations aloc ON aloc.asset_id = a.id
+  LEFT JOIN LATERAL (
+    SELECT remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number
+    FROM hrms_asset_allocations
+    WHERE asset_id = a.id
+    ORDER BY id DESC
+    LIMIT 1
+  ) aloc ON true
 `;
 
 const ASSET_ALLOCATION_LIST_SELECT = `
@@ -1977,7 +2008,13 @@ const ASSET_ALLOCATION_LIST_SELECT = `
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
-  LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
+  LEFT JOIN LATERAL (
+    SELECT allocation_branch_name
+    FROM hrms_asset_allocations
+    WHERE asset_id = a.id
+    ORDER BY id DESC
+    LIMIT 1
+  ) al ON true
   LEFT JOIN LATERAL (
     SELECT
       d.dep_amount,
@@ -2024,7 +2061,6 @@ export async function listAssets(
      INNER JOIN hrms_branches b ON b.id = a.branch_id
      LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
      LEFT JOIN hrms_departments d ON d.id = a.department_id
-     LEFT JOIN hrms_asset_allocations aloc ON aloc.asset_id = a.id
      WHERE (
        a.asset_name ILIKE $1 OR
        COALESCE(a.asset_code, '') ILIKE $1 OR
@@ -2032,11 +2068,16 @@ export async function listAssets(
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
        COALESCE(d.name, '') ILIKE $1 OR
-       COALESCE(aloc.remarks, '') ILIKE $1 OR
-       COALESCE(aloc.allocation_category_name, '') ILIKE $1 OR
-       COALESCE(aloc.allocation_branch_name, '') ILIKE $1 OR
-       COALESCE(aloc.emp_name, '') ILIKE $1 OR
-       COALESCE(aloc.serial_number, '') ILIKE $1
+       EXISTS (
+         SELECT 1 FROM hrms_asset_allocations alox
+         WHERE alox.asset_id = a.id AND (
+           COALESCE(alox.remarks, '') ILIKE $1 OR
+           COALESCE(alox.allocation_category_name, '') ILIKE $1 OR
+           COALESCE(alox.allocation_branch_name, '') ILIKE $1 OR
+           COALESCE(alox.emp_name, '') ILIKE $1 OR
+           COALESCE(alox.serial_number, '') ILIKE $1
+         )
+       )
      )`,
     [pattern]
   );
@@ -2050,11 +2091,16 @@ export async function listAssets(
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
        COALESCE(d.name, '') ILIKE $1 OR
-       COALESCE(aloc.remarks, '') ILIKE $1 OR
-       COALESCE(aloc.allocation_category_name, '') ILIKE $1 OR
-       COALESCE(aloc.allocation_branch_name, '') ILIKE $1 OR
-       COALESCE(aloc.emp_name, '') ILIKE $1 OR
-       COALESCE(aloc.serial_number, '') ILIKE $1
+       EXISTS (
+         SELECT 1 FROM hrms_asset_allocations alox
+         WHERE alox.asset_id = a.id AND (
+           COALESCE(alox.remarks, '') ILIKE $1 OR
+           COALESCE(alox.allocation_category_name, '') ILIKE $1 OR
+           COALESCE(alox.allocation_branch_name, '') ILIKE $1 OR
+           COALESCE(alox.emp_name, '') ILIKE $1 OR
+           COALESCE(alox.serial_number, '') ILIKE $1
+         )
+       )
      )
      ORDER BY a.created_at DESC, a.id DESC
      LIMIT $2 OFFSET $3`,
@@ -2091,18 +2137,22 @@ export async function listAssetAllocations(
      INNER JOIN hrms_groups g ON g.id = a.group_id
      INNER JOIN hrms_branches b ON b.id = a.branch_id
      LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
-     LEFT JOIN hrms_asset_allocations al ON al.asset_id = a.id
      WHERE (
        a.asset_name ILIKE $1 OR
        COALESCE(a.asset_code, '') ILIKE $1 OR
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(al.remarks, '') ILIKE $1 OR
-       COALESCE(al.allocation_category_name, '') ILIKE $1 OR
-       COALESCE(al.allocation_branch_name, '') ILIKE $1 OR
-       COALESCE(al.emp_name, '') ILIKE $1 OR
-       COALESCE(al.serial_number, '') ILIKE $1
+       EXISTS (
+         SELECT 1 FROM hrms_asset_allocations alx
+         WHERE alx.asset_id = a.id AND (
+           COALESCE(alx.remarks, '') ILIKE $1 OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $1 OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $1 OR
+           COALESCE(alx.emp_name, '') ILIKE $1 OR
+           COALESCE(alx.serial_number, '') ILIKE $1
+         )
+       )
      )`,
     [pattern]
   );
@@ -2115,11 +2165,16 @@ export async function listAssetAllocations(
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(al.remarks, '') ILIKE $1 OR
-       COALESCE(al.allocation_category_name, '') ILIKE $1 OR
-       COALESCE(al.allocation_branch_name, '') ILIKE $1 OR
-       COALESCE(al.emp_name, '') ILIKE $1 OR
-       COALESCE(al.serial_number, '') ILIKE $1
+       EXISTS (
+         SELECT 1 FROM hrms_asset_allocations alx
+         WHERE alx.asset_id = a.id AND (
+           COALESCE(alx.remarks, '') ILIKE $1 OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $1 OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $1 OR
+           COALESCE(alx.emp_name, '') ILIKE $1 OR
+           COALESCE(alx.serial_number, '') ILIKE $1
+         )
+       )
      )
      ORDER BY a.created_at DESC, a.id DESC
      LIMIT $2 OFFSET $3`,
@@ -2162,11 +2217,16 @@ export async function exportAllAssetAllocations(params: {
        g.name ILIKE $1 OR g.code ILIKE $1 OR
        b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
        COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(al.remarks, '') ILIKE $1 OR
-       COALESCE(al.allocation_category_name, '') ILIKE $1 OR
-       COALESCE(al.allocation_branch_name, '') ILIKE $1 OR
-       COALESCE(al.emp_name, '') ILIKE $1 OR
-       COALESCE(al.serial_number, '') ILIKE $1
+       EXISTS (
+         SELECT 1 FROM hrms_asset_allocations alx
+         WHERE alx.asset_id = a.id AND (
+           COALESCE(alx.remarks, '') ILIKE $1 OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $1 OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $1 OR
+           COALESCE(alx.emp_name, '') ILIKE $1 OR
+           COALESCE(alx.serial_number, '') ILIKE $1
+         )
+       )
      )
      ORDER BY a.created_at DESC, a.id DESC
      LIMIT $2`,

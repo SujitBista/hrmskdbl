@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import { AssetAllocationProfileModal } from "@/components/admin/asset-allocation-profile-modal";
 
 export type AssetAllocationListRow = {
   asset_code: string | null;
@@ -166,8 +167,11 @@ function AllocationListSpinner({ className }: { className?: string }) {
 
 export function AssetRegisterAllocationTable({
   refreshKey,
+  onProfileSaved,
 }: {
   refreshKey: number;
+  /** After saving allocation from the profile modal, refresh the grid. */
+  onProfileSaved?: () => void;
 }) {
   const tableId = useId();
   const [searchInput, setSearchInput] = useState("");
@@ -180,6 +184,7 @@ export function AssetRegisterAllocationTable({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ListResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [profileAssetId, setProfileAssetId] = useState<number | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -370,6 +375,13 @@ export function AssetRegisterAllocationTable({
   const colCount = 2 + DATA_COLUMNS.length;
 
   return (
+    <>
+    <AssetAllocationProfileModal
+      assetId={profileAssetId}
+      open={profileAssetId != null}
+      onClose={() => setProfileAssetId(null)}
+      onProfileSaved={onProfileSaved}
+    />
     <section
       className="rounded-lg border border-slate-200 bg-white shadow-sm"
       aria-busy={loading}
@@ -558,7 +570,17 @@ export function AssetRegisterAllocationTable({
                         }`}
                         title={cellDisplay(row, c)}
                       >
-                        {cellDisplay(row, c)}
+                        {c.key === "asset_name" ? (
+                          <button
+                            type="button"
+                            className="max-w-full truncate text-left text-blue-700 underline decoration-blue-400/80 underline-offset-2 hover:text-blue-900"
+                            onClick={() => setProfileAssetId(row.asset_id)}
+                          >
+                            {cellDisplay(row, c)}
+                          </button>
+                        ) : (
+                          cellDisplay(row, c)
+                        )}
                       </td>
                     ))}
                   </tr>
@@ -597,5 +619,6 @@ export function AssetRegisterAllocationTable({
         </div>
       ) : null}
     </section>
+    </>
   );
 }

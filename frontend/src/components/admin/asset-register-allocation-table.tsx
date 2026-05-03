@@ -94,6 +94,8 @@ const DATA_COLUMNS: ColDef[] = [
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 const SEARCH_DEBOUNCE_MS = 350;
+/** Client-side guard so a stuck export does not hang the tab indefinitely. */
+const EXPORT_FETCH_TIMEOUT_MS = 180_000;
 
 const toolbarBtn =
   "inline-flex h-9 items-center justify-center rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50";
@@ -174,6 +176,8 @@ export function AssetRegisterAllocationTable({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ListResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
@@ -286,40 +290,83 @@ export function AssetRegisterAllocationTable({
     setPage(1);
   }
 
-  function exportCsv(): void {
-    const exportRows =
-      selectedIds.size > 0 ? rows.filter((r) => selectedIds.has(r.asset_id)) : rows;
-    if (exportRows.length === 0) return;
-
-    const headers = [
-      "#",
-      ...DATA_COLUMNS.map((c) => c.label),
-    ];
-    const lines = [headers.map(csvEscape).join(",")];
-    let baseIndex = (data?.page ?? 1) - 1;
-    baseIndex *= data?.pageSize ?? pageSize;
-    exportRows.forEach((row, i) => {
-      const rowNo =
+  const exportCsv = useCallback(async () => {
+    setExporting(true);
+    setError(null);
+    setExportNotice(null);
+    const ctrl = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      ctrl.abort();
+    }, EXPORT_FETCH_TIMEOUT_MS);
+    try {
+      const params = new URLSearchParams();
+      if (debouncedSearch) {
+        params.set("q", debouncedSearch);
+      }
+      const qs = params.toString();
+      const res = await fetch(
+        `/api/admin/assets/allocations/export${qs ? `?${qs}` : ""}`,
+        { signal: ctrl.signal }
+      );
+      const json = (await res.json()) as ListResponse & {
+        truncated?: boolean;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(json.error ?? "Could not export allocation list.");
+        return;
+      }
+      const allRows = (json.rows ?? []) as AssetAllocationListRow[];
+      const exportRows =
         selectedIds.size > 0
-          ? String(i + 1)
-          : String(baseIndex + rows.indexOf(row) + 1);
-      const cells = [
-        rowNo,
-        ...DATA_COLUMNS.map((c) => csvEscape(cellDisplay(row, c))),
-      ];
-      lines.push(cells.join(","));
-    });
+          ? allRows.filter((r) => selectedIds.has(r.asset_id))
+          : allRows;
+      if (exportRows.length === 0) {
+        return;
+      }
 
-    const blob = new Blob(["\ufeff" + lines.join("\n")], {
-      type: "text/csv;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `asset-allocation-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+      if (json.truncated) {
+        setExportNotice(
+          "Export includes the first 100,000 matching rows only. Narrow your search if you need a smaller set."
+        );
+      }
+
+      const headers = [
+        "#",
+        ...DATA_COLUMNS.map((c) => c.label),
+      ];
+      const lines = [headers.map(csvEscape).join(",")];
+      exportRows.forEach((row, i) => {
+        const cells = [
+          String(i + 1),
+          ...DATA_COLUMNS.map((c) => csvEscape(cellDisplay(row, c))),
+        ];
+        lines.push(cells.join(","));
+      });
+
+      const blob = new Blob(["\ufeff" + lines.join("\n")], {
+        type: "text/csv;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `asset-allocation-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      const name = e instanceof Error ? e.name : "";
+      if (name === "AbortError") {
+        setError(
+          `Export timed out after ${Math.round(EXPORT_FETCH_TIMEOUT_MS / 60_000)} minutes. Try filtering to fewer assets and export again.`
+        );
+        return;
+      }
+      setError("Could not export allocation list.");
+    } finally {
+      window.clearTimeout(timeoutId);
+      setExporting(false);
+    }
+  }, [debouncedSearch, selectedIds]);
 
   const colCount = 2 + DATA_COLUMNS.length;
 
@@ -329,15 +376,31 @@ export function AssetRegisterAllocationTable({
         <h2 className="text-lg font-semibold text-slate-900">Asset Allocation</h2>
         <p className="mt-0.5 text-sm text-slate-600">
           Populated automatically when assets are registered or imported. Use
-          Export to download the current view. Depreciation columns reflect
-          each asset&apos;s latest posted run only.
+          Export to download every row that matches the current search (all
+          assets when the search box is empty). With rows checked, Export
+          includes only those assets from the full list. Depreciation columns
+          reflect each asset&apos;s latest posted run only. Export uses one
+          server request so it finishes faster than paging the table.
         </p>
+        {exportNotice ? (
+          <p
+            className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+            role="status"
+          >
+            {exportNotice}
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-3 border-b border-slate-200 bg-white px-4 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className={toolbarBtn} onClick={exportCsv}>
-            Export
+          <button
+            type="button"
+            className={toolbarBtn}
+            disabled={exporting}
+            onClick={() => void exportCsv()}
+          >
+            {exporting ? "Exporting…" : "Export"}
           </button>
           <button
             type="button"

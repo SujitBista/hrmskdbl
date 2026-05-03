@@ -1353,7 +1353,6 @@ export type AssetListRow = {
 };
 
 export type AssetAllocationListRow = {
-  remarks: string;
   asset_code: string | null;
   asset_id: number;
   asset_name: string;
@@ -1365,9 +1364,7 @@ export type AssetAllocationListRow = {
   own_type: string;
   working_status: string;
   branch_name: string;
-  allocation_category_name: string;
   allocation_branch_name: string;
-  emp_name: string;
   book_qty: string | null;
   /** Same basis as depreciation run detail `depreciation_cost_basis`. */
   purchase_with_additional_amount: string | null;
@@ -1375,12 +1372,10 @@ export type AssetAllocationListRow = {
   book_value: string | null;
   group_name: string;
   dep_amount: string | null;
-  disposal_dep_amt: string | null;
   this_year_dep: string | null;
   /** Same as depreciation UI: cost basis minus closing WDV (not accumulate_dep + dep_amount). */
   total_dep_amount: string | null;
   closing_book_value: string | null;
-  serial_number: string | null;
   /** Latest posted depreciation detail row per asset (matches run detail screen for that posting). */
   dep_fiscal_year: string | null;
   dep_rate: string | null;
@@ -1463,7 +1458,6 @@ const ASSET_LIST_SELECT = `
 
 const ASSET_ALLOCATION_LIST_SELECT = `
   SELECT
-    COALESCE(al.remarks, '') AS remarks,
     a.asset_code,
     a.id AS asset_id,
     a.asset_name,
@@ -1475,12 +1469,10 @@ const ASSET_ALLOCATION_LIST_SELECT = `
     a.ownership_type AS own_type,
     a.working_status,
     b.branch_name,
-    COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
     COALESCE(
       NULLIF(TRIM(al.allocation_branch_name), ''),
       LEFT(TRIM(b.branch_name), 255)
     ) AS allocation_branch_name,
-    COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
     a.purchase_qty::text AS book_qty,
     (CASE
       WHEN COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0) > 0
@@ -1495,7 +1487,6 @@ const ASSET_ALLOCATION_LIST_SELECT = `
     COALESCE(ld.book_value::text, a.book_value::text) AS book_value,
     g.name AS group_name,
     ld.dep_amount::text AS dep_amount,
-    NULL::text AS disposal_dep_amt,
     ld.dep_amount::text AS this_year_dep,
     CASE
       WHEN ld.balance_amount IS NULL THEN NULL
@@ -1512,7 +1503,6 @@ const ASSET_ALLOCATION_LIST_SELECT = `
       )::text
     END AS total_dep_amount,
     ld.balance_amount::text AS closing_book_value,
-    al.serial_number,
     ld.fiscal_year::text AS dep_fiscal_year,
     ld.dep_rate::text AS dep_rate,
     ld.dep_days::text AS dep_days

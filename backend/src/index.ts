@@ -25,6 +25,7 @@ import {
   createAsset,
   deleteAsset,
   importAssetsFromRows,
+  exportAllAssetAllocations,
   listAssetAllocations,
   listAssets,
   parseCreateAssetPayload,
@@ -1017,6 +1018,29 @@ app.get("/api/admin/assets", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not list assets." });
+  }
+});
+
+app.get("/api/admin/assets/allocations/export", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const result = await exportAllAssetAllocations({ search });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not export asset allocations." });
   }
 });
 

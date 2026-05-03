@@ -1413,6 +1413,15 @@ export type ListAssetAllocationsResult = {
   pageSize: number;
 };
 
+/** Hard cap for one-shot CSV export (avoids unbounded memory on the server). */
+const ALLOCATION_EXPORT_MAX_ROWS = 100_000;
+
+export type ExportAssetAllocationsResult = {
+  rows: AssetAllocationListRow[];
+  /** True when at least one more row existed beyond {@link ALLOCATION_EXPORT_MAX_ROWS}. */
+  truncated: boolean;
+};
+
 const ASSET_LIST_SELECT = `
   SELECT a.id,
     a.group_id,
@@ -1660,4 +1669,55 @@ export async function listAssetAllocations(
     [pattern, pageSize, offset]
   );
   return { rows: list.rows, total, page, pageSize };
+}
+
+/**
+ * Full allocation grid for export: one query, same filters as {@link listAssetAllocations},
+ * ordered like the UI. Rows beyond {@link ALLOCATION_EXPORT_MAX_ROWS} are omitted and
+ * `truncated` is set.
+ */
+export async function exportAllAssetAllocations(params: {
+  search?: string;
+}): Promise<ExportAssetAllocationsResult> {
+  const search = params.search?.trim() ?? "";
+  const cap = ALLOCATION_EXPORT_MAX_ROWS + 1;
+
+  if (search === "") {
+    const list = await query<AssetAllocationListRow>(
+      `${ASSET_ALLOCATION_LIST_SELECT}
+       ORDER BY a.created_at DESC, a.id DESC
+       LIMIT $1`,
+      [cap]
+    );
+    const truncated = list.rows.length > ALLOCATION_EXPORT_MAX_ROWS;
+    const rows = truncated
+      ? list.rows.slice(0, ALLOCATION_EXPORT_MAX_ROWS)
+      : list.rows;
+    return { rows, truncated };
+  }
+
+  const pattern = `%${search}%`;
+  const list = await query<AssetAllocationListRow>(
+    `${ASSET_ALLOCATION_LIST_SELECT}
+     WHERE (
+       a.asset_name ILIKE $1 OR
+       COALESCE(a.asset_code, '') ILIKE $1 OR
+       g.name ILIKE $1 OR g.code ILIKE $1 OR
+       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
+       COALESCE(sg.name, '') ILIKE $1 OR
+       COALESCE(al.remarks, '') ILIKE $1 OR
+       COALESCE(al.allocation_category_name, '') ILIKE $1 OR
+       COALESCE(al.allocation_branch_name, '') ILIKE $1 OR
+       COALESCE(al.emp_name, '') ILIKE $1 OR
+       COALESCE(al.serial_number, '') ILIKE $1
+     )
+     ORDER BY a.created_at DESC, a.id DESC
+     LIMIT $2`,
+    [pattern, cap]
+  );
+  const truncated = list.rows.length > ALLOCATION_EXPORT_MAX_ROWS;
+  const rows = truncated
+    ? list.rows.slice(0, ALLOCATION_EXPORT_MAX_ROWS)
+    : list.rows;
+  return { rows, truncated };
 }

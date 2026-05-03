@@ -34,12 +34,12 @@ type ProfilePayload = {
     allocation_date_bs: string;
   };
   history: Array<{
-    allocation_id: number;
+    allocation_id: number | null;
     purchase_date_bs: string;
     allocation_date_display: string;
     fiscal_year: string | null;
     allocation_type: string;
-    old_asset_code: string | null;
+    old_asset_code: string;
     asset_user: string | null;
     responsible_unit_name: string | null;
     branch_name: string;
@@ -661,11 +661,13 @@ export function AssetAllocationProfileModal({
                     <tbody>
                       {(data?.history ?? []).map((h) => (
                         <tr
-                          key={h.allocation_id}
+                          key={`${p.asset_id}-${h.allocation_id ?? "none"}`}
                           className="border-b border-slate-100 odd:bg-white even:bg-slate-50/70"
                         >
                           <td className="border-r border-slate-100 px-2 py-2 tabular-nums">
-                            {h.allocation_id}
+                            {h.allocation_id != null
+                              ? h.allocation_id
+                              : "—"}
                           </td>
                           <td className="border-r border-slate-100 px-2 py-2 whitespace-nowrap">
                             {displayText(h.purchase_date_bs)}
@@ -700,9 +702,8 @@ export function AssetAllocationProfileModal({
                   </table>
                 </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  History shows the current register allocation. Full dated
-                  allocation history will appear here when the ledger supports
-                  multiple allocation rows per asset.
+                  Rows are listed newest first. Each Transfer or Return appends a
+                  row; older rows stay for audit history.
                 </p>
               </section>
             </>

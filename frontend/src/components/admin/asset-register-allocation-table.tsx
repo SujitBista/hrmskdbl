@@ -11,7 +11,6 @@ import {
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 
 export type AssetAllocationListRow = {
-  remarks: string;
   asset_code: string | null;
   asset_id: number;
   asset_name: string;
@@ -23,20 +22,16 @@ export type AssetAllocationListRow = {
   own_type: string;
   working_status: string;
   branch_name: string;
-  allocation_category_name: string;
   allocation_branch_name: string;
-  emp_name: string;
   book_qty: string | null;
   purchase_with_additional_amount: string | null;
   accumulate_dep: string | null;
   book_value: string | null;
   group_name: string;
   dep_amount: string | null;
-  disposal_dep_amt: string | null;
   this_year_dep: string | null;
   total_dep_amount: string | null;
   closing_book_value: string | null;
-  serial_number: string | null;
   dep_fiscal_year: string | null;
   dep_rate: string | null;
   dep_days: string | null;
@@ -57,7 +52,6 @@ type ColDef = {
 };
 
 const DATA_COLUMNS: ColDef[] = [
-  { key: "remarks", label: "Remarks", format: "text" },
   { key: "asset_code", label: "AssetCode", format: "assetCode" },
   { key: "asset_id", label: "AssetID", format: "id" },
   { key: "asset_name", label: "AssetName", format: "text" },
@@ -69,9 +63,7 @@ const DATA_COLUMNS: ColDef[] = [
   { key: "own_type", label: "OwnType", format: "text" },
   { key: "working_status", label: "WorkingStatus", format: "text" },
   { key: "branch_name", label: "BranchName", format: "text" },
-  { key: "allocation_category_name", label: "AllocationCategory", format: "text" },
   { key: "allocation_branch_name", label: "AllocationBranch", format: "text" },
-  { key: "emp_name", label: "EmpName", format: "text" },
   { key: "book_qty", label: "BookQty", format: "qty" },
   {
     key: "purchase_with_additional_amount",
@@ -82,14 +74,12 @@ const DATA_COLUMNS: ColDef[] = [
   { key: "book_value", label: "BookValue", format: "money" },
   { key: "group_name", label: "GroupName", format: "text" },
   { key: "dep_amount", label: "DepAmount", format: "money" },
-  { key: "disposal_dep_amt", label: "DisposalDepAmt", format: "money" },
   { key: "this_year_dep", label: "ThisYearDep", format: "money" },
   { key: "total_dep_amount", label: "TotalDepAmount", format: "money" },
   { key: "closing_book_value", label: "ClosingBookValue", format: "money" },
   { key: "dep_fiscal_year", label: "DepFiscalYear", format: "text" },
   { key: "dep_rate", label: "DepRate", format: "depRate" },
   { key: "dep_days", label: "DepDays", format: "text" },
-  { key: "serial_number", label: "SerialNumber", format: "text" },
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
@@ -163,6 +153,15 @@ function csvEscape(value: string): string {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
+}
+
+function AllocationListSpinner({ className }: { className?: string }) {
+  return (
+    <span
+      className={`inline-block shrink-0 animate-spin rounded-full border-2 border-blue-600 border-t-transparent ${className ?? "h-5 w-5"}`}
+      aria-hidden
+    />
+  );
 }
 
 export function AssetRegisterAllocationTable({
@@ -371,7 +370,10 @@ export function AssetRegisterAllocationTable({
   const colCount = 2 + DATA_COLUMNS.length;
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+    <section
+      className="rounded-lg border border-slate-200 bg-white shadow-sm"
+      aria-busy={loading}
+    >
       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
         <h2 className="text-lg font-semibold text-slate-900">Asset Allocation</h2>
         <p className="mt-0.5 text-sm text-slate-600">
@@ -397,7 +399,7 @@ export function AssetRegisterAllocationTable({
           <button
             type="button"
             className={toolbarBtn}
-            disabled={exporting}
+            disabled={loading || exporting}
             onClick={() => void exportCsv()}
           >
             {exporting ? "Exporting…" : "Export"}
@@ -435,7 +437,8 @@ export function AssetRegisterAllocationTable({
               setPageSize(Number(e.target.value));
               setPage(1);
             }}
-            className="h-9 shrink-0 rounded border border-slate-300 bg-white px-2 text-sm text-slate-800"
+            disabled={loading}
+            className="h-9 shrink-0 rounded border border-slate-300 bg-white px-2 text-sm text-slate-800 disabled:cursor-wait disabled:opacity-70"
           >
             {PAGE_SIZE_OPTIONS.map((n) => (
               <option key={n} value={n}>
@@ -445,6 +448,22 @@ export function AssetRegisterAllocationTable({
           </select>
         </div>
       </div>
+
+      {loading ? (
+        <div
+          className="flex items-center gap-3 border-b border-blue-200 bg-blue-50/95 px-4 py-3 text-sm text-blue-950 sm:px-5"
+          role="status"
+          aria-live="polite"
+        >
+          <AllocationListSpinner className="h-6 w-6 border-[3px] border-blue-700" />
+          <div className="min-w-0">
+            <p className="font-medium text-blue-950">Loading allocation list…</p>
+            <p className="mt-0.5 text-xs text-blue-900/80">
+              Large registers can take a few seconds. Please wait.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <p className="px-4 py-3 text-sm text-red-600 sm:px-5" role="alert">
@@ -487,11 +506,19 @@ export function AssetRegisterAllocationTable({
           <tbody>
             {loading ? (
               <tr>
-                <td
-                  colSpan={colCount}
-                  className="px-4 py-10 text-center text-slate-500"
-                >
-                  Loading…
+                <td colSpan={colCount} className="px-4 py-14">
+                  <div className="flex flex-col items-center justify-center gap-4 text-slate-600">
+                    <AllocationListSpinner className="h-10 w-10 border-[3px]" />
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-slate-800">
+                        Loading rows…
+                      </p>
+                      <p className="mt-1 max-w-md text-xs text-slate-500">
+                        Depreciation joins are included; the first load may take
+                        longer than paging.
+                      </p>
+                    </div>
+                  </div>
                 </td>
               </tr>
             ) : rows.length === 0 ? (

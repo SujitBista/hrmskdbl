@@ -230,6 +230,11 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS hrms_depreciation_run_details_run_id
     ON hrms_depreciation_run_details (depreciation_run_id);
   `);
+  /** Speeds allocation list + any “latest detail per asset” lateral (filter by asset_id, order by run id). */
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_depreciation_run_details_asset_id_run_id_desc
+    ON hrms_depreciation_run_details (asset_id, depreciation_run_id DESC, id DESC);
+  `);
 
   await query(`
     ALTER TABLE hrms_depreciation_runs

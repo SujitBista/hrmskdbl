@@ -50,17 +50,6 @@ type ProfilePayload = {
 type BranchOption = { id: number; branch_code: string; branch_name: string };
 type DepartmentOption = { id: number; name: string };
 
-const stubTabs = [
-  "Basic Info",
-  "Booking",
-  "Allocation",
-  "Depreciation",
-  "Maintenance",
-  "Renewals",
-  "Insurance",
-  "Others",
-] as const;
-
 const fieldLabel =
   "mb-1 block text-xs font-medium uppercase tracking-wide text-slate-600";
 const inputClass =
@@ -437,29 +426,11 @@ export function AssetAllocationProfileModal({
                 </div>
               </section>
 
-              <nav
-                className="mt-5 flex flex-wrap gap-1 border-b border-slate-200 pb-px"
-                aria-label="Asset sections"
-              >
-                {stubTabs.map((label) => {
-                  const isAlloc = label === "Allocation";
-                  return (
-                    <button
-                      key={label}
-                      type="button"
-                      disabled={!isAlloc}
-                      className={
-                        isAlloc
-                          ? "border-b-2 border-blue-600 px-3 py-2 text-sm font-medium text-blue-800"
-                          : "cursor-not-allowed px-3 py-2 text-sm text-slate-400"
-                      }
-                    >
-                      {label}
-                      {label === "Others" ? " ▾" : ""}
-                    </button>
-                  );
-                })}
-              </nav>
+              <div className="mt-5 border-b border-slate-200 pb-px">
+                <span className="inline-block border-b-2 border-blue-600 px-1 pb-2 text-sm font-medium text-blue-800">
+                  Allocation
+                </span>
+              </div>
 
               <section className="mt-4" aria-label="Allocation history">
                 <div className="mb-3 flex flex-wrap gap-2">

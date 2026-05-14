@@ -318,6 +318,45 @@ export type CreateDepreciationRunInput = {
   calculationDateBs?: string | null;
 };
 
+async function loadCarryForwardPriorAccumulatedMap(
+  client: PoolClient,
+  fiscalYearStart: number,
+  branchId: number | null
+): Promise<Map<number, number>> {
+  const fy = Math.floor(fiscalYearStart);
+  const priorFy = fy - 1;
+  if (!Number.isFinite(priorFy) || priorFy < 2000) {
+    return new Map();
+  }
+  const runResult = await client.query<{ id: number }>(
+    `SELECT r.id FROM hrms_depreciation_runs r
+     WHERE r.fiscal_year_start = $1
+       AND COALESCE(r.branch_id, -1) = COALESCE($2::integer, -1)
+       AND r.is_final_for_fy = true
+       AND r.status = 'posted'
+     ORDER BY r.id DESC
+     LIMIT 1`,
+    [priorFy, branchId]
+  );
+  const runId = runResult.rows[0]?.id;
+  if (!runId) {
+    return new Map();
+  }
+  const dets = await client.query<{ asset_id: number; prior: string }>(
+    `SELECT asset_id, (accumulate_dep + dep_amount)::text AS prior
+     FROM hrms_depreciation_run_details
+     WHERE depreciation_run_id = $1`,
+    [runId]
+  );
+  const m = new Map<number, number>();
+  for (const row of dets.rows) {
+    const n = Number.parseFloat(row.prior);
+    if (!Number.isFinite(n) || n < 0) continue;
+    m.set(row.asset_id, n);
+  }
+  return m;
+}
+
 async function insertDepreciationDetailRows(
   client: PoolClient,
   args: {
@@ -328,6 +367,7 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode: DepreciationScopeMode;
     calculationMode: DepreciationCalculationMode;
     assets: AssetDepRow[];
+    carryForwardByAssetId?: ReadonlyMap<number, number> | null;
   }
 ): Promise<{ detailsInserted: number; skippedAssets: DepreciationSkippedAsset[] }> {
   const {
@@ -338,6 +378,7 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode,
     calculationMode,
     assets,
+    carryForwardByAssetId,
   } = args;
 
   const skippedAssets: DepreciationSkippedAsset[] = [];
@@ -388,6 +429,7 @@ async function insertDepreciationDetailRows(
       continue;
     }
 
+    const carryPrior = carryForwardByAssetId?.get(a.id);
     const computed = computeAssetQuarterCumulative({
       purchaseAmount,
       depreciationStartBs,
@@ -399,7 +441,10 @@ async function insertDepreciationDetailRows(
       depreciationScopeMode,
       asOfDateBs:
         depreciationScopeMode === "AS_OF_DATE" ? calculationDateBs : null,
-      registerPriorAccumulatedDep: registerPriorAccum,
+      registerPriorAccumulatedDep:
+        carryPrior !== undefined ? undefined : registerPriorAccum,
+      carryForwardPriorAccumulatedDep:
+        carryPrior !== undefined ? carryPrior : null,
     });
 
     if (!computed.ok) {
@@ -581,6 +626,12 @@ export async function createDepreciationRun(
       [fy, branchId]
     );
 
+    const carryForwardByAssetId = await loadCarryForwardPriorAccumulatedMap(
+      client,
+      fy,
+      branchId
+    );
+
     /**
      * Replacement policy (see also partial unique indexes on `hrms_depreciation_runs`):
      * - FY_END: keep a single “full quarter / FY” sheet per fiscal year + branch by deleting
@@ -647,6 +698,7 @@ export async function createDepreciationRun(
         depreciationScopeMode,
         calculationMode,
         assets,
+        carryForwardByAssetId,
       }
     );
 
@@ -754,6 +806,12 @@ export async function refreshDepreciationRunDetailsFromAssets(
       [fy, branchId]
     );
 
+    const carryForwardByAssetId = await loadCarryForwardPriorAccumulatedMap(
+      client,
+      fy,
+      branchId
+    );
+
     if (
       options?.advanceCalculationDateToTodayBs === true &&
       depreciationScopeMode === "AS_OF_DATE"
@@ -835,6 +893,7 @@ export async function refreshDepreciationRunDetailsFromAssets(
         depreciationScopeMode,
         calculationMode,
         assets,
+        carryForwardByAssetId,
       }
     );
 

@@ -46,6 +46,7 @@ import {
   voidDepreciationRun,
   type DepreciationRunActor,
 } from "./services/depreciationRuns.js";
+import { performDepreciationFiscalYearRollover } from "./services/depreciationFyRollover.js";
 import {
   createGroup,
   deleteGroup,
@@ -70,6 +71,11 @@ import {
   normalizePermissions,
   updateUser,
 } from "./services/users.js";
+import {
+  bsDateFromJsDate,
+  fiscalYearStartFromBsDate,
+  normalizeBsDateEnglish,
+} from "@hrmskdbl/depreciation-core";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -678,6 +684,80 @@ app.post("/api/admin/depreciation-runs/ensure-current", async (req, res) => {
   }
 });
 
+app.post("/api/admin/depreciation-fy-rollover", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const body =
+      req.body && typeof req.body === "object"
+        ? (req.body as Record<string, unknown>)
+        : {};
+    let newFiscalYearStart: number | undefined;
+    const rawFy = body.newFiscalYearStart;
+    if (typeof rawFy === "number" && Number.isFinite(rawFy)) {
+      newFiscalYearStart = Math.floor(rawFy);
+    } else if (typeof rawFy === "string" && rawFy.trim() !== "") {
+      newFiscalYearStart = Number.parseInt(rawFy.trim(), 10);
+    }
+    if (
+      newFiscalYearStart === undefined ||
+      !Number.isFinite(newFiscalYearStart) ||
+      newFiscalYearStart < 2001
+    ) {
+      const calcBs = normalizeBsDateEnglish(
+        bsDateFromJsDate(new Date()).trim()
+      );
+      if (!calcBs) {
+        res.status(400).json({ error: "Could not derive current fiscal year." });
+        return;
+      }
+      const fy = fiscalYearStartFromBsDate(calcBs);
+      if (fy === null) {
+        res.status(400).json({ error: "Could not derive current fiscal year." });
+        return;
+      }
+      newFiscalYearStart = fy;
+    }
+    let branchId: number | null | undefined;
+    const rawBr = body.branchId;
+    if (rawBr === null || rawBr === undefined || rawBr === "") {
+      branchId = null;
+    } else if (typeof rawBr === "number" && Number.isFinite(rawBr)) {
+      branchId = Math.floor(rawBr);
+    } else if (typeof rawBr === "string" && rawBr.trim() !== "") {
+      branchId = Number.parseInt(rawBr.trim(), 10);
+    }
+    const resolvedBranchId =
+      branchId !== undefined &&
+      branchId !== null &&
+      Number.isFinite(branchId) &&
+      branchId >= 1
+        ? branchId
+        : null;
+    const result = await performDepreciationFiscalYearRollover({
+      newFiscalYearStart: newFiscalYearStart,
+      branchId: resolvedBranchId,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not run fiscal year rollover." });
+  }
+});
+
 app.get("/api/admin/depreciation-runs", async (req, res) => {
   const token = getBearerToken(req);
   if (!token) {
@@ -1038,7 +1118,18 @@ app.get("/api/admin/assets/allocations/export", async (req, res) => {
   try {
     const qRaw = req.query.q;
     const search = typeof qRaw === "string" ? qRaw : "";
-    const result = await exportAllAssetAllocations({ search });
+    const fyRaw = req.query.fiscalYearStart;
+    let depreciationFiscalYearStart: number | null | undefined;
+    if (typeof fyRaw === "string" && fyRaw.trim() !== "") {
+      const n = Number.parseInt(fyRaw.trim(), 10);
+      if (Number.isFinite(n) && n >= 2000) {
+        depreciationFiscalYearStart = n;
+      }
+    }
+    const result = await exportAllAssetAllocations({
+      search,
+      depreciationFiscalYearStart,
+    });
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -1070,7 +1161,20 @@ app.get("/api/admin/assets/allocations", async (req, res) => {
         ? Number.parseInt(pageSizeRaw, 10)
         : NaN;
     const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
-    const result = await listAssetAllocations({ search, page: p, pageSize: ps });
+    const fyRaw = req.query.fiscalYearStart;
+    let depreciationFiscalYearStart: number | null | undefined;
+    if (typeof fyRaw === "string" && fyRaw.trim() !== "") {
+      const n = Number.parseInt(fyRaw.trim(), 10);
+      if (Number.isFinite(n) && n >= 2000) {
+        depreciationFiscalYearStart = n;
+      }
+    }
+    const result = await listAssetAllocations({
+      search,
+      page: p,
+      pageSize: ps,
+      depreciationFiscalYearStart,
+    });
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -1097,7 +1201,17 @@ app.get("/api/admin/assets/:id/allocation-profile", async (req, res) => {
     return;
   }
   try {
-    const profile = await getAssetAllocationProfile(id);
+    const fyRaw = req.query.fiscalYearStart;
+    let depreciationFiscalYearStart: number | null | undefined;
+    if (typeof fyRaw === "string" && fyRaw.trim() !== "") {
+      const n = Number.parseInt(fyRaw.trim(), 10);
+      if (Number.isFinite(n) && n >= 2000) {
+        depreciationFiscalYearStart = n;
+      }
+    }
+    const profile = await getAssetAllocationProfile(id, {
+      depreciationFiscalYearStart,
+    });
     if (!profile) {
       res.status(404).json({ error: "Asset not found." });
       return;

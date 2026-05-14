@@ -403,6 +403,20 @@ async function migrate() {
       SELECT 1 FROM hrms_asset_allocations x WHERE x.asset_id = a.id
     );
   `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_depreciation_fy_rollovers (
+      id SERIAL PRIMARY KEY,
+      prior_fiscal_year_start INTEGER NOT NULL,
+      new_fiscal_year_start INTEGER NOT NULL,
+      branch_id INTEGER REFERENCES hrms_branches(id) ON DELETE SET NULL,
+      source_final_run_id INTEGER NOT NULL REFERENCES hrms_depreciation_runs(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS hrms_depreciation_fy_rollovers_new_fy_branch
+    ON hrms_depreciation_fy_rollovers (new_fiscal_year_start, (COALESCE(branch_id, -1)));
+  `);
 
   console.log("Migration complete.");
 }

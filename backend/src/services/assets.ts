@@ -1,10 +1,17 @@
 import { pool, query } from "../db.js";
 import {
+  fiscalYearStartFromBsDate,
+  normalizeBsDateEnglish,
+} from "@hrmskdbl/depreciation-core";
+import {
   clampListParams,
   indexGroupsForExcelImport,
   resolveGroupLabelForExcelImport,
 } from "./groups.js";
-import { refreshMutableDepreciationRunsForAsset } from "./depreciationRuns.js";
+import {
+  getServerTodayBsEnglish,
+  refreshMutableDepreciationRunsForAsset,
+} from "./depreciationRuns.js";
 import type pg from "pg";
 
 const ASSET_CODE_PREFIX = "SKDBL";
@@ -1465,6 +1472,11 @@ export type ListAssetAllocationsParams = {
   search?: string;
   page: number;
   pageSize: number;
+  /**
+   * When set, depreciation columns come from the latest posted run for that fiscal year.
+   * When omitted, the server’s current BS fiscal year is used (see {@link resolveDepreciationFiscalYearStartForQueries}).
+   */
+  depreciationFiscalYearStart?: number | null;
 };
 
 export type ListAssetAllocationsResult = {
@@ -1578,7 +1590,16 @@ function resolveDepMethodForProfile(
   return g !== "" ? g : null;
 }
 
-const ASSET_ALLOCATION_PROFILE_SELECT = `
+function assetAllocationProfileSelectSql(
+  fiscalYearStart: number | null,
+  fiscalYearParamIndex: number | null,
+  assetIdParamIndex: number
+): string {
+  const fyClause =
+    fiscalYearStart === null || fiscalYearParamIndex === null
+      ? ""
+      : `AND r.fiscal_year_start = $${fiscalYearParamIndex}`;
+  return `
   SELECT
     a.id AS asset_id,
     a.asset_code,
@@ -1626,14 +1647,26 @@ const ASSET_ALLOCATION_PROFILE_SELECT = `
     SELECT
       d2.fiscal_year
     FROM hrms_depreciation_run_details d2
+    INNER JOIN hrms_depreciation_runs r ON r.id = d2.depreciation_run_id
     WHERE d2.asset_id = a.id
-    ORDER BY d2.depreciation_run_id DESC, d2.id DESC
+      AND r.status = 'posted'
+      ${fyClause}
+    ORDER BY r.id DESC, d2.id DESC
     LIMIT 1
   ) ld ON true
-  WHERE a.id = $1
+  WHERE a.id = $${assetIdParamIndex}
 `;
+}
 
-const ASSET_ALLOCATION_HISTORY_SELECT = `
+function assetAllocationHistorySelectSql(
+  fiscalYearStart: number | null,
+  fiscalYearParamIndex: number | null
+): string {
+  const fyClause =
+    fiscalYearStart === null || fiscalYearParamIndex === null
+      ? ""
+      : `AND r.fiscal_year_start = $${fiscalYearParamIndex}`;
+  return `
   SELECT
     al.id AS allocation_row_id,
     a.id AS asset_id,
@@ -1647,8 +1680,11 @@ const ASSET_ALLOCATION_HISTORY_SELECT = `
     d.name AS department_name,
     b.branch_name AS register_branch_name,
     (SELECT d2.fiscal_year::text FROM hrms_depreciation_run_details d2
+     INNER JOIN hrms_depreciation_runs r ON r.id = d2.depreciation_run_id
      WHERE d2.asset_id = a.id
-     ORDER BY d2.depreciation_run_id DESC, d2.id DESC
+       AND r.status = 'posted'
+       ${fyClause}
+     ORDER BY r.id DESC, d2.id DESC
      LIMIT 1) AS dep_fiscal_year
   FROM hrms_asset_allocations al
   INNER JOIN hrms_assets a ON a.id = al.asset_id
@@ -1657,6 +1693,7 @@ const ASSET_ALLOCATION_HISTORY_SELECT = `
   WHERE al.asset_id = $1
   ORDER BY al.id DESC
 `;
+}
 
 type AssetAllocationHistoryDbRow = {
   allocation_row_id: number;
@@ -1733,7 +1770,8 @@ async function assertHrmsAssetAllocationsSchema(): Promise<void> {
 }
 
 export async function getAssetAllocationProfile(
-  assetId: number
+  assetId: number,
+  options?: { depreciationFiscalYearStart?: number | null }
 ): Promise<AssetAllocationProfileApiResponse | null> {
   if (!Number.isFinite(assetId) || assetId < 1) {
     return null;
@@ -1741,9 +1779,20 @@ export async function getAssetAllocationProfile(
 
   await assertHrmsAssetAllocationsSchema();
 
+  const fy = resolveDepreciationFiscalYearStartForQueries(
+    options?.depreciationFiscalYearStart
+  );
+  const profileSql = assetAllocationProfileSelectSql(
+    fy,
+    fy != null ? 1 : null,
+    fy != null ? 2 : 1
+  );
+  const historySql = assetAllocationHistorySelectSql(fy, fy != null ? 2 : null);
+  const profileParams = fy != null ? [fy, assetId] : [assetId];
+
   const result = await query<AssetAllocationProfileDbRow>(
-    ASSET_ALLOCATION_PROFILE_SELECT,
-    [assetId]
+    profileSql,
+    profileParams
   );
 
   const row = result.rows[0];
@@ -1778,8 +1827,8 @@ export async function getAssetAllocationProfile(
   };
 
   const histResult = await query<AssetAllocationHistoryDbRow>(
-    ASSET_ALLOCATION_HISTORY_SELECT,
-    [assetId]
+    historySql,
+    fy != null ? [assetId, fy] : [assetId]
   );
   const history = histResult.rows.map(mapAllocationHistoryDbRow);
 
@@ -1954,7 +2003,58 @@ const ASSET_LIST_SELECT = `
   ) aloc ON true
 `;
 
-const ASSET_ALLOCATION_LIST_SELECT = `
+export function resolveDepreciationFiscalYearStartForQueries(
+  explicit?: number | null
+): number | null {
+  if (
+    explicit !== undefined &&
+    explicit !== null &&
+    Number.isFinite(explicit) &&
+    explicit >= 2000
+  ) {
+    return Math.floor(explicit);
+  }
+  const bsRaw = getServerTodayBsEnglish();
+  if (!bsRaw) return null;
+  const bs = normalizeBsDateEnglish(String(bsRaw).trim());
+  if (!bs) return null;
+  return fiscalYearStartFromBsDate(bs);
+}
+
+function buildAssetAllocationDepreciationLateral(
+  fiscalYearStart: number | null,
+  yearParamIndex: number | null
+): string {
+  const fyClause =
+    fiscalYearStart === null || yearParamIndex === null
+      ? ""
+      : `AND r.fiscal_year_start = $${yearParamIndex}`;
+  return `
+  LEFT JOIN LATERAL (
+    SELECT
+      d.dep_amount,
+      d.accumulate_dep,
+      d.balance_amount,
+      d.book_value,
+      d.dep_start_date_bs,
+      d.dep_rate,
+      d.dep_days,
+      d.fiscal_year
+    FROM hrms_depreciation_run_details d
+    INNER JOIN hrms_depreciation_runs r ON r.id = d.depreciation_run_id
+    WHERE d.asset_id = a.id
+      AND r.status = 'posted'
+      ${fyClause}
+    ORDER BY r.id DESC, d.id DESC
+    LIMIT 1
+  ) ld ON true`;
+}
+
+function assetAllocationListSelectSql(
+  fiscalYearStart: number | null,
+  fiscalYearParamIndex: number | null
+): string {
+  return `
   SELECT
     a.asset_code,
     a.id AS asset_id,
@@ -2015,22 +2115,9 @@ const ASSET_ALLOCATION_LIST_SELECT = `
     ORDER BY id DESC
     LIMIT 1
   ) al ON true
-  LEFT JOIN LATERAL (
-    SELECT
-      d.dep_amount,
-      d.accumulate_dep,
-      d.balance_amount,
-      d.book_value,
-      d.dep_start_date_bs,
-      d.dep_rate,
-      d.dep_days,
-      d.fiscal_year
-    FROM hrms_depreciation_run_details d
-    WHERE d.asset_id = a.id
-    ORDER BY d.depreciation_run_id DESC, d.id DESC
-    LIMIT 1
-  ) ld ON true
+  ${buildAssetAllocationDepreciationLateral(fiscalYearStart, fiscalYearParamIndex)}
 `;
+}
 
 export async function listAssets(
   params: ListAssetsParams
@@ -2115,17 +2202,24 @@ export async function listAssetAllocations(
   const { page, pageSize } = clampListParams(params);
   const search = params.search?.trim() ?? "";
   const offset = (page - 1) * pageSize;
+  const fy = resolveDepreciationFiscalYearStartForQueries(
+    params.depreciationFiscalYearStart
+  );
+  const fyParamIdx = fy != null ? 1 : null;
+  const selectSql = assetAllocationListSelectSql(fy, fyParamIdx);
 
   if (search === "") {
     const countResult = await query<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM hrms_assets`
     );
     const total = Number(countResult.rows[0]?.n ?? 0);
+    const listParams =
+      fy != null ? [fy, pageSize, offset] : [pageSize, offset];
     const list = await query<AssetAllocationListRow>(
-      `${ASSET_ALLOCATION_LIST_SELECT}
+      `${selectSql}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT $1 OFFSET $2`,
-      [pageSize, offset]
+       LIMIT $${fy != null ? 2 : 1} OFFSET $${fy != null ? 3 : 2}`,
+      listParams
     );
     return { rows: list.rows, total, page, pageSize };
   }
@@ -2157,28 +2251,30 @@ export async function listAssetAllocations(
     [pattern]
   );
   const total = Number(countResult.rows[0]?.n ?? 0);
+  const listParams =
+    fy != null ? [fy, pattern, pageSize, offset] : [pattern, pageSize, offset];
   const list = await query<AssetAllocationListRow>(
-    `${ASSET_ALLOCATION_LIST_SELECT}
+    `${selectSql}
      WHERE (
-       a.asset_name ILIKE $1 OR
-       COALESCE(a.asset_code, '') ILIKE $1 OR
-       g.name ILIKE $1 OR g.code ILIKE $1 OR
-       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
-       COALESCE(sg.name, '') ILIKE $1 OR
+       a.asset_name ILIKE $${fy != null ? 2 : 1} OR
+       COALESCE(a.asset_code, '') ILIKE $${fy != null ? 2 : 1} OR
+       g.name ILIKE $${fy != null ? 2 : 1} OR g.code ILIKE $${fy != null ? 2 : 1} OR
+       b.branch_name ILIKE $${fy != null ? 2 : 1} OR b.branch_code ILIKE $${fy != null ? 2 : 1} OR
+       COALESCE(sg.name, '') ILIKE $${fy != null ? 2 : 1} OR
        EXISTS (
          SELECT 1 FROM hrms_asset_allocations alx
          WHERE alx.asset_id = a.id AND (
-           COALESCE(alx.remarks, '') ILIKE $1 OR
-           COALESCE(alx.allocation_category_name, '') ILIKE $1 OR
-           COALESCE(alx.allocation_branch_name, '') ILIKE $1 OR
-           COALESCE(alx.emp_name, '') ILIKE $1 OR
-           COALESCE(alx.serial_number, '') ILIKE $1
+           COALESCE(alx.remarks, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.emp_name, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.serial_number, '') ILIKE $${fy != null ? 2 : 1}
          )
        )
      )
      ORDER BY a.created_at DESC, a.id DESC
-     LIMIT $2 OFFSET $3`,
-    [pattern, pageSize, offset]
+     LIMIT $${fy != null ? 3 : 2} OFFSET $${fy != null ? 4 : 3}`,
+    listParams
   );
   return { rows: list.rows, total, page, pageSize };
 }
@@ -2190,16 +2286,23 @@ export async function listAssetAllocations(
  */
 export async function exportAllAssetAllocations(params: {
   search?: string;
+  depreciationFiscalYearStart?: number | null;
 }): Promise<ExportAssetAllocationsResult> {
   const search = params.search?.trim() ?? "";
   const cap = ALLOCATION_EXPORT_MAX_ROWS + 1;
+  const fy = resolveDepreciationFiscalYearStartForQueries(
+    params.depreciationFiscalYearStart
+  );
+  const fyParamIdx = fy != null ? 1 : null;
+  const selectSql = assetAllocationListSelectSql(fy, fyParamIdx);
 
   if (search === "") {
+    const listParams = fy != null ? [fy, cap] : [cap];
     const list = await query<AssetAllocationListRow>(
-      `${ASSET_ALLOCATION_LIST_SELECT}
+      `${selectSql}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT $1`,
-      [cap]
+       LIMIT $${fy != null ? 2 : 1}`,
+      listParams
     );
     const truncated = list.rows.length > ALLOCATION_EXPORT_MAX_ROWS;
     const rows = truncated
@@ -2209,28 +2312,29 @@ export async function exportAllAssetAllocations(params: {
   }
 
   const pattern = `%${search}%`;
+  const listParams = fy != null ? [fy, pattern, cap] : [pattern, cap];
   const list = await query<AssetAllocationListRow>(
-    `${ASSET_ALLOCATION_LIST_SELECT}
+    `${selectSql}
      WHERE (
-       a.asset_name ILIKE $1 OR
-       COALESCE(a.asset_code, '') ILIKE $1 OR
-       g.name ILIKE $1 OR g.code ILIKE $1 OR
-       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
-       COALESCE(sg.name, '') ILIKE $1 OR
+       a.asset_name ILIKE $${fy != null ? 2 : 1} OR
+       COALESCE(a.asset_code, '') ILIKE $${fy != null ? 2 : 1} OR
+       g.name ILIKE $${fy != null ? 2 : 1} OR g.code ILIKE $${fy != null ? 2 : 1} OR
+       b.branch_name ILIKE $${fy != null ? 2 : 1} OR b.branch_code ILIKE $${fy != null ? 2 : 1} OR
+       COALESCE(sg.name, '') ILIKE $${fy != null ? 2 : 1} OR
        EXISTS (
          SELECT 1 FROM hrms_asset_allocations alx
          WHERE alx.asset_id = a.id AND (
-           COALESCE(alx.remarks, '') ILIKE $1 OR
-           COALESCE(alx.allocation_category_name, '') ILIKE $1 OR
-           COALESCE(alx.allocation_branch_name, '') ILIKE $1 OR
-           COALESCE(alx.emp_name, '') ILIKE $1 OR
-           COALESCE(alx.serial_number, '') ILIKE $1
+           COALESCE(alx.remarks, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.emp_name, '') ILIKE $${fy != null ? 2 : 1} OR
+           COALESCE(alx.serial_number, '') ILIKE $${fy != null ? 2 : 1}
          )
        )
      )
      ORDER BY a.created_at DESC, a.id DESC
-     LIMIT $2`,
-    [pattern, cap]
+     LIMIT $${fy != null ? 3 : 2}`,
+    listParams
   );
   const truncated = list.rows.length > ALLOCATION_EXPORT_MAX_ROWS;
   const rows = truncated

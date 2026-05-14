@@ -6,11 +6,149 @@ import {
   fiscalYearStartFromBsDate,
   normalizeBsDateEnglish,
 } from "@hrmskdbl/depreciation-core";
-import { createDepreciationRun, getServerTodayBsEnglish } from "./depreciationRuns.js";
+import {
+  createDepreciationRun,
+  getServerTodayBsEnglish,
+  grossDepreciableAmountForRun,
+  isDepreciableAssetEligibleForDepreciationSchedule,
+  loadDepreciationScheduleAssetsForBranch,
+  type DepreciationScheduleAssetRow,
+} from "./depreciationRuns.js";
 
 const log = createLogger("depreciationFyRollover");
 
 const ROLLOVER_LOCK_LABEL = "hrms_depr_fy_rollover";
+
+export type DepreciationFyRolloverRunDetailRow = {
+  asset_id: number;
+  asset_code: string | null;
+  asset_name: string;
+  balance_amount: string | null;
+};
+
+function formatAssetLabel(a: {
+  id: number;
+  asset_code: string | null;
+  asset_name: string;
+}): string {
+  const code =
+    a.asset_code != null && String(a.asset_code).trim() !== ""
+      ? String(a.asset_code).trim()
+      : null;
+  const name =
+    a.asset_name != null && String(a.asset_name).trim() !== ""
+      ? String(a.asset_name).trim()
+      : "(unnamed)";
+  return code ? `${code} — ${name}` : `#${a.id} — ${name}`;
+}
+
+function formatRunDetailLabel(d: DepreciationFyRolloverRunDetailRow): string {
+  return formatAssetLabel({
+    id: d.asset_id,
+    asset_code: d.asset_code,
+    asset_name: d.asset_name,
+  });
+}
+
+function parseClosingBalanceAmount(raw: string | null): number | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (s === "") return null;
+  const n = Number.parseFloat(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+/**
+ * Validates that FY rollover can copy prior FY final `balance_amount` values into
+ * `hrms_assets.book_value` without omitting schedule-eligible assets or applying
+ * invalid balances. Throws a single `Error` with a clear, multi-sentence message.
+ */
+export function assertDepreciationFyRolloverPreconditions(input: {
+  depreciableAssets: DepreciationScheduleAssetRow[];
+  runDetails: DepreciationFyRolloverRunDetailRow[];
+}): void {
+  const detailByAssetId = new Map<number, DepreciationFyRolloverRunDetailRow>();
+  for (const d of input.runDetails) {
+    detailByAssetId.set(d.asset_id, d);
+  }
+
+  const missingFromRun: DepreciationScheduleAssetRow[] = [];
+  for (const a of input.depreciableAssets) {
+    if (!detailByAssetId.has(a.id)) {
+      missingFromRun.push(a);
+    }
+  }
+
+  const invalidBalance: DepreciationFyRolloverRunDetailRow[] = [];
+  for (const d of input.runDetails) {
+    const bal = parseClosingBalanceAmount(d.balance_amount);
+    if (bal === null || bal < 0) {
+      invalidBalance.push(d);
+    }
+  }
+
+  const missingCostBasis: DepreciationScheduleAssetRow[] = [];
+  for (const a of input.depreciableAssets) {
+    const gross = grossDepreciableAmountForRun(
+      a.book_value,
+      a.purchase_qty,
+      a.unit_rate,
+      a.old_book_value
+    );
+    if (gross === null || gross <= 0) {
+      missingCostBasis.push(a);
+    }
+  }
+
+  if (
+    missingFromRun.length === 0 &&
+    invalidBalance.length === 0 &&
+    missingCostBasis.length === 0
+  ) {
+    return;
+  }
+
+  const parts: string[] = [
+    "Fiscal year depreciation rollover blocked.",
+  ];
+  if (missingFromRun.length > 0) {
+    parts.push(
+      `${missingFromRun.length} schedule-eligible asset(s) are missing from the prior fiscal year posted final run (rollover will not partially update the register): ${missingFromRun.map(formatAssetLabel).join("; ")}.`
+    );
+  }
+  if (invalidBalance.length > 0) {
+    parts.push(
+      `${invalidBalance.length} final run line(s) have a missing or invalid closing balance (balance_amount must be a finite number ≥ 0): ${invalidBalance.map(formatRunDetailLabel).join("; ")}.`
+    );
+  }
+  if (missingCostBasis.length > 0) {
+    parts.push(
+      `${missingCostBasis.length} asset(s) no longer have a resolvable original gross depreciable cost (purchase_qty × unit_rate, or legacy old_book_value / register book_value fallback): ${missingCostBasis.map(formatAssetLabel).join("; ")}.`
+    );
+  }
+  throw new Error(parts.join(" "));
+}
+
+async function loadFyRolloverRunDetailRows(
+  client: PoolClient,
+  depreciationRunId: number,
+  branchId: number | null
+): Promise<DepreciationFyRolloverRunDetailRow[]> {
+  const r = await client.query<DepreciationFyRolloverRunDetailRow>(
+    `SELECT d.asset_id,
+            a.asset_code,
+            COALESCE(NULLIF(TRIM(d.asset_name), ''), a.asset_name) AS asset_name,
+            d.balance_amount::text AS balance_amount
+     FROM hrms_depreciation_run_details d
+     INNER JOIN hrms_assets a ON a.id = d.asset_id
+     WHERE d.depreciation_run_id = $1
+       AND ($2::integer IS NULL OR a.branch_id = $2)
+     ORDER BY d.asset_id ASC`,
+    [depreciationRunId, branchId]
+  );
+  return r.rows;
+}
 
 export type DepreciationFyRolloverResult = {
   status: "applied" | "already_applied" | "skipped_no_prior_year";
@@ -149,6 +287,23 @@ export async function performDepreciationFiscalYearRollover(input: {
         sourceFinalRunId,
       };
     }
+
+    const registerRows = await loadDepreciationScheduleAssetsForBranch(
+      branchId,
+      client
+    );
+    const depreciableAssets = registerRows.filter(
+      isDepreciableAssetEligibleForDepreciationSchedule
+    );
+    const runDetails = await loadFyRolloverRunDetailRows(
+      client,
+      sourceFinalRunId,
+      branchId
+    );
+    assertDepreciationFyRolloverPreconditions({
+      depreciableAssets,
+      runDetails,
+    });
 
     await client.query(
       `UPDATE hrms_assets AS a

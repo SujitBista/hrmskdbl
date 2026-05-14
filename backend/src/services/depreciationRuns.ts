@@ -74,8 +74,10 @@ export type DepreciationRunActor = {
   isSuperAdmin: boolean;
 };
 
-type AssetDepRow = {
+/** Register row shape used when deciding whether an asset belongs on a depreciation schedule. */
+export type DepreciationScheduleAssetRow = {
   id: number;
+  asset_code: string | null;
   asset_name: string;
   group_name: string;
   group_dep_method: string | null;
@@ -93,8 +95,11 @@ type AssetDepRow = {
   old_book_value: string | null;
 };
 
+type AssetDepRow = DepreciationScheduleAssetRow;
+
 const ASSET_SELECT = `
   SELECT a.id,
+    a.asset_code,
     a.asset_name,
     g.name AS group_name,
     g.dep_method AS group_dep_method,
@@ -133,7 +138,7 @@ function parsePurchaseAmount(
  * Using carrying `book_value` alone as cost made migrated assets lose imported
  * accumulated depreciation (runs treated WDV as original cost).
  */
-function grossDepreciableAmountForRun(
+export function grossDepreciableAmountForRun(
   registerBookValueText: string | null,
   qty: string | null,
   unitRate: string | null,
@@ -156,6 +161,32 @@ function grossDepreciableAmountForRun(
     }
   }
   return null;
+}
+
+/** True when the asset would receive a line on a depreciation run (not skipped for validation). */
+export function isDepreciableAssetEligibleForDepreciationSchedule(
+  a: DepreciationScheduleAssetRow
+): boolean {
+  const purchaseAmount = grossDepreciableAmountForRun(
+    a.book_value,
+    a.purchase_qty,
+    a.unit_rate,
+    a.old_book_value
+  );
+  const depRate = parseDepRatePercent(a.asset_dep_rate ?? a.group_dep_rate);
+  const method = parseDepreciationMethod(a.asset_dep_method ?? a.group_dep_method);
+  const depreciationStartBs = depreciationCommencementFromRegister(
+    a.purchase_date_bs,
+    a.depreciation_start_date_bs
+  );
+  return (
+    purchaseAmount !== null &&
+    depRate !== null &&
+    method !== null &&
+    purchaseAmount > 0 &&
+    depRate > 0 &&
+    Boolean(depreciationStartBs)
+  );
 }
 
 /**
@@ -185,20 +216,29 @@ function parseDepRatePercent(rate: string | null): number | null {
   return n;
 }
 
-async function loadAssetsForRun(
-  branchId: number | null
-): Promise<AssetDepRow[]> {
+/** Loads register rows for depreciation / FY rollover (optional DB client for transactional reads). */
+export async function loadDepreciationScheduleAssetsForBranch(
+  branchId: number | null,
+  client?: PoolClient | null
+): Promise<DepreciationScheduleAssetRow[]> {
+  const runQuery = client ? client.query.bind(client) : query;
   if (branchId === null) {
-    const r = await query<AssetDepRow>(
+    const r = await runQuery<DepreciationScheduleAssetRow>(
       `${ASSET_SELECT} ORDER BY a.id ASC`
     );
     return r.rows;
   }
-  const r = await query<AssetDepRow>(
+  const r = await runQuery<DepreciationScheduleAssetRow>(
     `${ASSET_SELECT} WHERE a.branch_id = $1 ORDER BY a.id ASC`,
     [branchId]
   );
   return r.rows;
+}
+
+async function loadAssetsForRun(
+  branchId: number | null
+): Promise<AssetDepRow[]> {
+  return loadDepreciationScheduleAssetsForBranch(branchId, null);
 }
 
 export async function listDepreciationRuns(params: {

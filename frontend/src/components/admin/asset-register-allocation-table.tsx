@@ -186,6 +186,31 @@ export function AssetRegisterAllocationTable({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [profileAssetId, setProfileAssetId] = useState<number | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const [fiscalYearFilter, setFiscalYearFilter] = useState("");
+  const [fiscalYearOptions, setFiscalYearOptions] = useState<number[]>([]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/depreciation-runs");
+        const json = (await res.json()) as {
+          runs?: { fiscal_year_start: number }[];
+        };
+        if (!res.ok) return;
+        const runs = json.runs ?? [];
+        const ys = [
+          ...new Set(
+            runs
+              .map((r) => r.fiscal_year_start)
+              .filter((n) => Number.isFinite(n))
+          ),
+        ].sort((a, b) => b - a);
+        setFiscalYearOptions(ys);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -205,6 +230,9 @@ export function AssetRegisterAllocationTable({
       });
       if (debouncedSearch) {
         params.set("q", debouncedSearch);
+      }
+      if (fiscalYearFilter.trim() !== "") {
+        params.set("fiscalYearStart", fiscalYearFilter.trim());
       }
       const res = await fetch(
         `/api/admin/assets/allocations?${params.toString()}`
@@ -227,7 +255,7 @@ export function AssetRegisterAllocationTable({
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, debouncedSearch]);
+  }, [page, pageSize, debouncedSearch, fiscalYearFilter]);
 
   useEffect(() => {
     void load();
@@ -235,7 +263,7 @@ export function AssetRegisterAllocationTable({
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [data?.rows, page, pageSize, debouncedSearch, refreshKey]);
+  }, [data?.rows, page, pageSize, debouncedSearch, fiscalYearFilter, refreshKey]);
 
   const rows = data?.rows ?? [];
   const totalPages =
@@ -291,6 +319,7 @@ export function AssetRegisterAllocationTable({
   function resetFilters(): void {
     setSearchInput("");
     setDebouncedSearch("");
+    setFiscalYearFilter("");
     setPage(1);
   }
 
@@ -306,6 +335,9 @@ export function AssetRegisterAllocationTable({
       const params = new URLSearchParams();
       if (debouncedSearch) {
         params.set("q", debouncedSearch);
+      }
+      if (fiscalYearFilter.trim() !== "") {
+        params.set("fiscalYearStart", fiscalYearFilter.trim());
       }
       const qs = params.toString();
       const res = await fetch(
@@ -370,7 +402,7 @@ export function AssetRegisterAllocationTable({
       window.clearTimeout(timeoutId);
       setExporting(false);
     }
-  }, [debouncedSearch, selectedIds]);
+  }, [debouncedSearch, selectedIds, fiscalYearFilter]);
 
   const colCount = 2 + DATA_COLUMNS.length;
 
@@ -381,6 +413,12 @@ export function AssetRegisterAllocationTable({
       open={profileAssetId != null}
       onClose={() => setProfileAssetId(null)}
       onProfileSaved={onProfileSaved}
+      depreciationFiscalYearStart={(() => {
+        const t = fiscalYearFilter.trim();
+        if (t === "") return undefined;
+        const n = Number.parseInt(t, 10);
+        return Number.isFinite(n) ? n : undefined;
+      })()}
     />
     <section
       className="rounded-lg border border-slate-200 bg-white shadow-sm"
@@ -393,8 +431,10 @@ export function AssetRegisterAllocationTable({
           Export to download every row that matches the current search (all
           assets when the search box is empty). With rows checked, Export
           includes only those assets from the full list. Depreciation columns
-          reflect each asset&apos;s latest posted run only. Export uses one
-          server request so it finishes faster than paging the table.
+          reflect the latest posted depreciation run for the selected fiscal year
+          (defaults to the server&apos;s current BS fiscal year when the
+          selector is left on &quot;Current FY&quot;). Export uses one server
+          request so it finishes faster than paging the table.
         </p>
         {exportNotice ? (
           <p
@@ -428,6 +468,27 @@ export function AssetRegisterAllocationTable({
           <button type="button" className={toolbarBtn} onClick={resetFilters}>
             Reset filters
           </button>
+          <label htmlFor={`${tableId}-fy`} className="sr-only">
+            Depreciation fiscal year
+          </label>
+          <select
+            id={`${tableId}-fy`}
+            value={fiscalYearFilter}
+            onChange={(e) => {
+              setFiscalYearFilter(e.target.value);
+              setPage(1);
+            }}
+            disabled={loading}
+            className="h-9 min-w-[10rem] shrink-0 rounded border border-slate-300 bg-white px-2 text-sm text-slate-800 disabled:cursor-wait disabled:opacity-70"
+            aria-label="Depreciation fiscal year filter"
+          >
+            <option value="">Current FY (BS)</option>
+            {fiscalYearOptions.map((y) => (
+              <option key={y} value={String(y)}>
+                FY {y}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:justify-end">
           <input

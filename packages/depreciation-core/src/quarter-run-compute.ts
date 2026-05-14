@@ -337,8 +337,19 @@ export function computeAssetQuarterCumulative(params: {
    * Combined with {@link purchaseAmount} as gross cost, yields accumulated =
    * max(schedule prior, register floor) + this-year slice (clamped), so migrated
    * assets do not lose imported accumulated depreciation.
+   *
+   * Ignored when {@link carryForwardPriorAccumulatedDep} is set (rollover path).
    */
   registerPriorAccumulatedDep?: number | null;
+  /**
+   * Total accumulated depreciation through the end of the prior fiscal year
+   * (from posted final run / FY closing). When set, prior accumulated is pinned
+   * to this value (capped at gross cost), this-year depreciation uses
+   * opening WDV × rate × depDays / 365 with opening WDV = cost − prior, and
+   * `depDays` still runs from max(depreciation start, FY Shrawan 1) through the
+   * run end date (same as the non-carry-forward path).
+   */
+  carryForwardPriorAccumulatedDep?: number | null;
 }): { ok: true; detail: ComputedQuarterAssetDetail } | { ok: false; errors: string[] } {
   void params.calculationMode;
 
@@ -383,21 +394,31 @@ export function computeAssetQuarterCumulative(params: {
 
   if (compareBsDateString(depStart, selectedPeriodEndBs) > 0) {
     const cost = roundMoney(params.purchaseAmount);
+    const rawCf = params.carryForwardPriorAccumulatedDep;
+    const cf =
+      rawCf != null &&
+      Number.isFinite(rawCf) &&
+      rawCf >= 0 &&
+      rawCf <= cost * 1.000001
+        ? roundMoney(Math.min(Math.max(rawCf, 0), cost))
+        : null;
+    const priorIdle = cf ?? 0;
+    const openingIdle = roundMoney(Math.max(0, cost - priorIdle));
     const idleTimeline: LifetimeDepreciationTimeline = {
-      openingBookValueOfFY: cost,
-      priorYearsDepAmount: 0,
+      openingBookValueOfFY: openingIdle,
+      priorYearsDepAmount: priorIdle,
       thisYearDepAmount: 0,
-      accumulatedDep: 0,
-      closingBookValue: cost,
+      accumulatedDep: priorIdle,
+      closingBookValue: openingIdle,
     };
     return {
       ok: true,
       detail: {
         depDays: 0,
         depAmount: 0,
-        accumulateDep: 0,
-        bookValue: cost,
-        balanceAmount: cost,
+        accumulateDep: priorIdle,
+        bookValue: openingIdle,
+        balanceAmount: openingIdle,
         depFormula: formatDepFormula(params.method, params.depRatePercent),
         erpTimeline: idleTimeline,
       },
@@ -414,45 +435,64 @@ export function computeAssetQuarterCumulative(params: {
     );
   }
 
-  const timeline = buildDepreciationTimelineToPeriodEnd({
-    purchaseAmount: params.purchaseAmount,
-    depreciationStartBs: depStart,
-    depRatePercent: params.depRatePercent,
-    method: params.method,
-    fiscalYearStart: params.fiscalYearStart,
-    selectedPeriodEndBs,
-  });
-  if (!timeline.ok) {
-    return { ok: false, errors: timeline.errors };
-  }
-
   const cost = roundMoney(params.purchaseAmount);
-  const rawRegisterPrior = params.registerPriorAccumulatedDep;
-  const registerPriorFloor =
-    rawRegisterPrior != null &&
-    Number.isFinite(rawRegisterPrior) &&
-    rawRegisterPrior > 0
-      ? roundMoney(Math.min(Math.max(rawRegisterPrior, 0), cost))
-      : 0;
-  const priorYearsDepAmount = roundMoney(
-    Math.min(
-      cost,
-      Math.max(timeline.timeline.priorYearsDepAmount, registerPriorFloor)
-    )
-  );
+  const rawCarry = params.carryForwardPriorAccumulatedDep;
+  const carryForward =
+    rawCarry != null &&
+    Number.isFinite(rawCarry) &&
+    rawCarry >= 0 &&
+    rawCarry <= cost * 1.000001
+      ? roundMoney(Math.min(Math.max(rawCarry, 0), cost))
+      : null;
+
+  let priorYearsDepAmount: number;
+  if (carryForward !== null) {
+    priorYearsDepAmount = carryForward;
+  } else {
+    const timeline = buildDepreciationTimelineToPeriodEnd({
+      purchaseAmount: params.purchaseAmount,
+      depreciationStartBs: depStart,
+      depRatePercent: params.depRatePercent,
+      method: params.method,
+      fiscalYearStart: params.fiscalYearStart,
+      selectedPeriodEndBs,
+    });
+    if (!timeline.ok) {
+      return { ok: false, errors: timeline.errors };
+    }
+    const rawRegisterPrior = params.registerPriorAccumulatedDep;
+    const registerPriorFloor =
+      rawRegisterPrior != null &&
+      Number.isFinite(rawRegisterPrior) &&
+      rawRegisterPrior > 0
+        ? roundMoney(Math.min(Math.max(rawRegisterPrior, 0), cost))
+        : 0;
+    priorYearsDepAmount = roundMoney(
+      Math.min(
+        cost,
+        Math.max(timeline.timeline.priorYearsDepAmount, registerPriorFloor)
+      )
+    );
+  }
 
   /**
    * Daily proration policy:
    * - Straight line: prorate against full gross cost.
    * - Declining balance: prorate against FY opening written-down value after the
    *   blended prior (schedule vs register floor), so this-year dep matches opening WDV.
+   * - Fiscal-year rollover (carry-forward): both methods use opening WDV after
+   *   pinned prior accumulated (requirement: openingWDV × rate × depDays / 365).
    */
   const isDeclining = params.method === "DECLINING_BALANCE";
   const openingBookValueAfterPrior = roundMoney(
     Math.max(0, cost - priorYearsDepAmount)
   );
   const dailyBaseAmount = roundMoney(
-    isDeclining ? openingBookValueAfterPrior : params.purchaseAmount
+    carryForward !== null
+      ? openingBookValueAfterPrior
+      : isDeclining
+        ? openingBookValueAfterPrior
+        : params.purchaseAmount
   );
   const dailyRawThisYearDep =
     (dailyBaseAmount * (params.depRatePercent / 100) * depDays) / 365;

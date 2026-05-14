@@ -123,12 +123,15 @@ export function AssetAllocationProfileModal({
   open,
   onClose,
   onProfileSaved,
+  depreciationFiscalYearStart,
 }: {
   assetId: number | null;
   open: boolean;
   onClose: () => void;
   /** Called after a successful Transfer/Return save so the list can refresh. */
   onProfileSaved?: () => void;
+  /** When set, profile header depreciation FY column matches the allocation grid filter. */
+  depreciationFiscalYearStart?: number;
 }) {
   const titleId = useId();
   const formId = useId();
@@ -159,8 +162,13 @@ export function AssetAllocationProfileModal({
     setLoading(true);
     setError(null);
     try {
+      const qs =
+        depreciationFiscalYearStart != null &&
+        Number.isFinite(depreciationFiscalYearStart)
+          ? `?fiscalYearStart=${encodeURIComponent(String(Math.floor(depreciationFiscalYearStart)))}`
+          : "";
       const res = await fetch(
-        `/api/admin/assets/${encodeURIComponent(String(assetId))}/allocation-profile`
+        `/api/admin/assets/${encodeURIComponent(String(assetId))}/allocation-profile${qs}`
       );
       const json = (await res.json()) as ProfilePayload & { error?: string };
       if (!res.ok) {
@@ -175,7 +183,7 @@ export function AssetAllocationProfileModal({
     } finally {
       setLoading(false);
     }
-  }, [assetId]);
+  }, [assetId, depreciationFiscalYearStart]);
 
   useEffect(() => {
     if (!open || assetId == null) {

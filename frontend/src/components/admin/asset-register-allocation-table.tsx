@@ -239,9 +239,7 @@ export function AssetRegisterAllocationTable({
       if (fiscalYearFilter.trim() !== "") {
         params.set("fiscalYearStart", fiscalYearFilter.trim());
       }
-      if (assetStatusFilter !== "ACTIVE" || !debouncedSearch) {
-        params.set("assetStatus", assetStatusFilter);
-      }
+      params.set("assetStatus", assetStatusFilter);
       const res = await fetch(
         `/api/admin/assets/allocations?${params.toString()}`
       );
@@ -356,9 +354,7 @@ export function AssetRegisterAllocationTable({
       if (fiscalYearFilter.trim() !== "") {
         params.set("fiscalYearStart", fiscalYearFilter.trim());
       }
-      if (assetStatusFilter !== "ACTIVE" || !debouncedSearch) {
-        params.set("assetStatus", assetStatusFilter);
-      }
+      params.set("assetStatus", assetStatusFilter);
       const qs = params.toString();
       const res = await fetch(
         `/api/admin/assets/allocations/export${qs ? `?${qs}` : ""}`,

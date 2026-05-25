@@ -39,7 +39,7 @@ type DepartmentOption = { id: number; name: string };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 20;
+const COL_COUNT = 19;
 const DISPOSAL_TYPES = [
   "SOLD",
   "SCRAPPED",
@@ -84,21 +84,6 @@ function gainLossLabel(a: AssetRegisterRow): string {
     return `Loss ${formatMoney(loss)}`;
   }
   return a.asset_status === "DISPOSED" ? "No gain/loss" : "—";
-}
-
-function AssetStatusBadge({ status }: { status: AssetRegisterRow["asset_status"] }) {
-  const disposed = status === "DISPOSED";
-  return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-        disposed
-          ? "bg-red-50 text-red-700 ring-1 ring-red-200"
-          : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-      }`}
-    >
-      {status}
-    </span>
-  );
 }
 
 export function DisposalDialog({
@@ -342,7 +327,7 @@ export function AssetRegisterAssetsTable({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [assetStatusFilter, setAssetStatusFilter] = useState<
     "ACTIVE" | "DISPOSED" | "ALL"
-  >("ACTIVE");
+  >("ALL");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -445,9 +430,7 @@ export function AssetRegisterAssetsTable({
       if (debouncedSearch) {
         params.set("q", debouncedSearch);
       }
-      if (assetStatusFilter !== "ACTIVE" || !debouncedSearch) {
-        params.set("assetStatus", assetStatusFilter);
-      }
+      params.set("assetStatus", assetStatusFilter);
       const res = await fetch(`/api/admin/assets?${params.toString()}`);
       const json = (await res.json()) as ListResponse & { error?: string };
       if (!res.ok) {
@@ -551,9 +534,9 @@ export function AssetRegisterAssetsTable({
               }}
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
             >
+              <option value="ALL">All Assets</option>
               <option value="ACTIVE">Active Assets</option>
               <option value="DISPOSED">Disposed Assets</option>
-              <option value="ALL">All Assets</option>
             </select>
           </div>
         </div>
@@ -592,9 +575,6 @@ export function AssetRegisterAssetsTable({
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Working status
-              </th>
-              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
-                Asset status
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Department
@@ -717,10 +697,13 @@ export function AssetRegisterAssetsTable({
                       {a.ownership_type}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                      {a.working_status}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                      <AssetStatusBadge status={a.asset_status} />
+                      {a.asset_status === "DISPOSED" ? (
+                        <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-red-200">
+                          {a.working_status}
+                        </span>
+                      ) : (
+                        a.working_status
+                      )}
                       {a.disposal_date_bs ? (
                         <div className="mt-1 text-xs text-slate-500">
                           {a.disposal_type?.replace(/_/g, " ")} ·{" "}

@@ -201,6 +201,12 @@ async function migrate() {
     CHECK (asset_status IN ('ACTIVE', 'DISPOSED'));
   `);
   await query(`
+    UPDATE hrms_assets
+    SET working_status = 'Disposed'
+    WHERE asset_status = 'DISPOSED'
+      AND working_status <> 'Disposed';
+  `);
+  await query(`
     ALTER TABLE hrms_assets DROP COLUMN IF EXISTS lifetime_years;
   `);
   await query(`

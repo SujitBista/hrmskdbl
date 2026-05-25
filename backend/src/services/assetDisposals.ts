@@ -378,10 +378,45 @@ export async function disposeAsset(
            updated_at
          )
          VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-         RETURNING id
+         RETURNING
+           id,
+           asset_id,
+           disposal_date_bs,
+           disposal_date_ad,
+           disposal_type,
+           disposal_amount,
+           net_book_value_at_disposal,
+           accumulated_depreciation_at_disposal,
+           profit_amount,
+           loss_amount,
+           reference_no,
+           notes,
+           created_by,
+           approved_by,
+           created_at,
+           updated_at
        )
-       ${disposalSelectSql()}
-       INNER JOIN inserted i ON i.id = d.id`,
+       SELECT
+         i.id,
+         i.asset_id,
+         a.asset_code,
+         a.asset_name,
+         i.disposal_date_bs,
+         i.disposal_date_ad::text,
+         i.disposal_type,
+         i.disposal_amount::text,
+         i.net_book_value_at_disposal::text,
+         i.accumulated_depreciation_at_disposal::text,
+         i.profit_amount::text,
+         i.loss_amount::text,
+         i.reference_no,
+         i.notes,
+         i.created_by,
+         i.approved_by,
+         i.created_at::text,
+         i.updated_at::text
+       FROM inserted i
+       INNER JOIN hrms_assets a ON a.id = i.asset_id`,
       [
         assetId,
         input.disposal_date_bs,
@@ -399,7 +434,8 @@ export async function disposeAsset(
 
     await client.query(
       `UPDATE hrms_assets
-       SET asset_status = 'DISPOSED'
+       SET asset_status = 'DISPOSED',
+           working_status = 'Disposed'
        WHERE id = $1`,
       [assetId]
     );

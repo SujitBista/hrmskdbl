@@ -572,6 +572,9 @@ async function insertDepreciationDetailRows(
     }
 
     const d = computed.detail;
+    const isDisposed = a.asset_status === "DISPOSED";
+    const detailBookValue = isDisposed ? 0 : d.bookValue;
+    const detailBalanceAmount = isDisposed ? 0 : d.balanceAmount;
     if (!loggedVerificationAsset) {
       const t = d.erpTimeline;
       log.info("depreciation verification sample", {
@@ -604,11 +607,11 @@ async function insertDepreciationDetailRows(
         a.group_name,
         a.sub_group_name,
         a.branch_name,
-        d.bookValue,
+        detailBookValue,
         d.accumulateDep,
         d.depFormula,
         depreciationStartBs,
-        d.balanceAmount,
+        detailBalanceAmount,
       ]
     );
     detailsInserted += 1;

@@ -47,6 +47,8 @@ export type DepreciationRunDetailRow = {
   depreciation_run_id: number;
   asset_id: number;
   asset_code: string | null;
+  asset_status: "ACTIVE" | "DISPOSED";
+  disposal_date_bs: string | null;
   fiscal_year: number;
   asset_name: string;
   purchase_date_bs: string;
@@ -93,6 +95,8 @@ export type DepreciationScheduleAssetRow = {
   /** Current carrying amount on the register; preferred depreciation cost basis when set. */
   book_value: string | null;
   old_book_value: string | null;
+  asset_status: "ACTIVE" | "DISPOSED";
+  disposal_date_bs: string | null;
 };
 
 type AssetDepRow = DepreciationScheduleAssetRow;
@@ -113,11 +117,14 @@ const ASSET_SELECT = `
     a.purchase_qty::text,
     a.unit_rate::text,
     a.book_value::text,
-    a.old_book_value::text
+    a.old_book_value::text,
+    a.asset_status,
+    disp.disposal_date_bs
   FROM hrms_assets a
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
   LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
+  LEFT JOIN hrms_asset_disposals disp ON disp.asset_id = a.id
 `;
 
 function parsePurchaseAmount(
@@ -167,6 +174,9 @@ export function grossDepreciableAmountForRun(
 export function isDepreciableAssetEligibleForDepreciationSchedule(
   a: DepreciationScheduleAssetRow
 ): boolean {
+  if (a.asset_status === "DISPOSED") {
+    return false;
+  }
   const purchaseAmount = grossDepreciableAmountForRun(
     a.book_value,
     a.purchase_qty,
@@ -194,7 +204,7 @@ export function isDepreciableAssetEligibleForDepreciationSchedule(
  * is below gross cost (e.g. imported accumulated dep). Passed into quarter compute
  * so accumulated = max(schedule prior, this floor) + this-year slice.
  */
-function registerImpliedPriorAccumulatedDep(
+export function registerImpliedPriorAccumulatedDep(
   gross: number,
   registerBookValueText: string | null
 ): number | undefined {
@@ -307,7 +317,8 @@ export async function listDetailsForRun(
 
   // depreciation_cost_basis: same order as grossDepreciableAmountForRun (historical cost before carrying WDV).
   const r = await query<DepreciationRunDetailRow>(
-    `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code, d.fiscal_year,
+    `SELECT d.id, d.depreciation_run_id, d.asset_id, a.asset_code,
+      a.asset_status, disp.disposal_date_bs, d.fiscal_year,
       d.asset_name, a.purchase_date_bs,
       (COALESCE(a.purchase_qty, 0) * COALESCE(a.unit_rate, 0))::text AS actual_purchase_price,
       (CASE
@@ -326,6 +337,7 @@ export async function listDetailsForRun(
       d.balance_amount::text, d.created_at::text
      FROM hrms_depreciation_run_details d
      INNER JOIN hrms_assets a ON a.id = d.asset_id
+     LEFT JOIN hrms_asset_disposals disp ON disp.asset_id = a.id
      WHERE d.depreciation_run_id = $1
      ORDER BY d.asset_id ASC
      LIMIT $2 OFFSET $3`,
@@ -397,6 +409,47 @@ async function loadCarryForwardPriorAccumulatedMap(
   return m;
 }
 
+export function selectedDepreciationPeriodEndBs(params: {
+  fiscalYearStart: number;
+  quarterNo: 1 | 2 | 3 | 4;
+  calculationDateBs: string;
+  depreciationScopeMode: DepreciationScopeMode;
+}): string {
+  if (params.depreciationScopeMode === "AS_OF_DATE") {
+    const fyEndBs = fiscalYearEndBs(params.fiscalYearStart);
+    return compareBsDateString(params.calculationDateBs, fyEndBs) > 0
+      ? fyEndBs
+      : params.calculationDateBs;
+  }
+  return params.quarterNo === 4
+    ? fiscalYearEndBs(params.fiscalYearStart)
+    : fiscalQuarterEndBs(params.fiscalYearStart, params.quarterNo);
+}
+
+export function resolveAssetDepreciationEndBsForRun(params: {
+  assetStatus: "ACTIVE" | "DISPOSED";
+  disposalDateBs: string | null;
+  fiscalYearStartBs: string;
+  selectedPeriodEndBs: string;
+}): string | null {
+  if (params.assetStatus !== "DISPOSED") {
+    return params.selectedPeriodEndBs;
+  }
+  const disposalDateBs = normalizeBsDateEnglish(
+    String(params.disposalDateBs ?? "").trim()
+  );
+  if (!disposalDateBs) {
+    return null;
+  }
+  if (compareBsDateString(disposalDateBs, params.fiscalYearStartBs) < 0) {
+    return null;
+  }
+  if (compareBsDateString(disposalDateBs, params.selectedPeriodEndBs) <= 0) {
+    return disposalDateBs;
+  }
+  return params.selectedPeriodEndBs;
+}
+
 async function insertDepreciationDetailRows(
   client: PoolClient,
   args: {
@@ -424,6 +477,13 @@ async function insertDepreciationDetailRows(
   const skippedAssets: DepreciationSkippedAsset[] = [];
   let detailsInserted = 0;
   let loggedVerificationAsset = false;
+  const selectedPeriodEndBs = selectedDepreciationPeriodEndBs({
+    fiscalYearStart: fy,
+    quarterNo,
+    calculationDateBs,
+    depreciationScopeMode,
+  });
+  const fyStartBs = fiscalYearStartBs(fy);
 
   for (const a of assets) {
     const purchaseAmount = grossDepreciableAmountForRun(
@@ -442,6 +502,19 @@ async function insertDepreciationDetailRows(
       a.purchase_date_bs,
       a.depreciation_start_date_bs
     );
+    const disposalDateBs =
+      a.asset_status === "DISPOSED" && a.disposal_date_bs
+        ? normalizeBsDateEnglish(String(a.disposal_date_bs).trim())
+        : "";
+    const depreciationEndBs = resolveAssetDepreciationEndBsForRun({
+      assetStatus: a.asset_status,
+      disposalDateBs,
+      fiscalYearStartBs: fyStartBs,
+      selectedPeriodEndBs,
+    });
+    if (depreciationEndBs === null) {
+      continue;
+    }
 
     if (
       purchaseAmount === null ||
@@ -480,7 +553,9 @@ async function insertDepreciationDetailRows(
       quarter: quarterNo,
       depreciationScopeMode,
       asOfDateBs:
-        depreciationScopeMode === "AS_OF_DATE" ? calculationDateBs : null,
+        depreciationScopeMode === "AS_OF_DATE" ? depreciationEndBs : null,
+      depreciationEndBs:
+        depreciationScopeMode === "FY_END" ? depreciationEndBs : null,
       registerPriorAccumulatedDep:
         carryPrior !== undefined ? undefined : registerPriorAccum,
       carryForwardPriorAccumulatedDep:

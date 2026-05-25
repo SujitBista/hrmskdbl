@@ -46,6 +46,12 @@ import {
   voidDepreciationRun,
   type DepreciationRunActor,
 } from "./services/depreciationRuns.js";
+import {
+  disposeAsset,
+  getDisposalByAssetId,
+  listDisposedAssets,
+  parseDisposeAssetPayload,
+} from "./services/assetDisposals.js";
 import { performDepreciationFiscalYearRollover } from "./services/depreciationFyRollover.js";
 import {
   createGroup,
@@ -1094,8 +1100,22 @@ app.get("/api/admin/assets", async (req, res) => {
       typeof pageSizeRaw === "string"
         ? Number.parseInt(pageSizeRaw, 10)
         : NaN;
+    const assetStatusRaw = req.query.assetStatus;
+    const assetStatus =
+      typeof assetStatusRaw === "string" ? assetStatusRaw : undefined;
+    const showDisposedRaw = req.query.showDisposedAssets;
+    const showDisposedAssets =
+      showDisposedRaw === "1" ||
+      showDisposedRaw === "true" ||
+      showDisposedRaw === "yes";
     const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
-    const result = await listAssets({ search, page: p, pageSize: ps });
+    const result = await listAssets({
+      search,
+      page: p,
+      pageSize: ps,
+      assetStatus: assetStatus as "ACTIVE" | "DISPOSED" | "ALL" | undefined,
+      showDisposedAssets,
+    });
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -1126,9 +1146,19 @@ app.get("/api/admin/assets/allocations/export", async (req, res) => {
         depreciationFiscalYearStart = n;
       }
     }
+    const assetStatusRaw = req.query.assetStatus;
+    const showDisposedRaw = req.query.showDisposedAssets;
     const result = await exportAllAssetAllocations({
       search,
       depreciationFiscalYearStart,
+      assetStatus:
+        typeof assetStatusRaw === "string"
+          ? (assetStatusRaw as "ACTIVE" | "DISPOSED" | "ALL")
+          : undefined,
+      showDisposedAssets:
+        showDisposedRaw === "1" ||
+        showDisposedRaw === "true" ||
+        showDisposedRaw === "yes",
     });
     res.json(result);
   } catch (err) {
@@ -1169,16 +1199,127 @@ app.get("/api/admin/assets/allocations", async (req, res) => {
         depreciationFiscalYearStart = n;
       }
     }
+    const assetStatusRaw = req.query.assetStatus;
+    const showDisposedRaw = req.query.showDisposedAssets;
     const result = await listAssetAllocations({
       search,
       page: p,
       pageSize: ps,
       depreciationFiscalYearStart,
+      assetStatus:
+        typeof assetStatusRaw === "string"
+          ? (assetStatusRaw as "ACTIVE" | "DISPOSED" | "ALL")
+          : undefined,
+      showDisposedAssets:
+        showDisposedRaw === "1" ||
+        showDisposedRaw === "true" ||
+        showDisposedRaw === "yes",
     });
     res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not list asset allocations." });
+  }
+});
+
+app.get("/api/admin/assets/disposals", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const result = await listDisposedAssets({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list disposed assets." });
+  }
+});
+
+app.get("/api/admin/assets/:id/disposal", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const disposal = await getDisposalByAssetId(id);
+    if (!disposal) {
+      res.status(404).json({ error: "Disposal not found." });
+      return;
+    }
+    res.json({ disposal });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not load asset disposal." });
+  }
+});
+
+app.post("/api/admin/assets/:id/disposal", async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  let admin: AdminJwtPayload;
+  try {
+    admin = verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const payload = parseDisposeAssetPayload(req.body, admin.sub);
+    const disposal = await disposeAsset(id, payload);
+    if (!disposal) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.status(201).json({ disposal });
+  } catch (err) {
+    if (err instanceof Error) {
+      const status = /already disposed/i.test(err.message) ? 409 : 400;
+      res.status(status).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not dispose asset." });
   }
 });
 
@@ -1372,6 +1513,10 @@ app.delete("/api/admin/assets/:id", async (req, res) => {
     }
     res.status(204).send();
   } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: "Could not delete asset." });
   }

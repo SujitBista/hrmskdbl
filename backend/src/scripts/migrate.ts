@@ -183,6 +183,24 @@ async function migrate() {
     ADD COLUMN IF NOT EXISTS book_value NUMERIC(18, 4);
   `);
   await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS asset_status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE';
+  `);
+  await query(`
+    UPDATE hrms_assets
+    SET asset_status = 'ACTIVE'
+    WHERE asset_status IS NULL OR TRIM(asset_status) = '';
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    DROP CONSTRAINT IF EXISTS hrms_assets_asset_status_check;
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD CONSTRAINT hrms_assets_asset_status_check
+    CHECK (asset_status IN ('ACTIVE', 'DISPOSED'));
+  `);
+  await query(`
     ALTER TABLE hrms_assets DROP COLUMN IF EXISTS lifetime_years;
   `);
   await query(`
@@ -234,6 +252,45 @@ async function migrate() {
   await query(`
     CREATE INDEX IF NOT EXISTS hrms_depreciation_run_details_asset_id_run_id_desc
     ON hrms_depreciation_run_details (asset_id, depreciation_run_id DESC, id DESC);
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_asset_disposals (
+      id SERIAL PRIMARY KEY,
+      asset_id INTEGER NOT NULL REFERENCES hrms_assets(id) ON DELETE RESTRICT,
+      disposal_date_bs VARCHAR(32) NOT NULL,
+      disposal_date_ad DATE,
+      disposal_type VARCHAR(32) NOT NULL,
+      disposal_amount NUMERIC(18, 4) NOT NULL,
+      net_book_value_at_disposal NUMERIC(18, 4) NOT NULL,
+      accumulated_depreciation_at_disposal NUMERIC(18, 4) NOT NULL,
+      profit_amount NUMERIC(18, 4) NOT NULL,
+      loss_amount NUMERIC(18, 4) NOT NULL,
+      reference_no VARCHAR(255),
+      notes TEXT,
+      created_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+      approved_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (asset_id)
+    );
+  `);
+  await query(`
+    ALTER TABLE hrms_asset_disposals
+    DROP CONSTRAINT IF EXISTS hrms_asset_disposals_type_check;
+  `);
+  await query(`
+    ALTER TABLE hrms_asset_disposals
+    ADD CONSTRAINT hrms_asset_disposals_type_check
+    CHECK (disposal_type IN ('SOLD', 'SCRAPPED', 'LOST', 'WRITTEN_OFF', 'DONATED'));
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_asset_disposals_date_bs
+    ON hrms_asset_disposals (disposal_date_bs DESC, id DESC);
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_asset_disposals_asset_lookup
+    ON hrms_asset_disposals (asset_id);
   `);
 
   await query(`

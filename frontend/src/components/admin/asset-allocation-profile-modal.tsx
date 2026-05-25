@@ -23,6 +23,7 @@ type ProfilePayload = {
     asset_name: string;
     purchase_date_bs: string;
     working_status: string;
+    asset_status: "ACTIVE" | "DISPOSED";
     group_name: string;
     purchase_amount: string | null;
     dep_method: string | null;
@@ -249,6 +250,7 @@ export function AssetAllocationProfileModal({
 
   function openAddForm(): void {
     if (!data) return;
+    if (data.profile.asset_status === "DISPOSED") return;
     resetFormFromProfile(data);
     setMode("add");
     setSubmitError(null);
@@ -416,6 +418,22 @@ export function AssetAllocationProfileModal({
                     </div>
                     <div>
                       <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                        Asset status
+                      </dt>
+                      <dd className="mt-0.5">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            p.asset_status === "DISPOSED"
+                              ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+                              : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                          }`}
+                        >
+                          {p.asset_status}
+                        </span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
                         Asset user
                       </dt>
                       <dd className="mt-0.5 text-slate-900">
@@ -445,10 +463,12 @@ export function AssetAllocationProfileModal({
                   <button
                     type="button"
                     onClick={openAddForm}
-                    disabled={mode === "add" || loading}
+                    disabled={
+                      mode === "add" || loading || p.asset_status === "DISPOSED"
+                    }
                     className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Add New
+                    {p.asset_status === "DISPOSED" ? "Allocation disabled" : "Add New"}
                   </button>
                   {["Edit", "Delete", "Details"].map((label) => (
                     <button

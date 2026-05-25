@@ -10,6 +10,10 @@ const tabs = [
     label: "Allocation list",
   },
   {
+    href: "/admin/dashboard/asset-register/disposals",
+    label: "Asset Disposal",
+  },
+  {
     href: "/admin/dashboard/asset-register/depreciation",
     label: "Depreciation",
   },
@@ -26,6 +30,9 @@ export function FixedAssetSectionTabs() {
   const onAllocations = pathname.startsWith(
     "/admin/dashboard/asset-register/allocations"
   );
+  const onDisposals = pathname.startsWith(
+    "/admin/dashboard/asset-register/disposals"
+  );
 
   return (
     <div className="mb-4 border-b border-slate-300 bg-slate-50/80">
@@ -39,6 +46,8 @@ export function FixedAssetSectionTabs() {
             active = onDepreciation;
           } else if (t.href === "/admin/dashboard/asset-register/allocations") {
             active = onAllocations;
+          } else if (t.href === "/admin/dashboard/asset-register/disposals") {
+            active = onDisposals;
           } else {
             active = pathname === t.href;
           }

@@ -15,6 +15,7 @@ export type AssetRegisterRow = {
   branch_name: string;
   ownership_type: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
@@ -32,4 +33,28 @@ export type AssetRegisterRow = {
   allocation_branch_name: string;
   allocation_emp_name: string;
   allocation_serial_number: string | null;
+  disposal_date_bs: string | null;
+  disposal_type: string | null;
+  disposal_amount: string | null;
+  net_book_value_at_disposal: string | null;
+  profit_amount: string | null;
+  loss_amount: string | null;
+};
+
+export type AssetDisposal = {
+  id: number;
+  asset_id: number;
+  asset_code: string | null;
+  asset_name: string;
+  disposal_date_bs: string;
+  disposal_type: string;
+  disposal_amount: string;
+  net_book_value_at_disposal: string;
+  accumulated_depreciation_at_disposal: string;
+  profit_amount: string;
+  loss_amount: string;
+  reference_no: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 };

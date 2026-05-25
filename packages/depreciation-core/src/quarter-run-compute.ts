@@ -331,6 +331,8 @@ export function computeAssetQuarterCumulative(params: {
   depreciationScopeMode?: DepreciationScopeMode;
   /** Required when `depreciationScopeMode` is AS_OF_DATE (English BS YYYY/MM/DD). */
   asOfDateBs?: string | null;
+  /** Optional inclusive cap used when depreciation stops inside the selected period (for disposal). */
+  depreciationEndBs?: string | null;
   /**
    * Floors “prior accumulated depreciation” at least this amount (e.g. historical
    * dep implied by imported register: gross cost minus carrying `book_value`).
@@ -390,6 +392,17 @@ export function computeAssetQuarterCumulative(params: {
       params.quarter === 4
         ? fyEndBs
         : fiscalQuarterEndBs(params.fiscalYearStart, params.quarter);
+  }
+
+  if (params.depreciationEndBs != null && String(params.depreciationEndBs).trim() !== "") {
+    const endNorm = normalizeBsDateEnglish(String(params.depreciationEndBs).trim());
+    if (!endNorm || !isValidBsDateString(endNorm)) {
+      return {
+        ok: false,
+        errors: ["Depreciation end date is not a valid Bikram Sambat date."],
+      };
+    }
+    selectedPeriodEndBs = minBsDate(selectedPeriodEndBs, endNorm);
   }
 
   if (compareBsDateString(depStart, selectedPeriodEndBs) > 0) {

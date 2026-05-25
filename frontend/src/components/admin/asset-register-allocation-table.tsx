@@ -22,6 +22,7 @@ export type AssetAllocationListRow = {
   sub_group_name: string | null;
   own_type: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   branch_name: string;
   allocation_branch_name: string;
   book_qty: string | null;
@@ -63,6 +64,7 @@ const DATA_COLUMNS: ColDef[] = [
   { key: "sub_group_name", label: "SubGroupName", format: "text" },
   { key: "own_type", label: "OwnType", format: "text" },
   { key: "working_status", label: "WorkingStatus", format: "text" },
+  { key: "asset_status", label: "AssetStatus", format: "text" },
   { key: "branch_name", label: "BranchName", format: "text" },
   { key: "allocation_branch_name", label: "AllocationBranch", format: "text" },
   { key: "book_qty", label: "BookQty", format: "qty" },
@@ -188,6 +190,9 @@ export function AssetRegisterAllocationTable({
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [fiscalYearFilter, setFiscalYearFilter] = useState("");
   const [fiscalYearOptions, setFiscalYearOptions] = useState<number[]>([]);
+  const [assetStatusFilter, setAssetStatusFilter] = useState<
+    "ACTIVE" | "DISPOSED" | "ALL"
+  >("ACTIVE");
 
   useEffect(() => {
     void (async () => {
@@ -234,6 +239,9 @@ export function AssetRegisterAllocationTable({
       if (fiscalYearFilter.trim() !== "") {
         params.set("fiscalYearStart", fiscalYearFilter.trim());
       }
+      if (assetStatusFilter !== "ACTIVE" || !debouncedSearch) {
+        params.set("assetStatus", assetStatusFilter);
+      }
       const res = await fetch(
         `/api/admin/assets/allocations?${params.toString()}`
       );
@@ -255,19 +263,27 @@ export function AssetRegisterAllocationTable({
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, debouncedSearch, fiscalYearFilter]);
+  }, [page, pageSize, debouncedSearch, fiscalYearFilter, assetStatusFilter]);
 
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
 
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [data?.rows, page, pageSize, debouncedSearch, fiscalYearFilter, refreshKey]);
-
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
   const totalPages =
     data && data.total > 0 ? Math.ceil(data.total / data.pageSize) : 1;
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [
+    rows,
+    page,
+    pageSize,
+    debouncedSearch,
+    fiscalYearFilter,
+    assetStatusFilter,
+    refreshKey,
+  ]);
 
   const allPageSelected = useMemo(() => {
     if (rows.length === 0) return false;
@@ -320,6 +336,7 @@ export function AssetRegisterAllocationTable({
     setSearchInput("");
     setDebouncedSearch("");
     setFiscalYearFilter("");
+    setAssetStatusFilter("ACTIVE");
     setPage(1);
   }
 
@@ -338,6 +355,9 @@ export function AssetRegisterAllocationTable({
       }
       if (fiscalYearFilter.trim() !== "") {
         params.set("fiscalYearStart", fiscalYearFilter.trim());
+      }
+      if (assetStatusFilter !== "ACTIVE" || !debouncedSearch) {
+        params.set("assetStatus", assetStatusFilter);
       }
       const qs = params.toString();
       const res = await fetch(
@@ -402,7 +422,7 @@ export function AssetRegisterAllocationTable({
       window.clearTimeout(timeoutId);
       setExporting(false);
     }
-  }, [debouncedSearch, selectedIds, fiscalYearFilter]);
+  }, [debouncedSearch, selectedIds, fiscalYearFilter, assetStatusFilter]);
 
   const colCount = 2 + DATA_COLUMNS.length;
 
@@ -488,6 +508,26 @@ export function AssetRegisterAllocationTable({
                 FY {y}
               </option>
             ))}
+          </select>
+          <label htmlFor={`${tableId}-asset-status`} className="sr-only">
+            Asset status filter
+          </label>
+          <select
+            id={`${tableId}-asset-status`}
+            value={assetStatusFilter}
+            onChange={(e) => {
+              setAssetStatusFilter(
+                e.target.value as "ACTIVE" | "DISPOSED" | "ALL"
+              );
+              setPage(1);
+            }}
+            disabled={loading}
+            className="h-9 min-w-[10rem] shrink-0 rounded border border-slate-300 bg-white px-2 text-sm text-slate-800 disabled:cursor-wait disabled:opacity-70"
+            aria-label="Asset status filter"
+          >
+            <option value="ACTIVE">Active Assets</option>
+            <option value="DISPOSED">Disposed Assets</option>
+            <option value="ALL">All Assets</option>
           </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:justify-end">
@@ -634,7 +674,13 @@ export function AssetRegisterAllocationTable({
                         {c.key === "asset_name" ? (
                           <button
                             type="button"
-                            className="max-w-full truncate text-left text-blue-700 underline decoration-blue-400/80 underline-offset-2 hover:text-blue-900"
+                            disabled={row.asset_status === "DISPOSED"}
+                            className="max-w-full truncate text-left text-blue-700 underline decoration-blue-400/80 underline-offset-2 hover:text-blue-900 disabled:cursor-not-allowed disabled:text-slate-500 disabled:no-underline"
+                            title={
+                              row.asset_status === "DISPOSED"
+                                ? "Disposed assets cannot be transferred or reallocated."
+                                : cellDisplay(row, c)
+                            }
                             onClick={() => setProfileAssetId(row.asset_id)}
                           >
                             {cellDisplay(row, c)}

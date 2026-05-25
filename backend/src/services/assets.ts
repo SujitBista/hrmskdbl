@@ -25,6 +25,7 @@ export type Asset = {
   sub_group_id: number | null;
   ownership_type: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   branch_id: number;
   department_id: number | null;
   department_name: string | null;
@@ -1185,6 +1186,7 @@ async function createAssetWithClient(
           `UPDATE hrms_assets AS a SET asset_code = $1 WHERE a.id = $2
            RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
              a.ownership_type, a.working_status, a.branch_id, a.department_id,
+             a.asset_status,
              (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
              a.purchase_date_bs,
              a.depreciation_start_date_bs,
@@ -1303,6 +1305,7 @@ export async function updateAsset(
         WHERE a.id = $16
         RETURNING a.id, a.asset_code, a.asset_name, a.group_id, a.sub_group_id,
           a.ownership_type, a.working_status, a.branch_id, a.department_id,
+          a.asset_status,
           (SELECT d.name FROM hrms_departments d WHERE d.id = a.department_id) AS department_name,
           a.purchase_date_bs,
           a.depreciation_start_date_bs,
@@ -1386,6 +1389,17 @@ export async function updateAsset(
 }
 
 export async function deleteAsset(id: number): Promise<boolean> {
+  const existing = await query<{ asset_status: string }>(
+    `SELECT asset_status FROM hrms_assets WHERE id = $1`,
+    [id]
+  );
+  const row = existing.rows[0];
+  if (!row) {
+    return false;
+  }
+  if (row.asset_status === "DISPOSED") {
+    throw new Error("Disposed assets cannot be deleted.");
+  }
   const result = await query(`DELETE FROM hrms_assets WHERE id = $1`, [id]);
   return (result.rowCount ?? 0) > 0;
 }
@@ -1408,6 +1422,7 @@ export type AssetListRow = {
   branch_name: string;
   ownership_type: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   department_id: number | null;
   department_name: string | null;
   purchase_date_bs: string;
@@ -1423,6 +1438,12 @@ export type AssetListRow = {
   allocation_branch_name: string;
   allocation_emp_name: string;
   allocation_serial_number: string | null;
+  disposal_date_bs: string | null;
+  disposal_type: string | null;
+  disposal_amount: string | null;
+  net_book_value_at_disposal: string | null;
+  profit_amount: string | null;
+  loss_amount: string | null;
 };
 
 export type AssetAllocationListRow = {
@@ -1436,6 +1457,7 @@ export type AssetAllocationListRow = {
   sub_group_name: string | null;
   own_type: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   branch_name: string;
   allocation_branch_name: string;
   book_qty: string | null;
@@ -1457,6 +1479,8 @@ export type AssetAllocationListRow = {
 
 export type ListAssetsParams = {
   search?: string;
+  assetStatus?: "ACTIVE" | "DISPOSED" | "ALL";
+  showDisposedAssets?: boolean;
   page: number;
   pageSize: number;
 };
@@ -1477,6 +1501,8 @@ export type ListAssetAllocationsParams = {
    * When omitted, the server’s current BS fiscal year is used (see {@link resolveDepreciationFiscalYearStartForQueries}).
    */
   depreciationFiscalYearStart?: number | null;
+  assetStatus?: "ACTIVE" | "DISPOSED" | "ALL";
+  showDisposedAssets?: boolean;
 };
 
 export type ListAssetAllocationsResult = {
@@ -1502,6 +1528,7 @@ export type AssetAllocationProfileApiProfile = {
   asset_name: string;
   purchase_date_bs: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   group_name: string;
   purchase_amount: string | null;
   dep_method: string | null;
@@ -1543,6 +1570,7 @@ type AssetAllocationProfileDbRow = {
   asset_name: string;
   purchase_date_bs: string;
   working_status: string;
+  asset_status: "ACTIVE" | "DISPOSED";
   group_name: string;
   group_dep_method: string | null;
   dep_method_snapshot: string | null;
@@ -1606,6 +1634,7 @@ function assetAllocationProfileSelectSql(
     a.asset_name,
     a.purchase_date_bs,
     a.working_status,
+    a.asset_status,
     g.name AS group_name,
     g.dep_method AS group_dep_method,
     NULLIF(TRIM(a.dep_method_snapshot), '') AS dep_method_snapshot,
@@ -1815,6 +1844,7 @@ export async function getAssetAllocationProfile(
     asset_name: row.asset_name,
     purchase_date_bs: row.purchase_date_bs,
     working_status: row.working_status,
+    asset_status: row.asset_status,
     group_name: row.group_name,
     purchase_amount: row.purchase_amount,
     dep_method: depMethod,
@@ -1897,12 +1927,16 @@ export async function applyAssetAllocationChange(
     return null;
   }
   const input = parseApplyAssetAllocationChangeBody(body);
-  const exists = await query<{ id: number }>(
-    `SELECT id FROM hrms_assets WHERE id = $1`,
+  const exists = await query<{ id: number; asset_status: string }>(
+    `SELECT id, asset_status FROM hrms_assets WHERE id = $1`,
     [assetId]
   );
-  if (!exists.rows[0]) {
+  const asset = exists.rows[0];
+  if (!asset) {
     return null;
+  }
+  if (asset.asset_status === "DISPOSED") {
+    throw new Error("Disposed assets cannot be transferred or reallocated.");
   }
   await assertHrmsAssetAllocationsSchema();
   await assertDepartmentExists(input.department_id);
@@ -1974,6 +2008,7 @@ const ASSET_LIST_SELECT = `
     b.branch_name,
     a.ownership_type,
     a.working_status,
+    a.asset_status,
     a.department_id,
     d.name AS department_name,
     a.purchase_date_bs,
@@ -1988,7 +2023,13 @@ const ASSET_LIST_SELECT = `
     COALESCE(aloc.allocation_category_name, '') AS allocation_category_name,
     COALESCE(aloc.allocation_branch_name, '') AS allocation_branch_name,
     COALESCE(aloc.emp_name, '') AS allocation_emp_name,
-    aloc.serial_number AS allocation_serial_number
+    aloc.serial_number AS allocation_serial_number,
+    disp.disposal_date_bs,
+    disp.disposal_type,
+    disp.disposal_amount::text,
+    disp.net_book_value_at_disposal::text,
+    disp.profit_amount::text,
+    disp.loss_amount::text
   FROM hrms_assets a
   INNER JOIN hrms_groups g ON g.id = a.group_id
   INNER JOIN hrms_branches b ON b.id = a.branch_id
@@ -2001,6 +2042,7 @@ const ASSET_LIST_SELECT = `
     ORDER BY id DESC
     LIMIT 1
   ) aloc ON true
+  LEFT JOIN hrms_asset_disposals disp ON disp.asset_id = a.id
 `;
 
 export function resolveDepreciationFiscalYearStartForQueries(
@@ -2066,6 +2108,7 @@ function assetAllocationListSelectSql(
     sg.name AS sub_group_name,
     a.ownership_type AS own_type,
     a.working_status,
+    a.asset_status,
     b.branch_name,
     COALESCE(
       NULLIF(TRIM(al.allocation_branch_name), ''),
@@ -2119,28 +2162,94 @@ function assetAllocationListSelectSql(
 `;
 }
 
+type AssetStatusFilter = "ACTIVE" | "DISPOSED" | "ALL";
+
+function normalizeAssetStatusFilter(
+  status: ListAssetsParams["assetStatus"]
+): AssetStatusFilter | null {
+  const raw = typeof status === "string" ? status.trim().toUpperCase() : "";
+  if (raw === "ACTIVE" || raw === "DISPOSED" || raw === "ALL") {
+    return raw;
+  }
+  return null;
+}
+
+function resolveAssetStatusFilter(
+  params: Pick<ListAssetsParams, "assetStatus" | "showDisposedAssets">,
+  search: string
+): AssetStatusFilter {
+  const explicit = normalizeAssetStatusFilter(params.assetStatus);
+  if (explicit) return explicit;
+  if (params.showDisposedAssets === true) return "ALL";
+  return search === "" ? "ACTIVE" : "ALL";
+}
+
+function assetStatusWhereSql(
+  status: AssetStatusFilter,
+  paramIndex = 1
+): { sql: string; params: unknown[] } {
+  if (status === "ALL") {
+    return { sql: "", params: [] };
+  }
+  return {
+    sql: ` WHERE a.asset_status = $${paramIndex}`,
+    params: [status],
+  };
+}
+
+function assetSearchWhereSql(param: string): string {
+  return `(
+       a.asset_name ILIKE ${param} OR
+       COALESCE(a.asset_code, '') ILIKE ${param} OR
+       g.name ILIKE ${param} OR g.code ILIKE ${param} OR
+       b.branch_name ILIKE ${param} OR b.branch_code ILIKE ${param} OR
+       COALESCE(sg.name, '') ILIKE ${param} OR
+       COALESCE(d.name, '') ILIKE ${param} OR
+       EXISTS (
+         SELECT 1 FROM hrms_asset_allocations alox
+         WHERE alox.asset_id = a.id AND (
+           COALESCE(alox.remarks, '') ILIKE ${param} OR
+           COALESCE(alox.allocation_category_name, '') ILIKE ${param} OR
+           COALESCE(alox.allocation_branch_name, '') ILIKE ${param} OR
+           COALESCE(alox.emp_name, '') ILIKE ${param} OR
+           COALESCE(alox.serial_number, '') ILIKE ${param}
+         )
+       )
+     )`;
+}
+
 export async function listAssets(
   params: ListAssetsParams
 ): Promise<ListAssetsResult> {
   const { page, pageSize } = clampListParams(params);
   const search = params.search?.trim() ?? "";
   const offset = (page - 1) * pageSize;
+  const statusFilter = resolveAssetStatusFilter(params, search);
+  const statusWhere = assetStatusWhereSql(statusFilter);
 
   if (search === "") {
     const countResult = await query<{ n: string }>(
-      `SELECT COUNT(*)::text AS n FROM hrms_assets`
+      `SELECT COUNT(*)::text AS n FROM hrms_assets a${statusWhere.sql}`,
+      statusWhere.params
     );
     const total = Number(countResult.rows[0]?.n ?? 0);
     const list = await query<AssetListRow>(
       `${ASSET_LIST_SELECT}
+       ${statusWhere.sql}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT $1 OFFSET $2`,
-      [pageSize, offset]
+       LIMIT $${statusWhere.params.length + 1} OFFSET $${statusWhere.params.length + 2}`,
+      [...statusWhere.params, pageSize, offset]
     );
     return { assets: list.rows, total, page, pageSize };
   }
 
   const pattern = `%${search}%`;
+  const searchParamIdx = statusWhere.params.length + 1;
+  const searchWhere = assetSearchWhereSql(`$${searchParamIdx}`);
+  const searchAndStatusWhere =
+    statusWhere.sql === ""
+      ? `WHERE ${searchWhere}`
+      : `${statusWhere.sql} AND ${searchWhere}`;
   const countResult = await query<{ n: string }>(
     `SELECT COUNT(*)::text AS n
      FROM hrms_assets a
@@ -2148,50 +2257,20 @@ export async function listAssets(
      INNER JOIN hrms_branches b ON b.id = a.branch_id
      LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
      LEFT JOIN hrms_departments d ON d.id = a.department_id
-     WHERE (
-       a.asset_name ILIKE $1 OR
-       COALESCE(a.asset_code, '') ILIKE $1 OR
-       g.name ILIKE $1 OR g.code ILIKE $1 OR
-       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
-       COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(d.name, '') ILIKE $1 OR
-       EXISTS (
-         SELECT 1 FROM hrms_asset_allocations alox
-         WHERE alox.asset_id = a.id AND (
-           COALESCE(alox.remarks, '') ILIKE $1 OR
-           COALESCE(alox.allocation_category_name, '') ILIKE $1 OR
-           COALESCE(alox.allocation_branch_name, '') ILIKE $1 OR
-           COALESCE(alox.emp_name, '') ILIKE $1 OR
-           COALESCE(alox.serial_number, '') ILIKE $1
-         )
-       )
-     )`,
-    [pattern]
+     ${searchAndStatusWhere}`,
+    [...statusWhere.params, pattern]
   );
   const total = Number(countResult.rows[0]?.n ?? 0);
+  const listWhere =
+    statusWhere.sql === ""
+      ? `WHERE ${searchWhere}`
+      : `${statusWhere.sql} AND ${searchWhere}`;
   const list = await query<AssetListRow>(
     `${ASSET_LIST_SELECT}
-     WHERE (
-       a.asset_name ILIKE $1 OR
-       COALESCE(a.asset_code, '') ILIKE $1 OR
-       g.name ILIKE $1 OR g.code ILIKE $1 OR
-       b.branch_name ILIKE $1 OR b.branch_code ILIKE $1 OR
-       COALESCE(sg.name, '') ILIKE $1 OR
-       COALESCE(d.name, '') ILIKE $1 OR
-       EXISTS (
-         SELECT 1 FROM hrms_asset_allocations alox
-         WHERE alox.asset_id = a.id AND (
-           COALESCE(alox.remarks, '') ILIKE $1 OR
-           COALESCE(alox.allocation_category_name, '') ILIKE $1 OR
-           COALESCE(alox.allocation_branch_name, '') ILIKE $1 OR
-           COALESCE(alox.emp_name, '') ILIKE $1 OR
-           COALESCE(alox.serial_number, '') ILIKE $1
-         )
-       )
-     )
+     ${listWhere}
      ORDER BY a.created_at DESC, a.id DESC
-     LIMIT $2 OFFSET $3`,
-    [pattern, pageSize, offset]
+     LIMIT $${statusWhere.params.length + 2} OFFSET $${statusWhere.params.length + 3}`,
+    [...statusWhere.params, pattern, pageSize, offset]
   );
   return { assets: list.rows, total, page, pageSize };
 }
@@ -2207,31 +2286,45 @@ export async function listAssetAllocations(
   );
   const fyParamIdx = fy != null ? 1 : null;
   const selectSql = assetAllocationListSelectSql(fy, fyParamIdx);
+  const statusFilter = resolveAssetStatusFilter(params, search);
 
   if (search === "") {
+    const countStatusWhere = assetStatusWhereSql(statusFilter);
     const countResult = await query<{ n: string }>(
-      `SELECT COUNT(*)::text AS n FROM hrms_assets`
+      `SELECT COUNT(*)::text AS n FROM hrms_assets a${countStatusWhere.sql}`,
+      countStatusWhere.params
     );
     const total = Number(countResult.rows[0]?.n ?? 0);
+    const listStatusWhere = assetStatusWhereSql(
+      statusFilter,
+      fy != null ? 2 : 1
+    );
     const listParams =
-      fy != null ? [fy, pageSize, offset] : [pageSize, offset];
+      fy != null
+        ? [fy, ...listStatusWhere.params, pageSize, offset]
+        : [...listStatusWhere.params, pageSize, offset];
+    const limitIdx = (fy != null ? 1 : 0) + listStatusWhere.params.length + 1;
     const list = await query<AssetAllocationListRow>(
       `${selectSql}
+       ${listStatusWhere.sql}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT $${fy != null ? 2 : 1} OFFSET $${fy != null ? 3 : 2}`,
+       LIMIT $${limitIdx} OFFSET $${limitIdx + 1}`,
       listParams
     );
     return { rows: list.rows, total, page, pageSize };
   }
 
   const pattern = `%${search}%`;
+  const countStatusWhere = assetStatusWhereSql(statusFilter, 2);
+  const countWherePrefix =
+    countStatusWhere.sql === "" ? "WHERE" : `${countStatusWhere.sql} AND`;
   const countResult = await query<{ n: string }>(
     `SELECT COUNT(*)::text AS n
      FROM hrms_assets a
      INNER JOIN hrms_groups g ON g.id = a.group_id
      INNER JOIN hrms_branches b ON b.id = a.branch_id
      LEFT JOIN hrms_sub_groups sg ON sg.id = a.sub_group_id
-     WHERE (
+     ${countWherePrefix} (
        a.asset_name ILIKE $1 OR
        COALESCE(a.asset_code, '') ILIKE $1 OR
        g.name ILIKE $1 OR g.code ILIKE $1 OR
@@ -2248,32 +2341,42 @@ export async function listAssetAllocations(
          )
        )
      )`,
-    [pattern]
+    [pattern, ...countStatusWhere.params]
   );
   const total = Number(countResult.rows[0]?.n ?? 0);
+  const patternIdx = fy != null ? 2 : 1;
+  const listStatusWhere = assetStatusWhereSql(
+    statusFilter,
+    fy != null ? 3 : 2
+  );
+  const listWherePrefix =
+    listStatusWhere.sql === "" ? "WHERE" : `${listStatusWhere.sql} AND`;
   const listParams =
-    fy != null ? [fy, pattern, pageSize, offset] : [pattern, pageSize, offset];
+    fy != null
+      ? [fy, pattern, ...listStatusWhere.params, pageSize, offset]
+      : [pattern, ...listStatusWhere.params, pageSize, offset];
+  const limitIdx = (fy != null ? 1 : 0) + 1 + listStatusWhere.params.length + 1;
   const list = await query<AssetAllocationListRow>(
     `${selectSql}
-     WHERE (
-       a.asset_name ILIKE $${fy != null ? 2 : 1} OR
-       COALESCE(a.asset_code, '') ILIKE $${fy != null ? 2 : 1} OR
-       g.name ILIKE $${fy != null ? 2 : 1} OR g.code ILIKE $${fy != null ? 2 : 1} OR
-       b.branch_name ILIKE $${fy != null ? 2 : 1} OR b.branch_code ILIKE $${fy != null ? 2 : 1} OR
-       COALESCE(sg.name, '') ILIKE $${fy != null ? 2 : 1} OR
+     ${listWherePrefix} (
+       a.asset_name ILIKE $${patternIdx} OR
+       COALESCE(a.asset_code, '') ILIKE $${patternIdx} OR
+       g.name ILIKE $${patternIdx} OR g.code ILIKE $${patternIdx} OR
+       b.branch_name ILIKE $${patternIdx} OR b.branch_code ILIKE $${patternIdx} OR
+       COALESCE(sg.name, '') ILIKE $${patternIdx} OR
        EXISTS (
          SELECT 1 FROM hrms_asset_allocations alx
          WHERE alx.asset_id = a.id AND (
-           COALESCE(alx.remarks, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.allocation_category_name, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.allocation_branch_name, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.emp_name, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.serial_number, '') ILIKE $${fy != null ? 2 : 1}
+           COALESCE(alx.remarks, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.emp_name, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.serial_number, '') ILIKE $${patternIdx}
          )
        )
      )
      ORDER BY a.created_at DESC, a.id DESC
-     LIMIT $${fy != null ? 3 : 2} OFFSET $${fy != null ? 4 : 3}`,
+     LIMIT $${limitIdx} OFFSET $${limitIdx + 1}`,
     listParams
   );
   return { rows: list.rows, total, page, pageSize };
@@ -2287,6 +2390,8 @@ export async function listAssetAllocations(
 export async function exportAllAssetAllocations(params: {
   search?: string;
   depreciationFiscalYearStart?: number | null;
+  assetStatus?: "ACTIVE" | "DISPOSED" | "ALL";
+  showDisposedAssets?: boolean;
 }): Promise<ExportAssetAllocationsResult> {
   const search = params.search?.trim() ?? "";
   const cap = ALLOCATION_EXPORT_MAX_ROWS + 1;
@@ -2295,13 +2400,21 @@ export async function exportAllAssetAllocations(params: {
   );
   const fyParamIdx = fy != null ? 1 : null;
   const selectSql = assetAllocationListSelectSql(fy, fyParamIdx);
+  const statusFilter = resolveAssetStatusFilter(params, search);
 
   if (search === "") {
-    const listParams = fy != null ? [fy, cap] : [cap];
+    const listStatusWhere = assetStatusWhereSql(
+      statusFilter,
+      fy != null ? 2 : 1
+    );
+    const listParams =
+      fy != null ? [fy, ...listStatusWhere.params, cap] : [...listStatusWhere.params, cap];
+    const limitIdx = (fy != null ? 1 : 0) + listStatusWhere.params.length + 1;
     const list = await query<AssetAllocationListRow>(
       `${selectSql}
+       ${listStatusWhere.sql}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT $${fy != null ? 2 : 1}`,
+       LIMIT $${limitIdx}`,
       listParams
     );
     const truncated = list.rows.length > ALLOCATION_EXPORT_MAX_ROWS;
@@ -2312,28 +2425,39 @@ export async function exportAllAssetAllocations(params: {
   }
 
   const pattern = `%${search}%`;
-  const listParams = fy != null ? [fy, pattern, cap] : [pattern, cap];
+  const patternIdx = fy != null ? 2 : 1;
+  const listStatusWhere = assetStatusWhereSql(
+    statusFilter,
+    fy != null ? 3 : 2
+  );
+  const listWherePrefix =
+    listStatusWhere.sql === "" ? "WHERE" : `${listStatusWhere.sql} AND`;
+  const listParams =
+    fy != null
+      ? [fy, pattern, ...listStatusWhere.params, cap]
+      : [pattern, ...listStatusWhere.params, cap];
+  const limitIdx = (fy != null ? 1 : 0) + 1 + listStatusWhere.params.length + 1;
   const list = await query<AssetAllocationListRow>(
     `${selectSql}
-     WHERE (
-       a.asset_name ILIKE $${fy != null ? 2 : 1} OR
-       COALESCE(a.asset_code, '') ILIKE $${fy != null ? 2 : 1} OR
-       g.name ILIKE $${fy != null ? 2 : 1} OR g.code ILIKE $${fy != null ? 2 : 1} OR
-       b.branch_name ILIKE $${fy != null ? 2 : 1} OR b.branch_code ILIKE $${fy != null ? 2 : 1} OR
-       COALESCE(sg.name, '') ILIKE $${fy != null ? 2 : 1} OR
+     ${listWherePrefix} (
+       a.asset_name ILIKE $${patternIdx} OR
+       COALESCE(a.asset_code, '') ILIKE $${patternIdx} OR
+       g.name ILIKE $${patternIdx} OR g.code ILIKE $${patternIdx} OR
+       b.branch_name ILIKE $${patternIdx} OR b.branch_code ILIKE $${patternIdx} OR
+       COALESCE(sg.name, '') ILIKE $${patternIdx} OR
        EXISTS (
          SELECT 1 FROM hrms_asset_allocations alx
          WHERE alx.asset_id = a.id AND (
-           COALESCE(alx.remarks, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.allocation_category_name, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.allocation_branch_name, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.emp_name, '') ILIKE $${fy != null ? 2 : 1} OR
-           COALESCE(alx.serial_number, '') ILIKE $${fy != null ? 2 : 1}
+           COALESCE(alx.remarks, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.allocation_category_name, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.allocation_branch_name, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.emp_name, '') ILIKE $${patternIdx} OR
+           COALESCE(alx.serial_number, '') ILIKE $${patternIdx}
          )
        )
      )
      ORDER BY a.created_at DESC, a.id DESC
-     LIMIT $${fy != null ? 3 : 2}`,
+     LIMIT $${limitIdx}`,
     listParams
   );
   const truncated = list.rows.length > ALLOCATION_EXPORT_MAX_ROWS;

@@ -6,12 +6,14 @@ import {
   useId,
   useRef,
   useState,
+  type FormEvent,
 } from "react";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 import { formatAdminDateTime } from "@/lib/format-datetime";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
-import type { AssetRegisterRow } from "./asset-register-types";
+import type { AssetDisposal, AssetRegisterRow } from "./asset-register-types";
+import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
 
 type ListResponse = {
   assets: AssetRegisterRow[];
@@ -37,7 +39,14 @@ type DepartmentOption = { id: number; name: string };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 18;
+const COL_COUNT = 20;
+const DISPOSAL_TYPES = [
+  "SOLD",
+  "SCRAPPED",
+  "LOST",
+  "WRITTEN_OFF",
+  "DONATED",
+] as const;
 
 function formatPurchaseAmount(
   qty: string | null,
@@ -56,6 +65,251 @@ function formatMoney(amount: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatMoneyText(raw: string | null | undefined): string {
+  if (raw == null || String(raw).trim() === "") return "—";
+  const n = Number.parseFloat(String(raw).replace(/,/g, ""));
+  if (!Number.isFinite(n)) return String(raw).trim();
+  return formatMoney(n);
+}
+
+function gainLossLabel(a: AssetRegisterRow): string {
+  const profit = Number.parseFloat(a.profit_amount ?? "");
+  if (Number.isFinite(profit) && profit > 0) {
+    return `Profit ${formatMoney(profit)}`;
+  }
+  const loss = Number.parseFloat(a.loss_amount ?? "");
+  if (Number.isFinite(loss) && loss > 0) {
+    return `Loss ${formatMoney(loss)}`;
+  }
+  return a.asset_status === "DISPOSED" ? "No gain/loss" : "—";
+}
+
+function AssetStatusBadge({ status }: { status: AssetRegisterRow["asset_status"] }) {
+  const disposed = status === "DISPOSED";
+  return (
+    <span
+      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+        disposed
+          ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+          : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+      }`}
+    >
+      {status}
+    </span>
+  );
+}
+
+export function DisposalDialog({
+  asset,
+  onClose,
+  onDisposed,
+}: {
+  asset: AssetRegisterRow | null;
+  onClose: () => void;
+  onDisposed: () => void;
+}) {
+  const [disposalDateBs, setDisposalDateBs] = useState("");
+  const [disposalType, setDisposalType] =
+    useState<(typeof DISPOSAL_TYPES)[number]>("SOLD");
+  const [disposalAmount, setDisposalAmount] = useState("");
+  const [referenceNo, setReferenceNo] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<AssetDisposal | null>(null);
+
+  useEffect(() => {
+    if (!asset) {
+      setSaved(null);
+      setError(null);
+      return;
+    }
+    setDisposalDateBs("");
+    setDisposalType("SOLD");
+    setDisposalAmount("");
+    setReferenceNo("");
+    setNotes("");
+    setError(null);
+    setSaved(null);
+  }, [asset]);
+
+  if (!asset) return null;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!asset) return;
+    setSubmitting(true);
+    setError(null);
+    const dateNorm = normalizeBsDateEnglish(disposalDateBs);
+    if (!dateNorm) {
+      setError("Disposal date is required.");
+      setSubmitting(false);
+      return;
+    }
+    const amount = Number(disposalAmount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setError("Disposal amount must be zero or greater.");
+      setSubmitting(false);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/assets/${asset.id}/disposal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          disposal_date_bs: dateNorm,
+          disposal_type: disposalType,
+          disposal_amount: amount,
+          reference_no: referenceNo.trim() || null,
+          notes: notes.trim() || null,
+        }),
+      });
+      const json = (await res.json()) as {
+        disposal?: AssetDisposal;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(json.error ?? "Could not dispose asset.");
+        return;
+      }
+      setSaved(json.disposal ?? null);
+      onDisposed();
+    } catch {
+      setError("Could not dispose asset.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <dialog
+      open
+      className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
+    >
+      <form onSubmit={(e) => void submit(e)} className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">
+              Dispose Asset
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {asset.asset_name}{" "}
+              <span className="font-mono text-xs">
+                {formatAssetCodeForDisplay(asset.asset_code)}
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700"
+          >
+            Close
+          </button>
+        </div>
+
+        {saved ? (
+          <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+            <p className="font-medium">Disposal saved.</p>
+            <p className="mt-1">
+              NBV {formatMoneyText(saved.net_book_value_at_disposal)} · Profit{" "}
+              {formatMoneyText(saved.profit_amount)} · Loss{" "}
+              {formatMoneyText(saved.loss_amount)}
+            </p>
+          </div>
+        ) : null}
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="block text-sm">
+            <span className="font-medium text-slate-700">Disposal Date (BS)</span>
+            <input
+              value={disposalDateBs}
+              onChange={(e) => setDisposalDateBs(e.target.value)}
+              placeholder="YYYY/MM/DD"
+              disabled={submitting || saved != null}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2 disabled:bg-slate-50"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="font-medium text-slate-700">Disposal Type</span>
+            <select
+              value={disposalType}
+              onChange={(e) =>
+                setDisposalType(e.target.value as (typeof DISPOSAL_TYPES)[number])
+              }
+              disabled={submitting || saved != null}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2 disabled:bg-slate-50"
+            >
+              {DISPOSAL_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="font-medium text-slate-700">Disposal Amount</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={disposalAmount}
+              onChange={(e) => setDisposalAmount(e.target.value)}
+              disabled={submitting || saved != null}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2 disabled:bg-slate-50"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="font-medium text-slate-700">Reference No</span>
+            <input
+              value={referenceNo}
+              onChange={(e) => setReferenceNo(e.target.value)}
+              disabled={submitting || saved != null}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2 disabled:bg-slate-50"
+            />
+          </label>
+          <label className="block text-sm sm:col-span-2">
+            <span className="font-medium text-slate-700">Notes</span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              disabled={submitting || saved != null}
+              rows={3}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2 disabled:bg-slate-50"
+            />
+          </label>
+        </div>
+
+        {error ? (
+          <p className="mt-4 text-sm text-red-600" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+          >
+            {saved ? "Done" : "Cancel"}
+          </button>
+          {!saved ? (
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? "Disposing…" : "Dispose Asset"}
+            </button>
+          ) : null}
+        </div>
+      </form>
+    </dialog>
+  );
 }
 
 /** Same basis order as depreciation runs: register book value → purchase → legacy old book. */
@@ -86,6 +340,9 @@ export function AssetRegisterAssetsTable({
   const deleteDialogRef = useRef<HTMLDialogElement>(null);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [assetStatusFilter, setAssetStatusFilter] = useState<
+    "ACTIVE" | "DISPOSED" | "ALL"
+  >("ACTIVE");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -103,6 +360,9 @@ export function AssetRegisterAssetsTable({
   );
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [editTarget, setEditTarget] = useState<AssetRegisterRow | null>(null);
+  const [disposeTarget, setDisposeTarget] = useState<AssetRegisterRow | null>(
+    null
+  );
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -185,6 +445,9 @@ export function AssetRegisterAssetsTable({
       if (debouncedSearch) {
         params.set("q", debouncedSearch);
       }
+      if (assetStatusFilter !== "ACTIVE" || !debouncedSearch) {
+        params.set("assetStatus", assetStatusFilter);
+      }
       const res = await fetch(`/api/admin/assets?${params.toString()}`);
       const json = (await res.json()) as ListResponse & { error?: string };
       if (!res.ok) {
@@ -204,7 +467,7 @@ export function AssetRegisterAssetsTable({
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, debouncedSearch]);
+  }, [page, pageSize, debouncedSearch, assetStatusFilter]);
 
   useEffect(() => {
     void load();
@@ -253,7 +516,8 @@ export function AssetRegisterAssetsTable({
             Recently saved fixed assets from this register (newest first).
           </p>
         </div>
-        <div className="w-full sm:max-w-xs">
+        <div className="flex w-full flex-col gap-3 sm:max-w-xl sm:flex-row sm:items-end">
+          <div className="w-full sm:max-w-xs">
           <label
             htmlFor={`${tableId}-search`}
             className="block text-sm font-medium text-slate-700"
@@ -268,6 +532,30 @@ export function AssetRegisterAssetsTable({
             onChange={(e) => setSearchInput(e.target.value)}
             className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
           />
+          </div>
+          <div className="w-full sm:max-w-[12rem]">
+            <label
+              htmlFor={`${tableId}-asset-status`}
+              className="block text-sm font-medium text-slate-700"
+            >
+              Asset filter
+            </label>
+            <select
+              id={`${tableId}-asset-status`}
+              value={assetStatusFilter}
+              onChange={(e) => {
+                setAssetStatusFilter(
+                  e.target.value as "ACTIVE" | "DISPOSED" | "ALL"
+                );
+                setPage(1);
+              }}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
+            >
+              <option value="ACTIVE">Active Assets</option>
+              <option value="DISPOSED">Disposed Assets</option>
+              <option value="ALL">All Assets</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -303,7 +591,10 @@ export function AssetRegisterAssetsTable({
                 Ownership
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
-                Status
+                Working status
+              </th>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
+                Asset status
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Department
@@ -349,6 +640,9 @@ export function AssetRegisterAssetsTable({
                 title="From asset group"
               >
                 Dep. method
+              </th>
+              <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
+                Disposal gain/loss
               </th>
               <th scope="col" className="px-4 py-3 font-medium whitespace-nowrap">
                 Saved
@@ -426,6 +720,15 @@ export function AssetRegisterAssetsTable({
                       {a.working_status}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      <AssetStatusBadge status={a.asset_status} />
+                      {a.disposal_date_bs ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          {a.disposal_type?.replace(/_/g, " ")} ·{" "}
+                          {a.disposal_date_bs}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
                       {a.department_name ?? "—"}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
@@ -449,6 +752,9 @@ export function AssetRegisterAssetsTable({
                     <td className="max-w-[140px] px-4 py-3 whitespace-normal text-slate-700">
                       {a.group_dep_method?.trim() ? a.group_dep_method : "—"}
                     </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {gainLossLabel(a)}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                       {formatAdminDateTime(a.created_at)}
                     </td>
@@ -457,13 +763,24 @@ export function AssetRegisterAssetsTable({
                         <button
                           type="button"
                           onClick={() => setEditTarget(a)}
+                          disabled={a.asset_status === "DISPOSED"}
                           className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
                         >
                           Edit
                         </button>
+                        {a.asset_status === "ACTIVE" ? (
+                          <button
+                            type="button"
+                            onClick={() => setDisposeTarget(a)}
+                            className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 shadow-sm transition hover:bg-red-50"
+                          >
+                            Dispose
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => setDeleteTarget(a)}
+                          disabled={a.asset_status === "DISPOSED"}
                           className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 shadow-sm transition hover:bg-red-50"
                         >
                           Delete
@@ -587,6 +904,11 @@ export function AssetRegisterAssetsTable({
         lookupsBusy={lookupsLoading}
         onClose={() => setEditTarget(null)}
         onSaved={() => void load()}
+      />
+      <DisposalDialog
+        asset={disposeTarget}
+        onClose={() => setDisposeTarget(null)}
+        onDisposed={() => void load()}
       />
     </section>
   );

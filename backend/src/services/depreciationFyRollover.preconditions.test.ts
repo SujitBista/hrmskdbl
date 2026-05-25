@@ -25,6 +25,8 @@ function sampleEligibleAsset(
     unit_rate: "50000",
     book_value: "40000",
     old_book_value: null,
+    asset_status: "ACTIVE",
+    disposal_date_bs: null,
     ...overrides,
   };
 }

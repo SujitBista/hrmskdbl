@@ -29,6 +29,8 @@ type DetailRow = {
   depreciation_run_id: number;
   asset_id: number;
   asset_code: string | null;
+  asset_status: "ACTIVE" | "DISPOSED";
+  disposal_date_bs: string | null;
   asset_name: string;
   fiscal_year: number;
   purchase_date_bs: string;
@@ -650,7 +652,7 @@ export function DepreciationRunDetailScreen() {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[2020px] w-full table-fixed border-collapse text-left text-sm">
+        <table className="min-w-[2140px] w-full table-fixed border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
               <th className="sticky top-0 z-30 w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
@@ -661,6 +663,9 @@ export function DepreciationRunDetailScreen() {
               </th>
               <th className="sticky top-0 z-30 w-[280px] min-w-[280px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
                 Asset Name
+              </th>
+              <th className="sticky top-0 z-30 w-[120px] min-w-[120px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Status
               </th>
               <th className="sticky top-0 z-30 w-[150px] min-w-[150px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2 text-right">
                 Purchase Price
@@ -707,7 +712,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={16}
+                  colSpan={17}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -716,7 +721,7 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={16}
+                  colSpan={17}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
@@ -751,6 +756,22 @@ export function DepreciationRunDetailScreen() {
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
                       {d.asset_name}
                     </span>
+                  </td>
+                  <td className="w-[120px] min-w-[120px] whitespace-nowrap border border-slate-300 px-2 py-1.5 text-xs">
+                    {d.asset_status === "DISPOSED" ? (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 font-semibold text-red-700 ring-1 ring-red-200">
+                        DISPOSED
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                        ACTIVE
+                      </span>
+                    )}
+                    {d.disposal_date_bs ? (
+                      <div className="mt-1 font-mono text-[11px] text-slate-500">
+                        {d.disposal_date_bs}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="w-[150px] min-w-[150px] border border-slate-300 px-2 py-1.5 text-right font-mono text-xs tabular-nums text-slate-800">
                     {formatAmount(d.actual_purchase_price)}

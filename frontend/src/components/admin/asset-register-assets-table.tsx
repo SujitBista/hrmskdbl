@@ -18,9 +18,14 @@ import {
 } from "@/lib/asset-register-per-unit";
 import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 import { formatAdminDateTime } from "@/lib/format-datetime";
+import { NepaliDatePicker } from "nepali-datepicker-reactjs";
+import "nepali-datepicker-reactjs/dist/index.css";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
 import type { AssetDisposal, AssetRegisterRow } from "./asset-register-types";
-import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
+import {
+  bsDateToPickerValue,
+  normalizeBsDateEnglish,
+} from "@/lib/bs-date-english";
 
 type ListResponse = {
   assets: AssetRegisterRow[];
@@ -90,6 +95,23 @@ function gainLossLabel(a: AssetRegisterRow): string {
   return a.asset_status === "DISPOSED" ? "No gain/loss" : "—";
 }
 
+function DisposalDateCalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      className={className}
+      aria-hidden
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </svg>
+  );
+}
+
 export function DisposalDialog({
   asset,
   onClose,
@@ -108,6 +130,21 @@ export function DisposalDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<AssetDisposal | null>(null);
+  const [disposalDatePickerReady, setDisposalDatePickerReady] = useState(false);
+  const disposalDatePickerRef = useRef<HTMLDivElement>(null);
+  const disposalFieldsDisabled = submitting || saved != null;
+
+  const applyDisposalDateFromPicker = useCallback((value: string) => {
+    setDisposalDateBs(normalizeBsDateEnglish(value));
+  }, []);
+
+  const openDisposalDateCalendar = useCallback(() => {
+    disposalDatePickerRef.current?.querySelector<HTMLInputElement>("input")?.click();
+  }, []);
+
+  useEffect(() => {
+    setDisposalDatePickerReady(true);
+  }, []);
 
   useEffect(() => {
     if (!asset) {
@@ -175,7 +212,7 @@ export function DisposalDialog({
   return (
     <dialog
       open
-      className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
+      className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-visible rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
     >
       <form onSubmit={(e) => void submit(e)} className="p-6">
         <div className="flex items-start justify-between gap-4">
@@ -211,16 +248,58 @@ export function DisposalDialog({
         ) : null}
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="block text-sm">
+          <div className="block text-sm">
             <span className="font-medium text-slate-700">Disposal Date (BS)</span>
-            <input
-              value={disposalDateBs}
-              onChange={(e) => setDisposalDateBs(e.target.value)}
-              placeholder="YYYY/MM/DD"
-              disabled={submitting || saved != null}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2 disabled:bg-slate-50"
-            />
-          </label>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Type YYYY/MM/DD or use the calendar (Bikram Sambat).
+            </p>
+            <div
+              className={`relative mt-1 overflow-visible rounded-lg border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-emerald-800/30 ${
+                disposalFieldsDisabled ? "opacity-60" : ""
+              }`}
+            >
+              <input
+                type="text"
+                value={disposalDateBs}
+                onChange={(e) => setDisposalDateBs(e.target.value)}
+                onBlur={() =>
+                  setDisposalDateBs((prev) => normalizeBsDateEnglish(prev))
+                }
+                placeholder="YYYY/MM/DD"
+                disabled={disposalFieldsDisabled}
+                className="w-full rounded-lg border-0 bg-transparent py-2 pl-3 pr-11 text-sm tabular-nums text-slate-900 outline-none disabled:cursor-not-allowed"
+              />
+              <button
+                type="button"
+                onClick={openDisposalDateCalendar}
+                disabled={disposalFieldsDisabled}
+                className="absolute right-0 top-0 flex h-full w-10 items-center justify-center rounded-r-lg border-l border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed"
+                aria-label="Open Bikram Sambat calendar"
+                title="Open calendar"
+              >
+                <DisposalDateCalendarIcon className="h-5 w-5" />
+              </button>
+              {disposalDatePickerReady ? (
+                <div
+                  ref={disposalDatePickerRef}
+                  className="disposal-bs-date-picker absolute left-0 right-0 top-full z-10 h-0 overflow-visible"
+                >
+                  <NepaliDatePicker
+                    value={bsDateToPickerValue(disposalDateBs)}
+                    onChange={applyDisposalDateFromPicker}
+                    onSelect={applyDisposalDateFromPicker}
+                    inputClassName="sr-only"
+                    className="block w-full overflow-visible"
+                    options={{
+                      calenderLocale: "ne",
+                      valueLocale: "en",
+                      closeOnSelect: true,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </div>
           <label className="block text-sm">
             <span className="font-medium text-slate-700">Disposal Type</span>
             <select

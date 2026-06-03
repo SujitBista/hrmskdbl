@@ -1,5 +1,5 @@
-import { AdminUsersPanel } from "@/components/admin/admin-users-panel";
+import { redirect } from "next/navigation";
 
 export default function AdminDashboardPage() {
-  return <AdminUsersPanel />;
+  redirect("/admin/dashboard/asset-register");
 }

@@ -11,6 +11,7 @@ import {
 import {
   getServerTodayBsEnglish,
   refreshMutableDepreciationRunsForAsset,
+  refreshMutableDepreciationRunsForBranch,
 } from "./depreciationRuns.js";
 import type pg from "pg";
 
@@ -998,11 +999,15 @@ export async function importAssetsFromRows(
   }
 
   const client = await pool.connect();
+  const branchesToRefresh = new Set<number>();
   try {
     await client.query("BEGIN");
     for (const item of validatedInputs) {
       const created = await createAssetsFromInput(item.input, client);
       importedCount += created.length;
+      if (resolveCreateUnitCount(item.input.purchase_qty) > 1) {
+        branchesToRefresh.add(item.input.branch_id);
+      }
     }
     await client.query("COMMIT");
   } catch (err) {
@@ -1020,6 +1025,10 @@ export async function importAssetsFromRows(
     };
   } finally {
     client.release();
+  }
+
+  for (const branchId of branchesToRefresh) {
+    await refreshMutableDepreciationRunsForBranch(branchId);
   }
 
   return {
@@ -1323,6 +1332,9 @@ export async function createAssetsFromInput(
       assets.push(await createAssetWithClient(unitInput, client));
     }
     await client.query("COMMIT");
+    if (inputs.length > 1) {
+      await refreshMutableDepreciationRunsForBranch(input.branch_id);
+    }
     return assets;
   } catch (err) {
     try {
@@ -1353,6 +1365,7 @@ export type SplitMultiQtyAssetsResult = {
   processedRows: number;
   createdRows: number;
   skippedRows: number;
+  refreshedDepreciationRunIds: number[];
 };
 
 type MultiQtyAssetSeedRow = {
@@ -1393,6 +1406,8 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
   let processedRows = 0;
   let createdRows = 0;
   let skippedRows = 0;
+  const branchesToRefresh = new Set<number>();
+  const refreshedDepreciationRunIds = new Set<number>();
 
   for (const row of result.rows) {
     const unitCount = Number.parseInt(row.purchase_qty, 10);
@@ -1435,7 +1450,6 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
          WHERE id = $3`,
         [bookValues[0] ?? null, oldBookValues[0] ?? null, row.id]
       );
-      await refreshMutableDepreciationRunsForAsset(row.id);
 
       const sharedInput: CreateAssetInput = {
         asset_name: row.asset_name,
@@ -1472,6 +1486,7 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
 
       await client.query("COMMIT");
       processedRows += 1;
+      branchesToRefresh.add(row.branch_id);
     } catch (err) {
       try {
         await client.query("ROLLBACK");
@@ -1484,7 +1499,19 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
     }
   }
 
-  return { processedRows, createdRows, skippedRows };
+  for (const branchId of branchesToRefresh) {
+    const refreshed = await refreshMutableDepreciationRunsForBranch(branchId);
+    for (const runId of refreshed.refreshedRunIds) {
+      refreshedDepreciationRunIds.add(runId);
+    }
+  }
+
+  return {
+    processedRows,
+    createdRows,
+    skippedRows,
+    refreshedDepreciationRunIds: [...refreshedDepreciationRunIds],
+  };
 }
 
 export async function updateAsset(

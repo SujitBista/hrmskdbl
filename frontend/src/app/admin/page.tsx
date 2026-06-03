@@ -102,10 +102,10 @@ export default function AdminPage() {
         </form>
         <p className="mt-6 text-center text-sm text-slate-600">
           <Link
-            href="/login"
+            href="/"
             className="font-medium text-[var(--brand-primary)] underline-offset-2 hover:underline"
           >
-            Staff sign in
+            Back to home
           </Link>
         </p>
         <p className="mt-4 text-center text-xs text-slate-500">

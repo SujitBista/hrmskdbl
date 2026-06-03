@@ -3,48 +3,18 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const ADMIN_COOKIE = "admin_token";
-const USER_COOKIE = "user_token";
-
-async function verifyUserToken(
-  token: string,
-  secret: string
-): Promise<boolean> {
-  try {
-    const { payload } = await jose.jwtVerify(
-      token,
-      new TextEncoder().encode(secret)
-    );
-    return payload.role === "user";
-  } catch {
-    return false;
-  }
-}
 
 export async function middleware(request: NextRequest) {
   const secret = process.env.JWT_SECRET;
   const adminToken = request.cookies.get(ADMIN_COOKIE)?.value;
-  const userToken = request.cookies.get(USER_COOKIE)?.value;
   const { pathname } = request.nextUrl;
 
-  if (pathname.startsWith("/dashboard")) {
-    if (!userToken || !secret) {
-      return NextResponse.redirect(new URL("/login", request.url));
-    }
-    const ok = await verifyUserToken(userToken, secret);
-    if (!ok) {
-      return NextResponse.redirect(new URL("/login", request.url));
-    }
-    return NextResponse.next();
+  if (pathname === "/login" || pathname === "/login/") {
+    return NextResponse.redirect(new URL("/admin", request.url));
   }
 
-  if (pathname === "/login" || pathname === "/login/") {
-    if (userToken && secret) {
-      const ok = await verifyUserToken(userToken, secret);
-      if (ok) {
-        return NextResponse.redirect(new URL("/dashboard", request.url));
-      }
-    }
-    return NextResponse.next();
+  if (pathname.startsWith("/dashboard")) {
+    return NextResponse.redirect(new URL("/admin", request.url));
   }
 
   if (pathname.startsWith("/admin/dashboard")) {

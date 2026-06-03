@@ -12,24 +12,16 @@ export default function Home() {
               HRMS · Saptakoshi Development Bank
             </h1>
             <p className="mt-2 text-sm text-slate-600">
-              Internal HRMS. Choose how you want to sign in.
+              Internal HRMS for administrators.
             </p>
           </div>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Link
-            href="/login"
-            className="inline-flex items-center justify-center rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--brand-primary-hover)]"
-          >
-            Staff sign in
-          </Link>
-          <Link
-            href="/admin"
-            className="inline-flex items-center justify-center rounded-lg border border-emerald-900/25 bg-white px-5 py-2.5 text-sm font-medium text-slate-800 transition hover:bg-emerald-50"
-          >
-            Admin sign in
-          </Link>
-        </div>
+        <Link
+          href="/admin"
+          className="inline-flex items-center justify-center rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--brand-primary-hover)]"
+        >
+          Sign in
+        </Link>
         <p className="mt-10 text-xs text-slate-500">
           Saptakoshi Development Bank Limited · Internal use
         </p>

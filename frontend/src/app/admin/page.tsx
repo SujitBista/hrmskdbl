@@ -27,7 +27,7 @@ export default function AdminPage() {
         setError(data.error ?? "Could not sign in.");
         return;
       }
-      router.replace("/admin/dashboard");
+      router.replace("/admin/dashboard/asset-register");
       router.refresh();
     } catch {
       setError("Something went wrong. Try again.");

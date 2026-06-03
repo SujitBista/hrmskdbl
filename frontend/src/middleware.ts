@@ -47,7 +47,9 @@ export async function middleware(request: NextRequest) {
           new TextEncoder().encode(secret)
         );
         if (payload.role === "admin") {
-          return NextResponse.redirect(new URL("/admin/dashboard", request.url));
+          return NextResponse.redirect(
+            new URL("/admin/dashboard/asset-register", request.url)
+          );
         }
       } catch {
         return NextResponse.next();

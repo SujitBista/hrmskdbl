@@ -30,6 +30,18 @@ body {
     0 10px 15px -3px rgb(15 23 42 / 0.08),
     0 4px 6px -4px rgb(15 23 42 / 0.06);
   padding: 0.75rem 0.875rem;
+  z-index: 10000;
+}
+
+/* Disposal dialog — popup directly under the date input */
+.disposal-bs-date-picker.nepali-date-picker .calender {
+  left: 0;
+  right: auto;
+  top: 0;
+}
+
+dialog[open] .nepali-date-picker .calender {
+  z-index: 10050;
 }
 
 .nepali-date-picker .calender .calendar-controller .control.month,

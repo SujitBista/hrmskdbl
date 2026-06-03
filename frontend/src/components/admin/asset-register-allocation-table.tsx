@@ -9,6 +9,12 @@ import {
   useState,
 } from "react";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import {
+  isLegacyMultiUnitQty,
+  perUnitPurchaseAmount,
+  perUnitQtyDisplay,
+  perUnitStoredAmount,
+} from "@/lib/asset-register-per-unit";
 import { AssetAllocationProfileModal } from "@/components/admin/asset-allocation-profile-modal";
 
 export type AssetAllocationListRow = {
@@ -118,6 +124,19 @@ function cellDisplay(
   col: ColDef
 ): string {
   const v = row[col.key];
+  if (col.key === "qty" || col.key === "book_qty") {
+    return formatQtyLike(perUnitQtyDisplay(row.qty));
+  }
+  if (
+    col.format === "money" &&
+    (col.key === "purchase_amount" ||
+      col.key === "purchase_with_additional_amount" ||
+      col.key === "book_value")
+  ) {
+    const amount = perUnitStoredAmount(row.qty, v == null ? null : String(v));
+    if (amount == null) return "—";
+    return formatMoneyLike(String(amount));
+  }
   if (v === null || v === undefined) {
     if (col.format === "money" || col.format === "qty") return "—";
     if (col.format === "depRate") return "—";

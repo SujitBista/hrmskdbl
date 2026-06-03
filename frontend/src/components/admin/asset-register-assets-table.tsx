@@ -9,6 +9,13 @@ import {
   type FormEvent,
 } from "react";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
+import {
+  isLegacyMultiUnitQty,
+  perUnitBookValue,
+  perUnitPurchaseAmount,
+  perUnitQtyDisplay,
+  perUnitRateDisplay,
+} from "@/lib/asset-register-per-unit";
 import { formatBranchOptionLabel } from "@/lib/format-branch-label";
 import { formatAdminDateTime } from "@/lib/format-datetime";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
@@ -52,11 +59,8 @@ function formatPurchaseAmount(
   qty: string | null,
   rate: string | null
 ): string {
-  if (qty == null || rate == null) return "—";
-  const q = Number.parseFloat(qty);
-  const r = Number.parseFloat(rate);
-  if (!Number.isFinite(q) || !Number.isFinite(r)) return "—";
-  const amount = q * r;
+  const amount = perUnitPurchaseAmount(qty, rate);
+  if (amount == null) return "—";
   return formatMoney(amount);
 }
 
@@ -299,21 +303,14 @@ export function DisposalDialog({
 
 /** Same basis order as depreciation runs: register book value → purchase → legacy old book. */
 function formatDepreciationBasis(a: AssetRegisterRow): string {
-  const bvRaw = a.book_value;
-  if (bvRaw != null && bvRaw !== "") {
-    const bv = Number.parseFloat(bvRaw);
-    if (Number.isFinite(bv) && bv > 0) return formatMoney(bv);
-  }
-  const q = a.purchase_qty != null ? Number.parseFloat(a.purchase_qty) : NaN;
-  const r = a.unit_rate != null ? Number.parseFloat(a.unit_rate) : NaN;
-  if (Number.isFinite(q) && Number.isFinite(r) && q > 0 && r >= 0) {
-    return formatMoney(q * r);
-  }
-  if (a.old_book_value != null && a.old_book_value !== "") {
-    const ob = Number.parseFloat(a.old_book_value);
-    if (Number.isFinite(ob) && ob > 0) return formatMoney(ob);
-  }
-  return "—";
+  const amount = perUnitBookValue({
+    purchaseQty: a.purchase_qty,
+    bookValue: a.book_value,
+    oldBookValue: a.old_book_value,
+    unitRate: a.unit_rate,
+  });
+  if (amount == null) return "—";
+  return formatMoney(amount);
 }
 
 export function AssetRegisterAssetsTable({
@@ -721,10 +718,15 @@ export function AssetRegisterAssetsTable({
                       {a.depreciation_start_date_bs ?? "—"}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {a.purchase_qty ?? "—"}
+                      <div>{perUnitQtyDisplay(a.purchase_qty)}</div>
+                      {isLegacyMultiUnitQty(a.purchase_qty) ? (
+                        <div className="text-xs text-amber-700">
+                          stored qty {a.purchase_qty}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                      {a.unit_rate ?? "—"}
+                      {perUnitRateDisplay(a.purchase_qty, a.unit_rate)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
                       {formatPurchaseAmount(a.purchase_qty, a.unit_rate)}

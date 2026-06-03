@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAssetCode,
   expandCreateInputs,
   MAX_CREATE_UNIT_COUNT,
   resolveCreateUnitCount,
@@ -92,5 +93,25 @@ describe("expandCreateInputs", () => {
     );
     expect(expanded[0]?.allocation).toEqual(allocation);
     expect(expanded[1]?.allocation).toBeUndefined();
+  });
+});
+
+describe("buildAssetCode", () => {
+  it("uses the destination branch segment while keeping the asset id suffix", () => {
+    const original = buildAssetCode({
+      hrmsAssetId: 42,
+      branchCode: "002",
+      assetGroupCode: "IT",
+      purchaseDateBs: "2080/04/01",
+    });
+    expect(original).toBe("SKDBL/002/IT/2080/04/01/000042");
+
+    const afterTransfer = buildAssetCode({
+      hrmsAssetId: 42,
+      branchCode: "001",
+      assetGroupCode: "IT",
+      purchaseDateBs: "2080/04/01",
+    });
+    expect(afterTransfer).toBe("SKDBL/001/IT/2080/04/01/000042");
   });
 });

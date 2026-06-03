@@ -14,26 +14,6 @@ export type SystemUser = {
   created_at: string;
 } & UserPermissions;
 
-/** Row including password hash for authentication only. */
-export type UserAuthRow = {
-  id: number;
-  email: string;
-  password_hash: string;
-  role: string;
-} & UserPermissions;
-
-export async function getUserByEmailForAuth(
-  email: string
-): Promise<UserAuthRow | undefined> {
-  const normalized = email.trim().toLowerCase();
-  const res = await query<UserAuthRow>(
-    `SELECT id, email, password_hash, role, perm_view, perm_edit, perm_delete
-     FROM users WHERE email = $1`,
-    [normalized]
-  );
-  return res.rows[0];
-}
-
 /** View is implied if edit or delete is granted. */
 export function normalizePermissions(input: {
   perm_view?: unknown;

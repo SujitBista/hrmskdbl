@@ -557,21 +557,29 @@ export function AssetRegisterForm({
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as {
+        assets?: Array<{ asset_code?: string }>;
         asset?: { asset_code?: string };
+        createdCount?: number;
         error?: string;
       };
       if (!res.ok) {
         setError(json.error ?? "Could not save asset.");
         return;
       }
-      const rawCode = json.asset?.asset_code ?? "";
-      const displayCode =
-        rawCode === "" ? "" : formatAssetCodeForDisplay(rawCode);
-      setSuccess(
-        displayCode
-          ? `Asset saved. Asset code: ${displayCode}`
-          : "Asset register entry saved."
-      );
+      const savedAssets =
+        json.assets ?? (json.asset != null ? [json.asset] : []);
+      const displayCodes = savedAssets
+        .map((a) => formatAssetCodeForDisplay(a.asset_code ?? ""))
+        .filter((code) => code !== "");
+      if (displayCodes.length === 0) {
+        setSuccess("Asset register entry saved.");
+      } else if (displayCodes.length === 1) {
+        setSuccess(`Asset saved. Asset code: ${displayCodes[0]}`);
+      } else {
+        setSuccess(
+          `${displayCodes.length} assets saved. Asset codes: ${displayCodes.join(", ")}`
+        );
+      }
       onSaved?.();
       setAssetName("");
       setSubGroupId("");
@@ -1378,13 +1386,16 @@ export function AssetRegisterForm({
                 className="block text-sm font-medium text-slate-700"
               >
                 Quantity
+                <span className="ml-1 font-normal text-slate-500">
+                  (creates one register row per unit)
+                </span>
               </label>
               <input
                 id={`${formId}-purchase-qty`}
                 type="number"
-                min={0}
-                step="any"
-                inputMode="decimal"
+                min={1}
+                step={1}
+                inputMode="numeric"
                 value={purchaseQty}
                 onChange={(ev) => setPurchaseQty(ev.target.value)}
                 className={inputClass}

@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/scripts/seed.ts",
+    "split-multi-qty-assets": "tsx src/scripts/split-multi-qty-assets.ts",
     "clear-depreciation": "tsx src/scripts/clear-depreciation-data.ts",
     "clear-all-register": "tsx src/scripts/clear-all-register-data.ts",
     "clear-branches": "tsx src/scripts/clear-branches-data.ts",

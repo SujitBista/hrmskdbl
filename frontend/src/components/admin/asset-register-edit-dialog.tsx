@@ -10,6 +10,12 @@ import {
 } from "@/lib/bs-date-english";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatBranchOptionLabel } from "@/lib/format-branch-label";
+import {
+  isLegacyMultiUnitQty,
+  perUnitBookValue,
+  perUnitPurchaseAmount,
+  perUnitQtyDisplay,
+} from "@/lib/asset-register-per-unit";
 import type { AssetRegisterRow } from "./asset-register-types";
 
 type GroupOption = { id: number; name: string; code?: string };
@@ -144,22 +150,29 @@ export function AssetRegisterEditDialog({
   }, [groupId, subGroupId, subGroups]);
 
   const purchaseAmountFormatted = useMemo(() => {
-    const q = Number.parseFloat(purchaseQty);
-    const r = Number.parseFloat(unitRate);
-    if (
-      !Number.isFinite(q) ||
-      !Number.isFinite(r) ||
-      q < 0 ||
-      r < 0
-    ) {
-      return "";
-    }
-    const amount = q * r;
+    const amount = perUnitPurchaseAmount(purchaseQty, unitRate);
+    if (amount == null) return "";
     return new Intl.NumberFormat(undefined, {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(amount);
   }, [purchaseQty, unitRate]);
+
+  const legacyPerUnitPreview = useMemo(() => {
+    if (!asset || !isLegacyMultiUnitQty(asset.purchase_qty)) return null;
+    const perUnitBook = perUnitBookValue({
+      purchaseQty: asset.purchase_qty,
+      bookValue: asset.book_value,
+      oldBookValue: asset.old_book_value,
+      unitRate: asset.unit_rate,
+    });
+    return {
+      qty: perUnitQtyDisplay(asset.purchase_qty),
+      unitRate: asset.unit_rate ?? "—",
+      purchaseAmount: perUnitPurchaseAmount(asset.purchase_qty, asset.unit_rate),
+      bookValue: perUnitBook,
+    };
+  }, [asset]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -547,6 +560,31 @@ export function AssetRegisterEditDialog({
               )}
             </div>
           </div>
+
+          {legacyPerUnitPreview ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">Legacy multi-unit row</p>
+              <p className="mt-1">
+                Stored quantity is {asset?.purchase_qty}. Per unit: qty{" "}
+                {legacyPerUnitPreview.qty}, unit rate{" "}
+                {legacyPerUnitPreview.unitRate}, purchase amount{" "}
+                {legacyPerUnitPreview.purchaseAmount != null
+                  ? legacyPerUnitPreview.purchaseAmount.toLocaleString()
+                  : "—"}
+                {legacyPerUnitPreview.bookValue != null
+                  ? `, book value ${legacyPerUnitPreview.bookValue.toLocaleString()}`
+                  : ""}
+                .
+              </p>
+              <p className="mt-1 text-xs text-amber-800">
+                Run{" "}
+                <code className="rounded bg-amber-100 px-1">
+                  npm run split-multi-qty-assets
+                </code>{" "}
+                in backend to register each unit separately.
+              </p>
+            </div>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div>

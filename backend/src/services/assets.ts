@@ -16,6 +16,8 @@ import type pg from "pg";
 
 const ASSET_CODE_PREFIX = "SKDBL";
 const MAX_AUTO_ASSET_CODE_RETRIES = 10;
+/** Max physical units created from one register save or import row. */
+export const MAX_CREATE_UNIT_COUNT = 100;
 
 export type Asset = {
   id: number;
@@ -414,6 +416,10 @@ export function parseCreateAssetPayload(body: unknown): CreateAssetInput {
       "Depreciation start date must be YYYY/MM/DD (Bikram Sambat)."
     );
   }
+  if (purchase_qty !== null && purchase_qty <= 0) {
+    throw new Error("Quantity must be positive when set.");
+  }
+  resolveCreateUnitCount(purchase_qty);
 
   const allocation = parseOptionalAllocationFromBody(b);
   const out: CreateAssetInput = {
@@ -459,6 +465,64 @@ function parseOptionalNumber(v: unknown): number | null {
     throw new Error("Invalid numeric value.");
   }
   return n;
+}
+
+/**
+ * How many register rows to create from one save/import payload.
+ * Qty null, unset, or <= 1 yields one row; integer qty >= 2 yields that many rows.
+ */
+export function resolveCreateUnitCount(purchaseQty: number | null): number {
+  if (purchaseQty === null || purchaseQty <= 1) {
+    return 1;
+  }
+  if (!Number.isInteger(purchaseQty)) {
+    throw new Error(
+      "Quantity must be a whole number when registering more than one unit."
+    );
+  }
+  if (purchaseQty > MAX_CREATE_UNIT_COUNT) {
+    throw new Error(
+      `Quantity cannot exceed ${MAX_CREATE_UNIT_COUNT} units per save.`
+    );
+  }
+  return purchaseQty;
+}
+
+export function splitNumericTotal(total: number, count: number): number[] {
+  if (count <= 1) {
+    return [total];
+  }
+  const scale = 10000;
+  const totalScaled = Math.round(total * scale);
+  const baseScaled = Math.floor(totalScaled / count);
+  const remainder = totalScaled - baseScaled * count;
+  const values: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const sliceScaled = baseScaled + (i === count - 1 ? remainder : 0);
+    values.push(sliceScaled / scale);
+  }
+  return values;
+}
+
+/** Expands one create payload into per-unit rows when qty >= 2. */
+export function expandCreateInputs(input: CreateAssetInput): CreateAssetInput[] {
+  const unitCount = resolveCreateUnitCount(input.purchase_qty);
+  if (unitCount <= 1) {
+    return [input];
+  }
+
+  const bookValues =
+    input.book_value != null
+      ? splitNumericTotal(input.book_value, unitCount)
+      : Array<number | null>(unitCount).fill(null);
+
+  const { allocation, ...shared } = input;
+  return Array.from({ length: unitCount }, (_, index) => ({
+    ...shared,
+    purchase_qty: 1,
+    book_value: bookValues[index] ?? null,
+    ...(index === 0 && allocation !== undefined ? { allocation } : {}),
+  }));
 }
 
 function normalizeComparableText(v: string): string {
@@ -882,6 +946,10 @@ export async function importAssetsFromRows(
           : workingStatusMap[workingStatusRaw.toUpperCase()] ?? workingStatusRaw;
 
       const qty = parseNumberish(row.purchase_qty);
+      if (qty !== null && qty <= 0) {
+        throw new Error("Quantity must be positive when set.");
+      }
+      resolveCreateUnitCount(qty);
       const purchaseAmount = parseNumberish(row.purchase_amount);
       const unitRate =
         purchaseAmount !== null && qty !== null && qty > 0
@@ -933,8 +1001,8 @@ export async function importAssetsFromRows(
   try {
     await client.query("BEGIN");
     for (const item of validatedInputs) {
-      await createAsset(item.input, client);
-      importedCount += 1;
+      const created = await createAssetsFromInput(item.input, client);
+      importedCount += created.length;
     }
     await client.query("COMMIT");
   } catch (err) {
@@ -1233,19 +1301,29 @@ async function createAssetWithClient(
   return out;
 }
 
-export async function createAsset(
+export async function createAssetsFromInput(
   input: CreateAssetInput,
   existingClient?: pg.PoolClient
-): Promise<Asset> {
+): Promise<Asset[]> {
+  const inputs = expandCreateInputs(input);
+
   if (existingClient) {
-    return createAssetWithClient(input, existingClient);
+    const assets: Asset[] = [];
+    for (const unitInput of inputs) {
+      assets.push(await createAssetWithClient(unitInput, existingClient));
+    }
+    return assets;
   }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const out = await createAssetWithClient(input, client);
+    const assets: Asset[] = [];
+    for (const unitInput of inputs) {
+      assets.push(await createAssetWithClient(unitInput, client));
+    }
     await client.query("COMMIT");
-    return out;
+    return assets;
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -1256,6 +1334,157 @@ export async function createAsset(
   } finally {
     client.release();
   }
+}
+
+/** Creates one or more register rows; returns the first when qty splits into multiple units. */
+export async function createAsset(
+  input: CreateAssetInput,
+  existingClient?: pg.PoolClient
+): Promise<Asset> {
+  const assets = await createAssetsFromInput(input, existingClient);
+  const first = assets[0];
+  if (!first) {
+    throw new Error("Failed to create asset.");
+  }
+  return first;
+}
+
+export type SplitMultiQtyAssetsResult = {
+  processedRows: number;
+  createdRows: number;
+  skippedRows: number;
+};
+
+type MultiQtyAssetSeedRow = {
+  id: number;
+  asset_name: string;
+  group_id: number;
+  sub_group_id: number | null;
+  ownership_type: string;
+  working_status: string;
+  branch_id: number;
+  department_id: number | null;
+  purchase_date_bs: string;
+  depreciation_start_date_bs: string;
+  purchase_qty: string;
+  unit_rate: string | null;
+  book_value: string | null;
+  old_book_value: string | null;
+  purchase_invoice_no: string | null;
+};
+
+/**
+ * Splits legacy register rows with purchase_qty >= 2 into one row per unit (qty 1),
+ * dividing book_value and old_book_value across units. Skips disposed assets.
+ */
+export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAssetsResult> {
+  const result = await query<MultiQtyAssetSeedRow>(
+    `SELECT a.id, a.asset_name, a.group_id, a.sub_group_id, a.ownership_type,
+            a.working_status, a.branch_id, a.department_id, a.purchase_date_bs,
+            a.depreciation_start_date_bs, a.purchase_qty::text, a.unit_rate::text,
+            a.book_value::text, a.old_book_value::text, a.purchase_invoice_no
+     FROM hrms_assets a
+     WHERE a.asset_status = 'ACTIVE'
+       AND a.purchase_qty >= 2
+       AND a.purchase_qty = TRUNC(a.purchase_qty)
+     ORDER BY a.id ASC`
+  );
+
+  let processedRows = 0;
+  let createdRows = 0;
+  let skippedRows = 0;
+
+  for (const row of result.rows) {
+    const unitCount = Number.parseInt(row.purchase_qty, 10);
+    if (!Number.isInteger(unitCount) || unitCount < 2) {
+      skippedRows += 1;
+      continue;
+    }
+
+    const unitRate =
+      row.unit_rate != null && row.unit_rate !== ""
+        ? Number.parseFloat(row.unit_rate)
+        : null;
+    const bookValue =
+      row.book_value != null && row.book_value !== ""
+        ? Number.parseFloat(row.book_value)
+        : null;
+    const oldBookValue =
+      row.old_book_value != null && row.old_book_value !== ""
+        ? Number.parseFloat(row.old_book_value)
+        : null;
+
+    const bookValues =
+      bookValue != null && Number.isFinite(bookValue)
+        ? splitNumericTotal(bookValue, unitCount)
+        : Array<number | null>(unitCount).fill(null);
+    const oldBookValues =
+      oldBookValue != null && Number.isFinite(oldBookValue)
+        ? splitNumericTotal(oldBookValue, unitCount)
+        : Array<number | null>(unitCount).fill(null);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `UPDATE hrms_assets
+         SET purchase_qty = 1,
+             book_value = $1,
+             old_book_value = $2
+         WHERE id = $3`,
+        [bookValues[0] ?? null, oldBookValues[0] ?? null, row.id]
+      );
+      await refreshMutableDepreciationRunsForAsset(row.id);
+
+      const sharedInput: CreateAssetInput = {
+        asset_name: row.asset_name,
+        group_id: row.group_id,
+        sub_group_id: row.sub_group_id,
+        ownership_type: row.ownership_type,
+        working_status: row.working_status,
+        branch_id: row.branch_id,
+        department_id: row.department_id,
+        purchase_date_bs: row.purchase_date_bs,
+        depreciation_start_date_bs: row.depreciation_start_date_bs,
+        purchase_qty: 1,
+        unit_rate: unitRate,
+        purchase_invoice_no: row.purchase_invoice_no,
+        book_value: null,
+      };
+
+      for (let index = 1; index < unitCount; index += 1) {
+        const created = await createAssetWithClient(
+          {
+            ...sharedInput,
+            book_value: bookValues[index] ?? null,
+          },
+          client
+        );
+        if (oldBookValues[index] != null) {
+          await client.query(
+            `UPDATE hrms_assets SET old_book_value = $1 WHERE id = $2`,
+            [oldBookValues[index], created.id]
+          );
+        }
+        createdRows += 1;
+      }
+
+      await client.query("COMMIT");
+      processedRows += 1;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* ignore rollback errors */
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  return { processedRows, createdRows, skippedRows };
 }
 
 export async function updateAsset(

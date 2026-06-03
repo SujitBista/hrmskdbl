@@ -24,7 +24,7 @@ import {
 } from "./services/departments.js";
 import {
   applyAssetAllocationChange,
-  createAsset,
+  createAssetsFromInput,
   deleteAsset,
   getAssetAllocationProfile,
   importAssetsFromRows,
@@ -1196,8 +1196,12 @@ app.post("/api/admin/assets", async (req, res) => {
   }
   try {
     const payload = parseCreateAssetPayload(req.body);
-    const asset = await createAsset(payload);
-    res.status(201).json({ asset });
+    const assets = await createAssetsFromInput(payload);
+    res.status(201).json({
+      assets,
+      createdCount: assets.length,
+      asset: assets[0] ?? null,
+    });
   } catch (err) {
     if (err instanceof Error) {
       res.status(400).json({ error: err.message });

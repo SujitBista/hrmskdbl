@@ -131,20 +131,52 @@ export function DisposalDialog({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<AssetDisposal | null>(null);
   const [disposalDatePickerReady, setDisposalDatePickerReady] = useState(false);
+  const [disposalCalendarOpen, setDisposalCalendarOpen] = useState(false);
   const disposalDatePickerRef = useRef<HTMLDivElement>(null);
   const disposalFieldsDisabled = submitting || saved != null;
 
   const applyDisposalDateFromPicker = useCallback((value: string) => {
     setDisposalDateBs(normalizeBsDateEnglish(value));
+    setDisposalCalendarOpen(false);
   }, []);
 
-  const openDisposalDateCalendar = useCallback(() => {
-    disposalDatePickerRef.current?.querySelector<HTMLInputElement>("input")?.click();
+  const getDisposalPickerInput = useCallback(() => {
+    return disposalDatePickerRef.current?.querySelector<HTMLInputElement>(
+      ".disposal-bs-date-picker-anchor input"
+    );
   }, []);
+
+  const toggleDisposalDateCalendar = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      getDisposalPickerInput()?.click();
+    },
+    [getDisposalPickerInput]
+  );
 
   useEffect(() => {
     setDisposalDatePickerReady(true);
   }, []);
+
+  useEffect(() => {
+    const field = disposalDatePickerRef.current;
+    if (!field || !disposalDatePickerReady) return;
+
+    const picker = field.querySelector(
+      ".disposal-bs-date-picker-anchor .nepali-date-picker"
+    );
+    if (!picker) return;
+
+    const syncCalendarOpen = () => {
+      setDisposalCalendarOpen(Boolean(picker.querySelector(".calender")));
+    };
+
+    syncCalendarOpen();
+    const observer = new MutationObserver(syncCalendarOpen);
+    observer.observe(picker, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [disposalDatePickerReady, asset]);
 
   useEffect(() => {
     if (!asset) {
@@ -159,6 +191,7 @@ export function DisposalDialog({
     setNotes("");
     setError(null);
     setSaved(null);
+    setDisposalCalendarOpen(false);
   }, [asset]);
 
   if (!asset) return null;
@@ -254,7 +287,9 @@ export function DisposalDialog({
               Type YYYY/MM/DD or use the calendar (Bikram Sambat).
             </p>
             <div
-              className={`relative mt-1 overflow-visible rounded-lg border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-emerald-800/30 ${
+              ref={disposalDatePickerRef}
+              id="disposal-date-bs-calendar"
+              className={`disposal-bs-date-field relative mt-1 overflow-visible rounded-lg border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-emerald-800/30 ${
                 disposalFieldsDisabled ? "opacity-60" : ""
               }`}
             >
@@ -271,25 +306,40 @@ export function DisposalDialog({
               />
               <button
                 type="button"
-                onClick={openDisposalDateCalendar}
+                onPointerDownCapture={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onMouseDownCapture={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={toggleDisposalDateCalendar}
                 disabled={disposalFieldsDisabled}
-                className="absolute right-0 top-0 flex h-full w-10 items-center justify-center rounded-r-lg border-l border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed"
-                aria-label="Open Bikram Sambat calendar"
-                title="Open calendar"
+                aria-expanded={disposalCalendarOpen}
+                aria-controls="disposal-date-bs-calendar"
+                className={`absolute right-0 top-0 z-10 flex h-full w-10 items-center justify-center rounded-r-lg border-l border-slate-200 transition disabled:cursor-not-allowed ${
+                  disposalCalendarOpen
+                    ? "bg-emerald-100 text-emerald-900 ring-2 ring-inset ring-emerald-800/25"
+                    : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                }`}
+                aria-label={
+                  disposalCalendarOpen
+                    ? "Close Bikram Sambat calendar"
+                    : "Open Bikram Sambat calendar"
+                }
+                title={disposalCalendarOpen ? "Close calendar" : "Open calendar"}
               >
-                <DisposalDateCalendarIcon className="h-5 w-5" />
+                <DisposalDateCalendarIcon className="h-5 w-5 shrink-0" />
               </button>
               {disposalDatePickerReady ? (
-                <div
-                  ref={disposalDatePickerRef}
-                  className="disposal-bs-date-picker absolute left-0 right-0 top-full z-10 h-0 overflow-visible"
-                >
+                <div className="disposal-bs-date-picker-anchor absolute left-0 right-0 top-full z-20 h-0 overflow-visible">
                   <NepaliDatePicker
                     value={bsDateToPickerValue(disposalDateBs)}
                     onChange={applyDisposalDateFromPicker}
                     onSelect={applyDisposalDateFromPicker}
                     inputClassName="sr-only"
-                    className="block w-full overflow-visible"
+                    className="disposal-bs-date-picker block w-full"
                     options={{
                       calenderLocale: "ne",
                       valueLocale: "en",

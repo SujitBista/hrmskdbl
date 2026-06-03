@@ -33,11 +33,16 @@ body {
   z-index: 10000;
 }
 
-/* Disposal dialog — popup directly under the date input */
-.disposal-bs-date-picker.nepali-date-picker .calender {
+/* Disposal dialog — popup below the date input (picker anchor under field) */
+.disposal-bs-date-field
+  .disposal-bs-date-picker-anchor
+  .disposal-bs-date-picker.nepali-date-picker
+  .calender {
   left: 0;
   right: auto;
   top: 0;
+  margin-top: 0.25rem;
+  transform: none;
 }
 
 dialog[open] .nepali-date-picker .calender {

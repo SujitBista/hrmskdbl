@@ -364,6 +364,10 @@ async function migrate() {
     ALTER TABLE hrms_asset_allocations
     ADD COLUMN IF NOT EXISTS allocation_date_bs VARCHAR(32) NOT NULL DEFAULT '';
   `);
+  await query(`
+    ALTER TABLE hrms_asset_allocations
+    ADD COLUMN IF NOT EXISTS superseded_asset_code VARCHAR(256) NOT NULL DEFAULT '';
+  `);
   /** Legacy tables used asset_id as PK; add surrogate `id` PK for per-row allocation history. */
   await query(`
     DO $alloc_pk$

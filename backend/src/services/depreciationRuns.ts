@@ -1088,6 +1088,71 @@ export async function refreshMutableDepreciationRunsForAsset(
   return { refreshedRunIds, skippedFinalizedRunIds };
 }
 
+/** Rebuilds all non-final depreciation runs for a branch from the current register. */
+export async function refreshMutableDepreciationRunsForBranch(
+  branchId: number | null
+): Promise<{
+  refreshedRunIds: number[];
+  skippedFinalizedRunIds: number[];
+}> {
+  const runs = await query<{ id: number; is_final_for_fy: boolean }>(
+    branchId === null
+      ? `SELECT id, is_final_for_fy
+         FROM hrms_depreciation_runs
+         WHERE branch_id IS NULL
+         ORDER BY id DESC`
+      : `SELECT id, is_final_for_fy
+         FROM hrms_depreciation_runs
+         WHERE branch_id = $1
+         ORDER BY id DESC`,
+    branchId === null ? [] : [branchId]
+  );
+
+  const refreshedRunIds: number[] = [];
+  const skippedFinalizedRunIds: number[] = [];
+
+  for (const run of runs.rows) {
+    if (run.is_final_for_fy) {
+      skippedFinalizedRunIds.push(run.id);
+      continue;
+    }
+    await refreshDepreciationRunDetailsFromAssets(run.id, {
+      advanceCalculationDateToTodayBs: false,
+    });
+    refreshedRunIds.push(run.id);
+  }
+
+  return { refreshedRunIds, skippedFinalizedRunIds };
+}
+
+/** Rebuilds every non-final depreciation run from the current asset register. */
+export async function refreshAllMutableDepreciationRuns(): Promise<{
+  refreshedRunIds: number[];
+  skippedFinalizedRunIds: number[];
+}> {
+  const runs = await query<{ id: number; is_final_for_fy: boolean }>(
+    `SELECT id, is_final_for_fy
+     FROM hrms_depreciation_runs
+     ORDER BY id DESC`
+  );
+
+  const refreshedRunIds: number[] = [];
+  const skippedFinalizedRunIds: number[] = [];
+
+  for (const run of runs.rows) {
+    if (run.is_final_for_fy) {
+      skippedFinalizedRunIds.push(run.id);
+      continue;
+    }
+    await refreshDepreciationRunDetailsFromAssets(run.id, {
+      advanceCalculationDateToTodayBs: false,
+    });
+    refreshedRunIds.push(run.id);
+  }
+
+  return { refreshedRunIds, skippedFinalizedRunIds };
+}
+
 /**
  * “Add Depreciation Master” minimal form: calculation BS date + Nepali month name.
  * Derives fiscal year, quarter, and books-closed date for eligibility.

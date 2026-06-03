@@ -11,6 +11,7 @@ import {
 import {
   getServerTodayBsEnglish,
   refreshMutableDepreciationRunsForAsset,
+  refreshMutableDepreciationRunsForBranch,
 } from "./depreciationRuns.js";
 import type pg from "pg";
 
@@ -998,11 +999,15 @@ export async function importAssetsFromRows(
   }
 
   const client = await pool.connect();
+  const branchesToRefresh = new Set<number>();
   try {
     await client.query("BEGIN");
     for (const item of validatedInputs) {
       const created = await createAssetsFromInput(item.input, client);
       importedCount += created.length;
+      if (resolveCreateUnitCount(item.input.purchase_qty) > 1) {
+        branchesToRefresh.add(item.input.branch_id);
+      }
     }
     await client.query("COMMIT");
   } catch (err) {
@@ -1020,6 +1025,10 @@ export async function importAssetsFromRows(
     };
   } finally {
     client.release();
+  }
+
+  for (const branchId of branchesToRefresh) {
+    await refreshMutableDepreciationRunsForBranch(branchId);
   }
 
   return {
@@ -1101,13 +1110,17 @@ async function upsertAssetAllocation(
 async function insertAssetAllocationHistoryRow(
   db: QueryExecutor,
   assetId: number,
-  fields: AssetAllocationUpsert & { allocation_date_bs: string }
+  fields: AssetAllocationUpsert & {
+    allocation_date_bs: string;
+    superseded_asset_code?: string;
+  }
 ): Promise<void> {
   const dateBs = fields.allocation_date_bs.trim().slice(0, 32);
+  const superseded = (fields.superseded_asset_code ?? "").trim().slice(0, 256);
   await db.query(
     `INSERT INTO hrms_asset_allocations (
-      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number, allocation_date_bs
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      asset_id, remarks, allocation_category_name, allocation_branch_name, emp_name, serial_number, allocation_date_bs, superseded_asset_code
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       assetId,
       fields.remarks.trim().slice(0, 4000),
@@ -1116,8 +1129,61 @@ async function insertAssetAllocationHistoryRow(
       fields.emp_name.trim().slice(0, 255),
       fields.serial_number,
       dateBs,
+      superseded,
     ]
   );
+}
+
+async function updateAssetRegisterForAllocationChange(
+  client: pg.PoolClient,
+  assetId: number,
+  input: {
+    branch_id: number;
+    department_id: number | null;
+    branch_code: string;
+    group_code: string;
+    purchase_date_bs: string;
+    previous_asset_code: string | null;
+  }
+): Promise<string> {
+  const baseAssetCode = buildAssetCode({
+    hrmsAssetId: assetId,
+    branchCode: input.branch_code,
+    assetGroupCode: input.group_code,
+    purchaseDateBs: input.purchase_date_bs,
+  });
+  const previous =
+    input.previous_asset_code != null && input.previous_asset_code.trim() !== ""
+      ? input.previous_asset_code.trim()
+      : null;
+  if (previous !== null && previous === baseAssetCode) {
+    await client.query(
+      `UPDATE hrms_assets SET branch_id = $1, department_id = $2 WHERE id = $3`,
+      [input.branch_id, input.department_id, assetId]
+    );
+    return baseAssetCode;
+  }
+
+  for (let attempt = 0; attempt <= MAX_AUTO_ASSET_CODE_RETRIES; attempt += 1) {
+    const candidateCode = buildAssetCodeRetryCandidate(baseAssetCode, attempt);
+    try {
+      await client.query(
+        `UPDATE hrms_assets SET
+          branch_id = $1,
+          department_id = $2,
+          asset_code = $3
+        WHERE id = $4`,
+        [input.branch_id, input.department_id, candidateCode, assetId]
+      );
+      return candidateCode;
+    } catch (err) {
+      if (isAssetCodeUniqueViolation(err) && attempt < MAX_AUTO_ASSET_CODE_RETRIES) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Could not generate a unique asset code. Please retry.");
 }
 
 async function resolveAssetRefs(
@@ -1323,6 +1389,9 @@ export async function createAssetsFromInput(
       assets.push(await createAssetWithClient(unitInput, client));
     }
     await client.query("COMMIT");
+    if (inputs.length > 1) {
+      await refreshMutableDepreciationRunsForBranch(input.branch_id);
+    }
     return assets;
   } catch (err) {
     try {
@@ -1353,6 +1422,7 @@ export type SplitMultiQtyAssetsResult = {
   processedRows: number;
   createdRows: number;
   skippedRows: number;
+  refreshedDepreciationRunIds: number[];
 };
 
 type MultiQtyAssetSeedRow = {
@@ -1393,6 +1463,8 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
   let processedRows = 0;
   let createdRows = 0;
   let skippedRows = 0;
+  const branchesToRefresh = new Set<number>();
+  const refreshedDepreciationRunIds = new Set<number>();
 
   for (const row of result.rows) {
     const unitCount = Number.parseInt(row.purchase_qty, 10);
@@ -1435,7 +1507,6 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
          WHERE id = $3`,
         [bookValues[0] ?? null, oldBookValues[0] ?? null, row.id]
       );
-      await refreshMutableDepreciationRunsForAsset(row.id);
 
       const sharedInput: CreateAssetInput = {
         asset_name: row.asset_name,
@@ -1472,6 +1543,7 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
 
       await client.query("COMMIT");
       processedRows += 1;
+      branchesToRefresh.add(row.branch_id);
     } catch (err) {
       try {
         await client.query("ROLLBACK");
@@ -1484,7 +1556,19 @@ export async function splitAllExistingMultiQtyAssets(): Promise<SplitMultiQtyAss
     }
   }
 
-  return { processedRows, createdRows, skippedRows };
+  for (const branchId of branchesToRefresh) {
+    const refreshed = await refreshMutableDepreciationRunsForBranch(branchId);
+    for (const runId of refreshed.refreshedRunIds) {
+      refreshedDepreciationRunIds.add(runId);
+    }
+  }
+
+  return {
+    processedRows,
+    createdRows,
+    skippedRows,
+    refreshedDepreciationRunIds: [...refreshedDepreciationRunIds],
+  };
 }
 
 export async function updateAsset(
@@ -1935,6 +2019,7 @@ function assetAllocationHistorySelectSql(
     COALESCE(NULLIF(TRIM(al.allocation_category_name), ''), '') AS allocation_category_name,
     COALESCE(NULLIF(TRIM(al.emp_name), ''), '') AS emp_name,
     COALESCE(NULLIF(TRIM(al.allocation_branch_name), ''), '') AS allocation_branch_name,
+    COALESCE(NULLIF(TRIM(al.superseded_asset_code), ''), '') AS superseded_asset_code,
     d.name AS department_name,
     b.branch_name AS register_branch_name,
     (SELECT d2.fiscal_year::text FROM hrms_depreciation_run_details d2
@@ -1963,6 +2048,7 @@ type AssetAllocationHistoryDbRow = {
   allocation_category_name: string;
   emp_name: string;
   allocation_branch_name: string;
+  superseded_asset_code: string;
   department_name: string | null;
   register_branch_name: string;
   dep_fiscal_year: string | null;
@@ -2002,7 +2088,10 @@ function mapAllocationHistoryDbRow(
     allocation_date_display: allocationDateLabel,
     fiscal_year: fiscalYear,
     allocation_type: allocationType,
-    old_asset_code: String(row.asset_id),
+    old_asset_code:
+      row.superseded_asset_code.trim() !== ""
+        ? row.superseded_asset_code.trim()
+        : "—",
     asset_user: assetUser,
     responsible_unit_name: responsibleUnit,
     branch_name: branchDisplay,
@@ -2011,16 +2100,23 @@ function mapAllocationHistoryDbRow(
 }
 
 const HRMS_ASSET_ALLOCATIONS_SCHEMA_MSG =
-  "Database is missing column allocation_date_bs on hrms_asset_allocations. From the backend folder run: npm run migrate";
+  "Database is missing required columns on hrms_asset_allocations (allocation_date_bs, superseded_asset_code). From the backend folder run: npm run migrate";
 
 async function assertHrmsAssetAllocationsSchema(): Promise<void> {
   const r = await query<{ ok: boolean }>(
-    `SELECT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'hrms_asset_allocations'
-        AND column_name = 'allocation_date_bs'
-    ) AS ok`
+    `SELECT
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'hrms_asset_allocations'
+          AND column_name = 'allocation_date_bs'
+      )
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'hrms_asset_allocations'
+          AND column_name = 'superseded_asset_code'
+      ) AS ok`
   );
   if (r.rows[0]?.ok !== true) {
     throw new Error(HRMS_ASSET_ALLOCATIONS_SCHEMA_MSG);
@@ -2173,8 +2269,8 @@ export async function applyAssetAllocationChange(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const bRow = await client.query<{ branch_name: string }>(
-      `SELECT branch_name FROM hrms_branches WHERE id = $1`,
+    const bRow = await client.query<{ branch_name: string; branch_code: string }>(
+      `SELECT branch_name, branch_code FROM hrms_branches WHERE id = $1`,
       [input.branch_id]
     );
     const br = bRow.rows[0];
@@ -2182,10 +2278,30 @@ export async function applyAssetAllocationChange(
       throw new Error("Branch not found.");
     }
     const branchName = br.branch_name.trim();
-    await client.query(
-      `UPDATE hrms_assets SET branch_id = $1, department_id = $2 WHERE id = $3`,
-      [input.branch_id, input.department_id, assetId]
+    const assetRow = await client.query<{
+      asset_code: string | null;
+      purchase_date_bs: string;
+      group_code: string;
+    }>(
+      `SELECT a.asset_code, a.purchase_date_bs, g.code AS group_code
+       FROM hrms_assets a
+       INNER JOIN hrms_groups g ON g.id = a.group_id
+       WHERE a.id = $1`,
+      [assetId]
     );
+    const reg = assetRow.rows[0];
+    if (!reg) {
+      throw new Error("Asset not found.");
+    }
+    const previousAssetCode = reg.asset_code?.trim() ?? null;
+    await updateAssetRegisterForAllocationChange(client, assetId, {
+      branch_id: input.branch_id,
+      department_id: input.department_id,
+      branch_code: br.branch_code,
+      group_code: reg.group_code,
+      purchase_date_bs: reg.purchase_date_bs,
+      previous_asset_code: previousAssetCode,
+    });
     const curAlloc = await client.query<{
       remarks: string;
       emp_name: string;
@@ -2196,13 +2312,17 @@ export async function applyAssetAllocationChange(
       [assetId]
     );
     const cur = curAlloc.rows[0];
-    const fields: AssetAllocationUpsert & { allocation_date_bs: string } = {
+    const fields: AssetAllocationUpsert & {
+      allocation_date_bs: string;
+      superseded_asset_code?: string;
+    } = {
       remarks: cur?.remarks ?? "",
       allocation_category_name: input.allocation_type,
       allocation_branch_name: branchName.slice(0, 255),
       emp_name: cur?.emp_name ?? "",
       serial_number: cur?.serial_number ?? null,
       allocation_date_bs: input.allocation_date_bs,
+      superseded_asset_code: previousAssetCode ?? "",
     };
     await insertAssetAllocationHistoryRow(client, assetId, fields);
     await client.query("COMMIT");

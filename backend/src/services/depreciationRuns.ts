@@ -370,15 +370,58 @@ export type CreateDepreciationRunInput = {
   calculationDateBs?: string | null;
 };
 
-async function loadCarryForwardPriorAccumulatedMap(
+/** True when the new FY must use a posted prior-FY Q4/FY_END run (not register WDV). */
+export function priorFiscalYearRequiresStrictCarryForward(
+  fiscalYearStart: number
+): boolean {
+  const priorFy = Math.floor(fiscalYearStart) - 1;
+  return Number.isFinite(priorFy) && priorFy >= 2000;
+}
+
+export function missingPriorFyFinalDepreciationErrorMessage(
+  previousFY: number,
+  newFY: number
+): string {
+  return `Previous fiscal year final depreciation run is not posted. Please post Q4/FY_END depreciation for FY ${previousFY} before creating depreciation for FY ${newFY}.`;
+}
+
+/** When true, missing prior-FY final run falls back to register-implied prior accumulated dep. */
+export function allowLegacyRegisterCarryForward(): boolean {
+  const raw = process.env.DEPRECIATION_LEGACY_REGISTER_CARRY_FORWARD?.trim();
+  if (raw == null || raw === "") return false;
+  const v = raw.toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
+export type PriorFyCarryForwardLine = {
+  priorAccumulatedDep: number;
+  openingWrittenDownValue: number;
+};
+
+export type PriorFyCarryForward = {
+  priorFiscalYearStart: number;
+  runId: number;
+  byAssetId: Map<number, PriorFyCarryForwardLine>;
+};
+
+function parseDepreciationMoneyField(raw: string | null): number | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (s === "") return null;
+  const n = Number.parseFloat(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+export async function loadPriorFyCarryForward(
   client: PoolClient,
   fiscalYearStart: number,
   branchId: number | null
-): Promise<Map<number, number>> {
+): Promise<PriorFyCarryForward | null> {
   const fy = Math.floor(fiscalYearStart);
   const priorFy = fy - 1;
   if (!Number.isFinite(priorFy) || priorFy < 2000) {
-    return new Map();
+    return null;
   }
   const runResult = await client.query<{ id: number }>(
     `SELECT r.id FROM hrms_depreciation_runs r
@@ -392,21 +435,137 @@ async function loadCarryForwardPriorAccumulatedMap(
   );
   const runId = runResult.rows[0]?.id;
   if (!runId) {
-    return new Map();
+    return null;
   }
-  const dets = await client.query<{ asset_id: number; prior: string }>(
-    `SELECT asset_id, (accumulate_dep + dep_amount)::text AS prior
+  const dets = await client.query<{
+    asset_id: number;
+    prior: string;
+    balance_amount: string;
+  }>(
+    `SELECT asset_id,
+            (accumulate_dep + dep_amount)::text AS prior,
+            balance_amount::text AS balance_amount
      FROM hrms_depreciation_run_details
      WHERE depreciation_run_id = $1`,
     [runId]
   );
-  const m = new Map<number, number>();
+  const byAssetId = new Map<number, PriorFyCarryForwardLine>();
   for (const row of dets.rows) {
-    const n = Number.parseFloat(row.prior);
-    if (!Number.isFinite(n) || n < 0) continue;
-    m.set(row.asset_id, n);
+    const priorAccumulatedDep = parseDepreciationMoneyField(row.prior);
+    const openingWrittenDownValue = parseDepreciationMoneyField(row.balance_amount);
+    if (priorAccumulatedDep === null || openingWrittenDownValue === null) {
+      continue;
+    }
+    byAssetId.set(row.asset_id, {
+      priorAccumulatedDep,
+      openingWrittenDownValue,
+    });
   }
-  return m;
+  return {
+    priorFiscalYearStart: priorFy,
+    runId,
+    byAssetId,
+  };
+}
+
+/**
+ * Resolves prior-FY carry-forward for a new depreciation run. Throws when strict
+ * carry-forward is required but the prior posted final run is missing.
+ */
+export function assertPriorFyCarryForwardForDepreciationRun(
+  fiscalYearStart: number,
+  priorCarryForward: PriorFyCarryForward | null
+): void {
+  if (!priorFiscalYearRequiresStrictCarryForward(fiscalYearStart)) {
+    return;
+  }
+  if (priorCarryForward !== null) {
+    return;
+  }
+  if (allowLegacyRegisterCarryForward()) {
+    return;
+  }
+  const newFy = Math.floor(fiscalYearStart);
+  const previousFy = newFy - 1;
+  throw new Error(
+    missingPriorFyFinalDepreciationErrorMessage(previousFy, newFy)
+  );
+}
+
+/** Assets depreciating before the new FY Shrawan 1 must appear on the prior FY final run. */
+export function assetRequiresPriorFyCarryForward(
+  asset: DepreciationScheduleAssetRow,
+  newFiscalYearStartBs: string
+): boolean {
+  if (!isDepreciableAssetEligibleForDepreciationSchedule(asset)) {
+    return false;
+  }
+  const depreciationStartBs = depreciationCommencementFromRegister(
+    asset.purchase_date_bs,
+    asset.depreciation_start_date_bs
+  );
+  if (!depreciationStartBs) {
+    return false;
+  }
+  return compareBsDateString(depreciationStartBs, newFiscalYearStartBs) < 0;
+}
+
+export function assertEligibleAssetsHavePriorFyCarryForward(input: {
+  fiscalYearStart: number;
+  assets: DepreciationScheduleAssetRow[];
+  priorCarryForward: PriorFyCarryForward;
+}): void {
+  const fyStartBs = fiscalYearStartBs(Math.floor(input.fiscalYearStart));
+  const missing: DepreciationScheduleAssetRow[] = [];
+  for (const a of input.assets) {
+    if (!assetRequiresPriorFyCarryForward(a, fyStartBs)) {
+      continue;
+    }
+    if (!input.priorCarryForward.byAssetId.has(a.id)) {
+      missing.push(a);
+    }
+  }
+  if (missing.length === 0) {
+    return;
+  }
+  const labels = missing
+    .map((a) => {
+      const code =
+        a.asset_code != null && String(a.asset_code).trim() !== ""
+          ? String(a.asset_code).trim()
+          : null;
+      const name =
+        a.asset_name != null && String(a.asset_name).trim() !== ""
+          ? String(a.asset_name).trim()
+          : "(unnamed)";
+      return code ? `${code} — ${name}` : `#${a.id} — ${name}`;
+    })
+    .join("; ");
+  throw new Error(
+    `${missing.length} asset(s) require prior fiscal year carry-forward but are missing from the posted FY ${input.priorCarryForward.priorFiscalYearStart} final run: ${labels}.`
+  );
+}
+
+export type DepreciationRunCarryForwardContext =
+  | { mode: "none" }
+  | { mode: "legacy" }
+  | { mode: "strict"; prior: PriorFyCarryForward };
+
+export function resolveDepreciationRunCarryForwardContext(
+  fiscalYearStart: number,
+  priorCarryForward: PriorFyCarryForward | null
+): DepreciationRunCarryForwardContext {
+  assertPriorFyCarryForwardForDepreciationRun(fiscalYearStart, priorCarryForward);
+  if (priorCarryForward !== null) {
+    return { mode: "strict", prior: priorCarryForward };
+  }
+  if (
+    priorFiscalYearRequiresStrictCarryForward(fiscalYearStart) &&
+    allowLegacyRegisterCarryForward()
+  ) {
+    return { mode: "legacy" };
+  }
+  return { mode: "none" };
 }
 
 export function selectedDepreciationPeriodEndBs(params: {
@@ -460,7 +619,7 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode: DepreciationScopeMode;
     calculationMode: DepreciationCalculationMode;
     assets: AssetDepRow[];
-    carryForwardByAssetId?: ReadonlyMap<number, number> | null;
+    carryForwardContext: DepreciationRunCarryForwardContext;
   }
 ): Promise<{ detailsInserted: number; skippedAssets: DepreciationSkippedAsset[] }> {
   const {
@@ -471,7 +630,7 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode,
     calculationMode,
     assets,
-    carryForwardByAssetId,
+    carryForwardContext,
   } = args;
 
   const skippedAssets: DepreciationSkippedAsset[] = [];
@@ -492,10 +651,12 @@ async function insertDepreciationDetailRows(
       a.unit_rate,
       a.old_book_value
     );
-    const registerPriorAccum = registerImpliedPriorAccumulatedDep(
-      purchaseAmount ?? 0,
-      a.book_value
-    );
+    const useRegisterPriorAccum =
+      carryForwardContext.mode === "legacy" ||
+      carryForwardContext.mode === "none";
+    const registerPriorAccum = useRegisterPriorAccum
+      ? registerImpliedPriorAccumulatedDep(purchaseAmount ?? 0, a.book_value)
+      : undefined;
     const depRate = parseDepRatePercent(a.asset_dep_rate ?? a.group_dep_rate);
     const method = parseDepreciationMethod(a.asset_dep_method ?? a.group_dep_method);
     const depreciationStartBs = depreciationCommencementFromRegister(
@@ -542,7 +703,11 @@ async function insertDepreciationDetailRows(
       continue;
     }
 
-    const carryPrior = carryForwardByAssetId?.get(a.id);
+    const priorLine =
+      carryForwardContext.mode === "strict"
+        ? carryForwardContext.prior.byAssetId.get(a.id)
+        : undefined;
+    const carryPrior = priorLine?.priorAccumulatedDep;
     const computed = computeAssetQuarterCumulative({
       purchaseAmount,
       depreciationStartBs,
@@ -741,11 +906,18 @@ export async function createDepreciationRun(
       [fy, branchId]
     );
 
-    const carryForwardByAssetId = await loadCarryForwardPriorAccumulatedMap(
-      client,
+    const priorCarryForward = await loadPriorFyCarryForward(client, fy, branchId);
+    const carryForwardContext = resolveDepreciationRunCarryForwardContext(
       fy,
-      branchId
+      priorCarryForward
     );
+    if (carryForwardContext.mode === "strict") {
+      assertEligibleAssetsHavePriorFyCarryForward({
+        fiscalYearStart: fy,
+        assets,
+        priorCarryForward: carryForwardContext.prior,
+      });
+    }
 
     /**
      * Replacement policy (see also partial unique indexes on `hrms_depreciation_runs`):
@@ -813,7 +985,7 @@ export async function createDepreciationRun(
         depreciationScopeMode,
         calculationMode,
         assets,
-        carryForwardByAssetId,
+        carryForwardContext,
       }
     );
 
@@ -921,11 +1093,18 @@ export async function refreshDepreciationRunDetailsFromAssets(
       [fy, branchId]
     );
 
-    const carryForwardByAssetId = await loadCarryForwardPriorAccumulatedMap(
-      client,
+    const priorCarryForward = await loadPriorFyCarryForward(client, fy, branchId);
+    const carryForwardContext = resolveDepreciationRunCarryForwardContext(
       fy,
-      branchId
+      priorCarryForward
     );
+    if (carryForwardContext.mode === "strict") {
+      assertEligibleAssetsHavePriorFyCarryForward({
+        fiscalYearStart: fy,
+        assets,
+        priorCarryForward: carryForwardContext.prior,
+      });
+    }
 
     if (
       options?.advanceCalculationDateToTodayBs === true &&
@@ -1008,7 +1187,7 @@ export async function refreshDepreciationRunDetailsFromAssets(
         depreciationScopeMode,
         calculationMode,
         assets,
-        carryForwardByAssetId,
+        carryForwardContext,
       }
     );
 

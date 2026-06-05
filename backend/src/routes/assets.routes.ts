@@ -9,6 +9,8 @@ import {
   getAssets,
   patchAsset,
   postAsset,
+  postAssetAllocationChange,
+  postAssetDisposal,
   postAssetsImport,
 } from "../controllers/assets.controller.js";
 
@@ -26,6 +28,11 @@ assetsRouter.get(
 assetsRouter.get("/api/admin/assets/allocations", getAssetAllocations);
 assetsRouter.get("/api/admin/assets/disposals", getAssetDisposals);
 assetsRouter.get("/api/admin/assets/:id/disposal", getAssetDisposalById);
+assetsRouter.post("/api/admin/assets/:id/disposal", postAssetDisposal);
+assetsRouter.post(
+  "/api/admin/assets/:id/allocation-change",
+  postAssetAllocationChange
+);
 assetsRouter.get(
   "/api/admin/assets/:id/allocation-profile",
   getAssetAllocationProfileHandler

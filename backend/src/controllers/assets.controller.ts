@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
-import { verifyAdminToken } from "../auth/jwt.js";
+import { verifyAdminToken, type AdminJwtPayload } from "../auth/jwt.js";
 import {
+  applyAssetAllocationChange,
   createAssetsFromInput,
   exportAllAssetAllocations,
   getAssetAllocationProfile,
@@ -13,8 +14,10 @@ import {
   listAssets,
 } from "../services/assets.js";
 import {
+  disposeAsset,
   getDisposalByAssetId,
   listDisposedAssets,
+  parseDisposeAssetPayload,
 } from "../services/assetDisposals.js";
 import { clampListParams } from "../services/branches.js";
 
@@ -379,6 +382,85 @@ export async function patchAsset(req: Request, res: Response): Promise<void> {
     }
     console.error(err);
     res.status(500).json({ error: "Could not update asset." });
+  }
+}
+
+export async function postAssetDisposal(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  let admin: AdminJwtPayload;
+  try {
+    admin = verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const payload = parseDisposeAssetPayload(req.body, admin.sub);
+    const disposal = await disposeAsset(id, payload);
+    if (!disposal) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.status(201).json({ disposal });
+  } catch (err) {
+    if (err instanceof Error) {
+      const status = /already disposed/i.test(err.message) ? 409 : 400;
+      res.status(status).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not dispose asset." });
+  }
+}
+
+export async function postAssetAllocationChange(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const profile = await applyAssetAllocationChange(id, req.body);
+    if (!profile) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.json(profile);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not apply allocation change." });
   }
 }
 

@@ -1,12 +1,10 @@
 import "./loadEnv.js";
-import cors from "cors";
 import express from "express";
+import { createApp } from "./app.js";
 import {
-  signAdminToken,
   verifyAdminToken,
   type AdminJwtPayload,
 } from "./auth/jwt.js";
-import { getAdminByEmail, verifyPassword } from "./services/adminAuth.js";
 import {
   clampListParams,
   createBranch,
@@ -55,13 +53,6 @@ import {
 } from "./services/assetDisposals.js";
 import { performDepreciationFiscalYearRollover } from "./services/depreciationFyRollover.js";
 import {
-  createGroup,
-  deleteGroup,
-  listGroups,
-  parseGroupPayload,
-  updateGroup,
-} from "./services/groups.js";
-import {
   createSubGroup,
   deleteSubGroup,
   importSubGroupsFromRows,
@@ -75,59 +66,8 @@ import {
   normalizeBsDateEnglish,
 } from "@hrmskdbl/depreciation-core";
 
-const app = express();
+const app = createApp();
 const port = Number(process.env.PORT ?? 4000);
-
-app.use(
-  cors({
-    origin: process.env.FRONTEND_ORIGIN ?? "http://localhost:3000",
-    credentials: true,
-  })
-);
-app.use(express.json({ limit: "10mb" }));
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
-
-app.post("/api/auth/login", async (req, res) => {
-  try {
-    const email = typeof req.body?.email === "string" ? req.body.email : "";
-    const password =
-      typeof req.body?.password === "string" ? req.body.password : "";
-
-    if (!email || !password) {
-      res.status(400).json({ error: "Email and password are required." });
-      return;
-    }
-
-    const admin = await getAdminByEmail(email);
-    if (!admin) {
-      res.status(401).json({ error: "Invalid email or password." });
-      return;
-    }
-
-    const valid = await verifyPassword(password, admin.password_hash);
-    if (!valid) {
-      res.status(401).json({ error: "Invalid email or password." });
-      return;
-    }
-
-    const token = signAdminToken({
-      sub: admin.id,
-      email: admin.email,
-      role: "admin",
-    });
-
-    res.json({
-      token,
-      admin: { id: admin.id, email: admin.email },
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Login failed." });
-  }
-});
 
 function getBearerToken(req: express.Request): string | undefined {
   const header = req.headers.authorization;
@@ -1309,165 +1249,6 @@ app.delete("/api/admin/assets/:id", async (req, res) => {
   }
 });
 
-app.get("/api/admin/groups", async (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    verifyAdminToken(token);
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    const qRaw = req.query.q;
-    const search = typeof qRaw === "string" ? qRaw : "";
-    const pageRaw = req.query.page;
-    const pageSizeRaw = req.query.pageSize;
-    const page =
-      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
-    const pageSize =
-      typeof pageSizeRaw === "string"
-        ? Number.parseInt(pageSizeRaw, 10)
-        : NaN;
-    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
-    const result = await listGroups({ search, page: p, pageSize: ps });
-    res.json(result);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Could not list groups." });
-  }
-});
-
-app.post("/api/admin/groups", async (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    verifyAdminToken(token);
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    const payload = parseGroupPayload(req.body);
-    const group = await createGroup(payload);
-    res.status(201).json({ group });
-  } catch (err) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "code" in err &&
-      (err as { code?: string }).code === "23505"
-    ) {
-      res.status(409).json({
-        error: "A group with this code or name already exists.",
-      });
-      return;
-    }
-    if (err instanceof Error) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    console.error(err);
-    res.status(500).json({ error: "Could not create group." });
-  }
-});
-
-app.patch("/api/admin/groups/:id", async (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    verifyAdminToken(token);
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  const idRaw = req.params.id;
-  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
-  if (!Number.isFinite(id) || id < 1) {
-    res.status(400).json({ error: "Invalid group id." });
-    return;
-  }
-  try {
-    const payload = parseGroupPayload(req.body);
-    const group = await updateGroup(id, payload);
-    if (!group) {
-      res.status(404).json({ error: "Group not found." });
-      return;
-    }
-    res.json({ group });
-  } catch (err) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "code" in err &&
-      (err as { code?: string }).code === "23505"
-    ) {
-      res.status(409).json({
-        error: "A group with this code or name already exists.",
-      });
-      return;
-    }
-    if (err instanceof Error) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    console.error(err);
-    res.status(500).json({ error: "Could not update group." });
-  }
-});
-
-app.delete("/api/admin/groups/:id", async (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    verifyAdminToken(token);
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  const idRaw = req.params.id;
-  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
-  if (!Number.isFinite(id) || id < 1) {
-    res.status(400).json({ error: "Invalid group id." });
-    return;
-  }
-  try {
-    const deleted = await deleteGroup(id);
-    if (!deleted) {
-      res.status(404).json({ error: "Group not found." });
-      return;
-    }
-    res.status(204).send();
-  } catch (err) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "code" in err &&
-      (err as { code?: string }).code === "23503"
-    ) {
-      res.status(409).json({
-        error:
-          "Cannot delete this group while assets or other records still reference it.",
-      });
-      return;
-    }
-    console.error(err);
-    res.status(500).json({ error: "Could not delete group." });
-  }
-});
-
 app.get("/api/admin/sub-groups", async (req, res) => {
   const token = getBearerToken(req);
   if (!token) {
@@ -1683,22 +1464,6 @@ app.delete("/api/admin/sub-groups/:id", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Could not delete sub group." });
-  }
-});
-
-app.get("/api/auth/me", (req, res) => {
-  try {
-    const header = req.headers.authorization;
-    const token =
-      header?.startsWith("Bearer ") ? header.slice(7) : undefined;
-    if (!token) {
-      res.status(401).json({ error: "Unauthorized." });
-      return;
-    }
-    const payload = verifyAdminToken(token);
-    res.json({ admin: { id: payload.sub, email: payload.email } });
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
   }
 });
 

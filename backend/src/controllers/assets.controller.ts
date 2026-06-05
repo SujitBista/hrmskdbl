@@ -1,8 +1,14 @@
 import type { Request, Response } from "express";
 import { verifyAdminToken } from "../auth/jwt.js";
 import {
+  createAssetsFromInput,
   exportAllAssetAllocations,
   getAssetAllocationProfile,
+  importAssetsFromRows,
+  parseCreateAssetPayload,
+  parseImportAssetsPayload,
+  updateAsset,
+  deleteAsset,
   listAssetAllocations,
   listAssets,
 } from "../services/assets.js";
@@ -278,5 +284,138 @@ export async function getAssetAllocationProfileHandler(
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not load asset allocation profile." });
+  }
+}
+
+export async function postAsset(req: Request, res: Response): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const payload = parseCreateAssetPayload(req.body);
+    const assets = await createAssetsFromInput(payload);
+    res.status(201).json({
+      assets,
+      createdCount: assets.length,
+      asset: assets[0] ?? null,
+    });
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not create asset." });
+  }
+}
+
+export async function postAssetsImport(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const payload = parseImportAssetsPayload(req.body);
+    const result = await importAssetsFromRows(payload);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not import assets." });
+  }
+}
+
+export async function patchAsset(req: Request, res: Response): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const payload = parseCreateAssetPayload(req.body);
+    const asset = await updateAsset(id, payload);
+    if (!asset) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.json({ asset });
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not update asset." });
+  }
+}
+
+export async function deleteAssetById(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const deleted = await deleteAsset(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not delete asset." });
   }
 }

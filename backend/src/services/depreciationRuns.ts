@@ -609,6 +609,31 @@ export function resolveAssetDepreciationEndBsForRun(params: {
   return params.selectedPeriodEndBs;
 }
 
+/**
+ * Disposed assets whose depreciation stops at the disposal date (within the run
+ * period) report zero opening and closing book value on the detail row.
+ * Depreciation amounts still reflect activity through disposal.
+ */
+export function resolveDepreciationDetailBookValues(params: {
+  assetStatus: "ACTIVE" | "DISPOSED";
+  disposalDateBs: string;
+  depreciationEndBs: string;
+  openingBookValue: number;
+  closingBookValue: number;
+}): { bookValue: number; balanceAmount: number } {
+  const disposedWithinPeriod =
+    params.assetStatus === "DISPOSED" &&
+    params.disposalDateBs !== "" &&
+    params.depreciationEndBs === params.disposalDateBs;
+  if (disposedWithinPeriod) {
+    return { bookValue: 0, balanceAmount: 0 };
+  }
+  return {
+    bookValue: params.openingBookValue,
+    balanceAmount: params.closingBookValue,
+  };
+}
+
 async function insertDepreciationDetailRows(
   client: PoolClient,
   args: {
@@ -737,6 +762,13 @@ async function insertDepreciationDetailRows(
     }
 
     const d = computed.detail;
+    const { bookValue, balanceAmount } = resolveDepreciationDetailBookValues({
+      assetStatus: a.asset_status,
+      disposalDateBs,
+      depreciationEndBs,
+      openingBookValue: d.bookValue,
+      closingBookValue: d.balanceAmount,
+    });
     if (!loggedVerificationAsset) {
       const t = d.erpTimeline;
       log.info("depreciation verification sample", {
@@ -769,11 +801,11 @@ async function insertDepreciationDetailRows(
         a.group_name,
         a.sub_group_name,
         a.branch_name,
-        d.bookValue,
+        bookValue,
         d.accumulateDep,
         d.depFormula,
         depreciationStartBs,
-        d.balanceAmount,
+        balanceAmount,
       ]
     );
     detailsInserted += 1;

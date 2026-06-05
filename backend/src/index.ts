@@ -3,9 +3,6 @@ import express from "express";
 import { createApp } from "./app.js";
 import { verifyAdminToken, type AdminJwtPayload } from "./auth/jwt.js";
 import {
-  applyAssetAllocationChange,
-} from "./services/assets.js";
-import {
   createDepreciationRunFromMasterForm,
   deleteDepreciationRun,
   ensureDepreciationRunForCurrentFiscalYear,
@@ -17,10 +14,6 @@ import {
   voidDepreciationRun,
   type DepreciationRunActor,
 } from "./services/depreciationRuns.js";
-import {
-  disposeAsset,
-  parseDisposeAssetPayload,
-} from "./services/assetDisposals.js";
 import { performDepreciationFiscalYearRollover } from "./services/depreciationFyRollover.js";
 import {
   bsDateFromJsDate,
@@ -457,79 +450,6 @@ app.post(
     }
   }
 );
-
-app.post("/api/admin/assets/:id/disposal", async (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  let admin: AdminJwtPayload;
-  try {
-    admin = verifyAdminToken(token);
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  const idRaw = req.params.id;
-  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
-  if (!Number.isFinite(id) || id < 1) {
-    res.status(400).json({ error: "Invalid asset id." });
-    return;
-  }
-  try {
-    const payload = parseDisposeAssetPayload(req.body, admin.sub);
-    const disposal = await disposeAsset(id, payload);
-    if (!disposal) {
-      res.status(404).json({ error: "Asset not found." });
-      return;
-    }
-    res.status(201).json({ disposal });
-  } catch (err) {
-    if (err instanceof Error) {
-      const status = /already disposed/i.test(err.message) ? 409 : 400;
-      res.status(status).json({ error: err.message });
-      return;
-    }
-    console.error(err);
-    res.status(500).json({ error: "Could not dispose asset." });
-  }
-});
-
-app.post("/api/admin/assets/:id/allocation-change", async (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  try {
-    verifyAdminToken(token);
-  } catch {
-    res.status(401).json({ error: "Unauthorized." });
-    return;
-  }
-  const idRaw = req.params.id;
-  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
-  if (!Number.isFinite(id) || id < 1) {
-    res.status(400).json({ error: "Invalid asset id." });
-    return;
-  }
-  try {
-    const profile = await applyAssetAllocationChange(id, req.body);
-    if (!profile) {
-      res.status(404).json({ error: "Asset not found." });
-      return;
-    }
-    res.json(profile);
-  } catch (err) {
-    if (err instanceof Error) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    console.error(err);
-    res.status(500).json({ error: "Could not apply allocation change." });
-  }
-});
 
 app.listen(port, () => {
   console.log(`API listening on http://localhost:${port}`);

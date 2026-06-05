@@ -1,10 +1,11 @@
 import cors from "cors";
 import express from "express";
 import { env } from "./config/env.js";
+import { registerRoutes } from "./routes/index.js";
 
 /**
- * Express app factory: global middleware only.
- * Routes are mounted in later phases; `index.ts` still owns routes during Phase 1.
+ * Express app factory: global middleware and Phase 2A routes.
+ * Remaining routes are still registered in `index.ts`.
  */
 export function createApp(): express.Express {
   const app = express();
@@ -16,6 +17,8 @@ export function createApp(): express.Express {
     })
   );
   app.use(express.json({ limit: env.jsonBodyLimit }));
+
+  registerRoutes(app);
 
   return app;
 }

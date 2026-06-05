@@ -6,7 +6,10 @@ import {
   calculateDisposalGainLoss,
   type DisposalAssetDepRow,
 } from "./assetDisposals.js";
-import { resolveAssetDepreciationEndBsForRun } from "./depreciationRuns.js";
+import {
+  resolveAssetDepreciationEndBsForRun,
+  resolveDepreciationDetailBookValues,
+} from "./depreciationRuns.js";
 
 function sampleAsset(
   overrides: Partial<DisposalAssetDepRow> = {}
@@ -109,5 +112,41 @@ describe("disposed asset depreciation inclusion", () => {
         selectedPeriodEndBs: "2080/12/30",
       })
     ).toBe("2080/08/15");
+  });
+
+  it("zeros book value and closing book value when disposed within the run period", () => {
+    expect(
+      resolveDepreciationDetailBookValues({
+        assetStatus: "DISPOSED",
+        disposalDateBs: "2080/08/15",
+        depreciationEndBs: "2080/08/15",
+        openingBookValue: 72_500,
+        closingBookValue: 68_200,
+      })
+    ).toEqual({ bookValue: 0, balanceAmount: 0 });
+  });
+
+  it("keeps computed book values when asset is active", () => {
+    expect(
+      resolveDepreciationDetailBookValues({
+        assetStatus: "ACTIVE",
+        disposalDateBs: "",
+        depreciationEndBs: "2080/12/30",
+        openingBookValue: 72_500,
+        closingBookValue: 68_200,
+      })
+    ).toEqual({ bookValue: 72_500, balanceAmount: 68_200 });
+  });
+
+  it("keeps computed book values when disposal is after the run period end", () => {
+    expect(
+      resolveDepreciationDetailBookValues({
+        assetStatus: "DISPOSED",
+        disposalDateBs: "2081/01/15",
+        depreciationEndBs: "2080/12/30",
+        openingBookValue: 72_500,
+        closingBookValue: 68_200,
+      })
+    ).toEqual({ bookValue: 72_500, balanceAmount: 68_200 });
   });
 });

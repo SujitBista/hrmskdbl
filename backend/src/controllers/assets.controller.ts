@@ -1,0 +1,282 @@
+import type { Request, Response } from "express";
+import { verifyAdminToken } from "../auth/jwt.js";
+import {
+  exportAllAssetAllocations,
+  getAssetAllocationProfile,
+  listAssetAllocations,
+  listAssets,
+} from "../services/assets.js";
+import {
+  getDisposalByAssetId,
+  listDisposedAssets,
+} from "../services/assetDisposals.js";
+import { clampListParams } from "../services/branches.js";
+
+function getBearerToken(req: Request): string | undefined {
+  const header = req.headers.authorization;
+  return header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+}
+
+export async function getAssets(req: Request, res: Response): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+    const assetStatusRaw = req.query.assetStatus;
+    const assetStatus =
+      typeof assetStatusRaw === "string" ? assetStatusRaw : undefined;
+    const showDisposedRaw = req.query.showDisposedAssets;
+    const showDisposedAssets =
+      showDisposedRaw === "1" ||
+      showDisposedRaw === "true" ||
+      showDisposedRaw === "yes";
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const result = await listAssets({
+      search,
+      page: p,
+      pageSize: ps,
+      assetStatus: assetStatus as "ACTIVE" | "DISPOSED" | "ALL" | undefined,
+      showDisposedAssets,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list assets." });
+  }
+}
+
+export async function getAssetAllocationsExport(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const fyRaw = req.query.fiscalYearStart;
+    let depreciationFiscalYearStart: number | null | undefined;
+    if (typeof fyRaw === "string" && fyRaw.trim() !== "") {
+      const n = Number.parseInt(fyRaw.trim(), 10);
+      if (Number.isFinite(n) && n >= 2000) {
+        depreciationFiscalYearStart = n;
+      }
+    }
+    const assetStatusRaw = req.query.assetStatus;
+    const showDisposedRaw = req.query.showDisposedAssets;
+    const result = await exportAllAssetAllocations({
+      search,
+      depreciationFiscalYearStart,
+      assetStatus:
+        typeof assetStatusRaw === "string"
+          ? (assetStatusRaw as "ACTIVE" | "DISPOSED" | "ALL")
+          : undefined,
+      showDisposedAssets:
+        showDisposedRaw === "1" ||
+        showDisposedRaw === "true" ||
+        showDisposedRaw === "yes",
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not export asset allocations." });
+  }
+}
+
+export async function getAssetAllocations(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const fyRaw = req.query.fiscalYearStart;
+    let depreciationFiscalYearStart: number | null | undefined;
+    if (typeof fyRaw === "string" && fyRaw.trim() !== "") {
+      const n = Number.parseInt(fyRaw.trim(), 10);
+      if (Number.isFinite(n) && n >= 2000) {
+        depreciationFiscalYearStart = n;
+      }
+    }
+    const assetStatusRaw = req.query.assetStatus;
+    const showDisposedRaw = req.query.showDisposedAssets;
+    const result = await listAssetAllocations({
+      search,
+      page: p,
+      pageSize: ps,
+      depreciationFiscalYearStart,
+      assetStatus:
+        typeof assetStatusRaw === "string"
+          ? (assetStatusRaw as "ACTIVE" | "DISPOSED" | "ALL")
+          : undefined,
+      showDisposedAssets:
+        showDisposedRaw === "1" ||
+        showDisposedRaw === "true" ||
+        showDisposedRaw === "yes",
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list asset allocations." });
+  }
+}
+
+export async function getAssetDisposals(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const qRaw = req.query.q;
+    const search = typeof qRaw === "string" ? qRaw : "";
+    const pageRaw = req.query.page;
+    const pageSizeRaw = req.query.pageSize;
+    const page =
+      typeof pageRaw === "string" ? Number.parseInt(pageRaw, 10) : NaN;
+    const pageSize =
+      typeof pageSizeRaw === "string"
+        ? Number.parseInt(pageSizeRaw, 10)
+        : NaN;
+    const { page: p, pageSize: ps } = clampListParams({ page, pageSize });
+    const result = await listDisposedAssets({ search, page: p, pageSize: ps });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not list disposed assets." });
+  }
+}
+
+export async function getAssetDisposalById(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const disposal = await getDisposalByAssetId(id);
+    if (!disposal) {
+      res.status(404).json({ error: "Disposal not found." });
+      return;
+    }
+    res.json({ disposal });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not load asset disposal." });
+  }
+}
+
+export async function getAssetAllocationProfileHandler(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const idRaw = req.params.id;
+  const id = Number.parseInt(typeof idRaw === "string" ? idRaw : "", 10);
+  if (!Number.isFinite(id) || id < 1) {
+    res.status(400).json({ error: "Invalid asset id." });
+    return;
+  }
+  try {
+    const fyRaw = req.query.fiscalYearStart;
+    let depreciationFiscalYearStart: number | null | undefined;
+    if (typeof fyRaw === "string" && fyRaw.trim() !== "") {
+      const n = Number.parseInt(fyRaw.trim(), 10);
+      if (Number.isFinite(n) && n >= 2000) {
+        depreciationFiscalYearStart = n;
+      }
+    }
+    const profile = await getAssetAllocationProfile(id, {
+      depreciationFiscalYearStart,
+    });
+    if (!profile) {
+      res.status(404).json({ error: "Asset not found." });
+      return;
+    }
+    res.json(profile);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not load asset allocation profile." });
+  }
+}

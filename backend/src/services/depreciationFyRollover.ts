@@ -212,7 +212,6 @@ export async function ensurePostedFinalDepreciationRunForYear(input: {
     branchId,
     depTitle: "Fiscal year closing (rollover)",
     remarks: "Auto-created final depreciation run for fiscal-year rollover.",
-    calculationMode: "ERP_ACCURATE",
   });
   return { runId: run.id, created: true };
 }

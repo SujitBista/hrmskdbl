@@ -10,7 +10,6 @@ import {
   depreciationMethodLabel,
   inclusiveCalendarDaysBetweenBs,
   roundMoney,
-  type DepreciationCalculationMode,
   type DepreciationMethodCode,
 } from "./depreciation-schedule.js";
 import { NepaliDateCtor } from "./nepali-date-import.js";
@@ -114,7 +113,6 @@ function cumulativeDepThrough(
     purchaseDateBs: depreciationStartBs,
     depRatePercent,
     method,
-    calculationMode: "ERP_ACCURATE",
     calculationFromBs: effectiveFromBs,
     calculationToBs: toBs,
     periodMode: "monthly",
@@ -313,15 +311,12 @@ export const calculateLifetimeDepreciationUpToFY = buildDepreciationTimeline;
  * this year’s `dep_amount`. book_value = opening WDV after that prior (`BookValue`);
  * balance_amount = closing WDV (`ClosingBookValue`). Lifetime total =
  * `erpTimeline.accumulatedDep` (= accumulate_dep + dep_amount after rounding).
- * ERP calendar days; `calculationMode` is ignored.
  */
 export function computeAssetQuarterCumulative(params: {
   purchaseAmount: number;
   depreciationStartBs: string;
   depRatePercent: number;
   method: DepreciationMethodCode;
-  /** Ignored — quarter runs always use cumulative actual calendar days (ERP). */
-  calculationMode?: DepreciationCalculationMode;
   fiscalYearStart: number;
   quarter: 1 | 2 | 3 | 4;
   /**
@@ -353,8 +348,6 @@ export function computeAssetQuarterCumulative(params: {
    */
   carryForwardPriorAccumulatedDep?: number | null;
 }): { ok: true; detail: ComputedQuarterAssetDetail } | { ok: false; errors: string[] } {
-  void params.calculationMode;
-
   const scopeMode: DepreciationScopeMode =
     params.depreciationScopeMode ?? "FY_END";
   const fyStartBs = fiscalYearStartBs(params.fiscalYearStart);

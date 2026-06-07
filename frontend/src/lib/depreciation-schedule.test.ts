@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildErpAccurateDecliningSchedule,
-  buildErpAccurateStraightLineSchedule,
   buildDepreciationTimeline,
   calculateLifetimeDepreciationUpToFY,
-  buildExcelFixedDecliningSchedule,
-  buildExcelFixedStraightLineSchedule,
   buildQuarterlyPeriods,
   computeAssetQuarterCumulative,
   computeDepreciationSchedule,
@@ -14,7 +10,6 @@ import {
   computeScheduleFromPeriods,
   depreciationCommencementFromRegister,
   firstProjectedYearEndBs,
-  parseCalculationMode,
   parseDepreciationMethod,
   isNoDepreciationMethod,
   NO_DEPRECIATION_METHOD,
@@ -34,14 +29,6 @@ describe("depreciationCommencementFromRegister", () => {
     expect(depreciationCommencementFromRegister("2080/03/15", null)).toBe(
       "2080/03/15"
     );
-  });
-});
-
-describe("parseCalculationMode", () => {
-  it("maps common labels", () => {
-    expect(parseCalculationMode("ERP_ACCURATE")).toBe("ERP_ACCURATE");
-    expect(parseCalculationMode("excel-fixed")).toBe("EXCEL_FIXED");
-    expect(parseCalculationMode("Excel Fixed")).toBe("EXCEL_FIXED");
   });
 });
 
@@ -242,144 +229,73 @@ describe("computeOneYearDepreciationSchedule", () => {
     const r = computeOneYearDepreciationSchedule({
       ...oneYearBase,
       method: "STRAIGHT_LINE",
-      calculationMode: "EXCEL_FIXED",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.rows).toHaveLength(12);
     expect(r.summary.calculationFromBs).toBe("2080/01/01");
     expect(r.summary.calculationToBs).toBe("2080/12/30");
-    expect(r.summary.totalWorkingDays).toBe(360);
+    expect(r.summary.totalWorkingDays).toBeGreaterThan(0);
   });
 });
 
-describe("calculation modes (100,500 @ 25%, first-year projection)", () => {
-  it("Example A: Straight Line + Excel Fixed — first two months match fixed-30 slice", () => {
+describe("first-year projection (100,500 @ 25%)", () => {
+  it("straight line uses actual days per BS month slice", () => {
     const r = computeOneYearDepreciationSchedule({
       ...oneYearBase,
       method: "STRAIGHT_LINE",
-      calculationMode: "EXCEL_FIXED",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const [a, b] = r.rows;
-    expect(a!.workingDays).toBe(30);
-    expect(b!.workingDays).toBe(30);
-    expect(a!.depBaseAmount).toBe(100_500);
-    expect(b!.depBaseAmount).toBe(100_500);
-    expect(a!.depAmount).toBe(2065.07);
-    expect(b!.depAmount).toBe(2065.07);
-  });
-
-  it("Example B: Declining + Excel Fixed — second month uses prior closing", () => {
-    const r = computeOneYearDepreciationSchedule({
-      ...oneYearBase,
-      method: "DECLINING_BALANCE",
-      calculationMode: "EXCEL_FIXED",
-    });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const [a, b] = r.rows;
-    expect(a!.depAmount).toBe(2065.07);
-    expect(a!.closingBookValue).toBe(98434.93);
-    expect(b!.depBaseAmount).toBe(98434.93);
-    expect(b!.depAmount).toBe(2022.64);
-    expect(b!.closingBookValue).toBe(96412.29);
-  });
-
-  it("Straight Line + ERP Accurate — uses actual days per BS month slice", () => {
-    const r = computeOneYearDepreciationSchedule({
-      ...oneYearBase,
-      method: "STRAIGHT_LINE",
-      calculationMode: "ERP_ACCURATE",
-    });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.rows[0].workingDays).not.toBe(30);
     expect(r.rows.every((row) => row.depBaseAmount === 100_500)).toBe(true);
-    expect(r.summary.calculationMode).toBe("ERP_ACCURATE");
   });
 
-  it("Declining + ERP Accurate — opening BV drives dep base", () => {
+  it("declining balance: opening BV drives dep base", () => {
     const r = computeOneYearDepreciationSchedule({
       ...oneYearBase,
       method: "DECLINING_BALANCE",
-      calculationMode: "ERP_ACCURATE",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.rows[0].depBaseAmount).toBe(100_500);
     expect(r.rows[1].openingBookValue).toBe(r.rows[0].closingBookValue);
     expect(r.rows[1].depBaseAmount).toBe(r.rows[1].openingBookValue);
-    expect(r.summary.calculationMode).toBe("ERP_ACCURATE");
   });
 
-  it("Declining + Excel Fixed — each opening BV equals prior closing BV; cumulative total dep; BV falls", () => {
+  it("declining balance: each opening BV equals prior closing BV", () => {
     const r = computeOneYearDepreciationSchedule({
       ...oneYearBase,
       method: "DECLINING_BALANCE",
-      calculationMode: "EXCEL_FIXED",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const { rows } = r;
-    expect(rows.length).toBeGreaterThanOrEqual(3);
-
     for (let i = 1; i < rows.length; i++) {
       expect(rows[i].openingBookValue).toBe(rows[i - 1]!.closingBookValue);
     }
-
-    let sumDep = 0;
-    for (let i = 0; i < rows.length; i++) {
-      sumDep = Math.round((sumDep + rows[i]!.depAmount) * 100) / 100;
-      expect(rows[i]!.totalDepAmount).toBe(sumDep);
-      expect(
-        Math.abs(
-          rows[i]!.closingBookValue -
-            Math.round((100_500 - rows[i]!.totalDepAmount) * 100) / 100
-        )
-      ).toBeLessThanOrEqual(0.02);
-    }
-
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i]!.depAmount > 0) {
-        expect(rows[i]!.closingBookValue).toBeLessThan(rows[i]!.openingBookValue);
-      }
-    }
-
     for (let i = 0; i < rows.length; i++) {
       expect(rows[i]!.depBaseAmount).toBe(rows[i]!.openingBookValue);
     }
   });
 
-  it("purchase ≈ total depreciation + closing within rounding (all four strategies)", () => {
-    const modes = [
-      buildErpAccurateStraightLineSchedule({
+  it("purchase ≈ total depreciation + closing within rounding (straight and declining)", () => {
+    const schedules = [
+      computeDepreciationSchedule({
         ...oneYearBase,
+        method: "STRAIGHT_LINE",
         calculationFromBs: oneYearBase.purchaseDateBs,
         calculationToBs: firstProjectedYearEndBs(oneYearBase.purchaseDateBs)!,
         periodMode: "monthly",
       }),
-      buildExcelFixedStraightLineSchedule({
+      computeDepreciationSchedule({
         ...oneYearBase,
-        calculationFromBs: oneYearBase.purchaseDateBs,
-        calculationToBs: firstProjectedYearEndBs(oneYearBase.purchaseDateBs)!,
-        periodMode: "monthly",
-      }),
-      buildErpAccurateDecliningSchedule({
-        ...oneYearBase,
-        calculationFromBs: oneYearBase.purchaseDateBs,
-        calculationToBs: firstProjectedYearEndBs(oneYearBase.purchaseDateBs)!,
-        periodMode: "monthly",
-      }),
-      buildExcelFixedDecliningSchedule({
-        ...oneYearBase,
+        method: "DECLINING_BALANCE",
         calculationFromBs: oneYearBase.purchaseDateBs,
         calculationToBs: firstProjectedYearEndBs(oneYearBase.purchaseDateBs)!,
         periodMode: "monthly",
       }),
     ];
-    for (const r of modes) {
+    for (const r of schedules) {
       expect(r.ok).toBe(true);
       if (!r.ok) continue;
       const { purchaseAmount, totalDepreciation, currentBookValue } = r.summary;

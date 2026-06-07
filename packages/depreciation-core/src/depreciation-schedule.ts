@@ -1,9 +1,6 @@
 /**
  * Fixed-asset book value depreciation schedule (Straight Line vs Declining Balance).
- * Period boundaries use Bikram Sambat (BS) dates.
- *
- * ERP_ACCURATE: inclusive calendar days per period (actual schedule days).
- * EXCEL_FIXED: spreadsheet-style fixed day counts (30 / 90 / 365 rules).
+ * Period boundaries use Bikram Sambat (BS) dates with inclusive calendar days per period.
  */
 
 import {
@@ -13,19 +10,10 @@ import {
 import { normalizeBsDateEnglish } from "./bs-date-english.js";
 
 const DAYS_IN_YEAR = 365;
-const EXCEL_DAYS_MONTH = 30;
-const EXCEL_DAYS_FULL_QUARTER = 90;
-const EXCEL_DAYS_FULL_YEAR = 365;
 
 export function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
-
-/** How day counts are derived for each period row. */
-export type DepreciationCalculationMode = "ERP_ACCURATE" | "EXCEL_FIXED";
-
-/** Alias for API / form field naming (`calculationMode`). */
-export type CalculationMode = DepreciationCalculationMode;
 
 /** Canonical method codes aligned with API-style names. */
 export type DepreciationMethodCode = "STRAIGHT_LINE" | "DECLINING_BALANCE";
@@ -70,8 +58,6 @@ export type DepreciationPeriodSlice = {
 export type DepreciationScheduleSummary = {
   purchaseAmount: number;
   depreciationMethodLabel: string;
-  calculationMode: DepreciationCalculationMode;
-  calculationModeLabel: string;
   depRatePercent: number;
   calculationFromBs: string;
   calculationToBs: string;
@@ -119,25 +105,8 @@ export function parseDepreciationMethod(
   return null;
 }
 
-export function parseCalculationMode(
-  raw: string | null | undefined
-): DepreciationCalculationMode | null {
-  if (raw == null || typeof raw !== "string") return null;
-  const t = raw
-    .trim()
-    .toUpperCase()
-    .replace(/[\s-]+/g, "_");
-  if (t === "ERP_ACCURATE") return "ERP_ACCURATE";
-  if (t === "EXCEL_FIXED") return "EXCEL_FIXED";
-  return null;
-}
-
 export function depreciationMethodLabel(code: DepreciationMethodCode): string {
   return code === "STRAIGHT_LINE" ? "Straight Line" : "Declining Balance";
-}
-
-export function calculationModeLabel(mode: DepreciationCalculationMode): string {
-  return mode === "ERP_ACCURATE" ? "ERP Accurate" : "Excel Fixed";
 }
 
 function parseBsToNepaliDate(raw: string): NepaliDate | null {
@@ -190,12 +159,6 @@ function endOfBsYear(year: number): NepaliDate {
   return endOfMonth(new NepaliDateCtor(year, 11, 1));
 }
 
-function startOfQuarter(nd: NepaliDate): NepaliDate {
-  const m = nd.getMonth();
-  const qStartMonth = Math.floor(m / 3) * 3;
-  return new NepaliDateCtor(nd.getYear(), qStartMonth, 1);
-}
-
 /** Inclusive calendar days between two BS dates. */
 export function inclusiveCalendarDays(
   start: NepaliDate,
@@ -246,27 +209,6 @@ function endOfQuarter(nd: NepaliDate): NepaliDate {
   const m = nd.getMonth();
   const qEndMonth = Math.floor(m / 3) * 3 + 2;
   return endOfMonth(new NepaliDateCtor(nd.getYear(), qEndMonth, 1));
-}
-
-function isFullBsQuarterSlice(
-  periodStart: NepaliDate,
-  periodEnd: NepaliDate
-): boolean {
-  const qs = startOfQuarter(periodStart);
-  if (compareBs(periodStart, qs) !== 0) return false;
-  const qe = endOfQuarter(periodStart);
-  return compareBs(periodEnd, qe) === 0;
-}
-
-function isFullBsYearSlice(
-  periodStart: NepaliDate,
-  periodEnd: NepaliDate
-): boolean {
-  const y = periodStart.getYear();
-  return (
-    compareBs(periodStart, startOfBsYear(y)) === 0 &&
-    compareBs(periodEnd, endOfBsYear(y)) === 0
-  );
 }
 
 /**
@@ -409,39 +351,6 @@ export function buildCustomDayPeriods(
   return periods;
 }
 
-/**
- * Replace period working days with Excel-style fixed counts (30 / 90 / 365 / custom).
- * Partial year or partial quarter rows keep actual inclusive calendar days.
- */
-export function applyExcelFixedWorkingDays(
-  slices: DepreciationPeriodSlice[],
-  periodMode: DepreciationPeriodMode,
-  customDaysPerPeriod: number
-): DepreciationPeriodSlice[] {
-  return slices.map((s) => {
-    const startNd = parseBsToNepaliDate(s.startBs);
-    const endNd = parseBsToNepaliDate(s.endBs);
-    if (!startNd || !endNd) return s;
-
-    let wd: number;
-    if (periodMode === "monthly") {
-      wd = EXCEL_DAYS_MONTH;
-    } else if (periodMode === "quarterly") {
-      wd = isFullBsQuarterSlice(startNd, endNd)
-        ? EXCEL_DAYS_FULL_QUARTER
-        : inclusiveCalendarDays(startNd, endNd);
-    } else if (periodMode === "yearly") {
-      wd = isFullBsYearSlice(startNd, endNd)
-        ? EXCEL_DAYS_FULL_YEAR
-        : inclusiveCalendarDays(startNd, endNd);
-    } else {
-      wd = Math.max(1, Math.floor(customDaysPerPeriod));
-    }
-
-    return { ...s, workingDays: wd };
-  });
-}
-
 export type ScheduleFromPeriodsInput = {
   purchaseAmount: number;
   depRatePercent: number;
@@ -539,18 +448,12 @@ export type ComputeDepreciationScheduleParams = {
   purchaseDateBs: string;
   depRatePercent: number;
   method: DepreciationMethodCode;
-  calculationMode?: DepreciationCalculationMode;
   calculationFromBs: string;
   calculationToBs: string;
   periodMode: DepreciationPeriodMode;
   /** Required when periodMode === custom_days */
   customDaysPerPeriod?: number;
 };
-
-export type DepreciationScheduleStrategyParams = Omit<
-  ComputeDepreciationScheduleParams,
-  "method" | "calculationMode"
->;
 
 function validateScheduleParams(
   p: ComputeDepreciationScheduleParams
@@ -620,7 +523,6 @@ function finalizeScheduleResult(
   effectiveFromBs: string,
   rows: DepreciationScheduleRow[]
 ): DepreciationScheduleSuccess {
-  const mode = params.calculationMode ?? "ERP_ACCURATE";
   const last = rows[rows.length - 1]!;
   const totalWd = rows.reduce((s, x) => s + x.workingDays, 0);
 
@@ -630,8 +532,6 @@ function finalizeScheduleResult(
     summary: {
       purchaseAmount: roundMoney(params.purchaseAmount),
       depreciationMethodLabel: depreciationMethodLabel(params.method),
-      calculationMode: mode,
-      calculationModeLabel: calculationModeLabel(mode),
       depRatePercent: params.depRatePercent,
       calculationFromBs: normalizeBsDateEnglish(effectiveFromBs),
       calculationToBs: normalizeBsDateEnglish(params.calculationToBs),
@@ -643,7 +543,7 @@ function finalizeScheduleResult(
 }
 
 /**
- * Builds rows + summary; selects ERP vs Excel day rules, then Straight Line vs Declining.
+ * Builds rows + summary using inclusive calendar days per period.
  */
 export function buildDepreciationSchedule(
   params: ComputeDepreciationScheduleParams
@@ -657,7 +557,6 @@ export type OneYearDepreciationScheduleParams = {
   purchaseDateBs: string;
   depRatePercent: number;
   method: DepreciationMethodCode;
-  calculationMode?: DepreciationCalculationMode;
 };
 
 /**
@@ -693,7 +592,6 @@ export function computeOneYearDepreciationSchedule(
     purchaseDateBs: params.purchaseDateBs,
     depRatePercent: params.depRatePercent,
     method: params.method,
-    calculationMode: params.calculationMode,
     calculationFromBs: purchaseBs,
     calculationToBs: endBs,
     periodMode: "monthly",
@@ -711,7 +609,6 @@ export function computeDepreciationSchedule(
     ...params,
     calculationFromBs: calculationFromNorm,
     purchaseDateBs: purchaseDateNorm,
-    calculationMode: params.calculationMode ?? "ERP_ACCURATE",
   };
 
   const errors = validateScheduleParams(fullParams);
@@ -723,7 +620,7 @@ export function computeDepreciationSchedule(
   const purchaseNd = parseBsToNepaliDate(fullParams.purchaseDateBs)!;
   const effectiveFromBs = formatBs(maxBs(fromNd, purchaseNd));
 
-  let slices = buildSlices({
+  const slices = buildSlices({
     ...fullParams,
     calculationFromBs: effectiveFromBs,
   });
@@ -737,18 +634,6 @@ export function computeDepreciationSchedule(
     };
   }
 
-  if (fullParams.calculationMode === "EXCEL_FIXED") {
-    const custom =
-      fullParams.periodMode === "custom_days"
-        ? (fullParams.customDaysPerPeriod ?? 30)
-        : 30;
-    slices = applyExcelFixedWorkingDays(
-      slices,
-      fullParams.periodMode,
-      custom
-    );
-  }
-
   const rows = computeScheduleFromPeriods({
     purchaseAmount: fullParams.purchaseAmount,
     depRatePercent: fullParams.depRatePercent,
@@ -757,45 +642,4 @@ export function computeDepreciationSchedule(
   });
 
   return finalizeScheduleResult(fullParams, effectiveFromBs, rows);
-}
-
-/** @internal Strategy entry points for tests and explicit composition. */
-export function buildErpAccurateStraightLineSchedule(
-  params: DepreciationScheduleStrategyParams
-): DepreciationScheduleResult {
-  return computeDepreciationSchedule({
-    ...params,
-    method: "STRAIGHT_LINE",
-    calculationMode: "ERP_ACCURATE",
-  });
-}
-
-export function buildErpAccurateDecliningSchedule(
-  params: DepreciationScheduleStrategyParams
-): DepreciationScheduleResult {
-  return computeDepreciationSchedule({
-    ...params,
-    method: "DECLINING_BALANCE",
-    calculationMode: "ERP_ACCURATE",
-  });
-}
-
-export function buildExcelFixedStraightLineSchedule(
-  params: DepreciationScheduleStrategyParams
-): DepreciationScheduleResult {
-  return computeDepreciationSchedule({
-    ...params,
-    method: "STRAIGHT_LINE",
-    calculationMode: "EXCEL_FIXED",
-  });
-}
-
-export function buildExcelFixedDecliningSchedule(
-  params: DepreciationScheduleStrategyParams
-): DepreciationScheduleResult {
-  return computeDepreciationSchedule({
-    ...params,
-    method: "DECLINING_BALANCE",
-    calculationMode: "EXCEL_FIXED",
-  });
 }

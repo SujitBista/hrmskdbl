@@ -21,7 +21,6 @@ import {
   isNoDepreciationMethod,
   parseDepreciationMethod,
   parseDepreciationScopeMode,
-  type DepreciationCalculationMode,
   type DepreciationScopeMode,
 } from "@hrmskdbl/depreciation-core";
 
@@ -364,7 +363,6 @@ export type CreateDepreciationRunInput = {
   /** Overrides default quarter label (e.g. "First Quarter") when non-empty. */
   depTitle?: string | null;
   branchId?: number | null;
-  calculationMode?: DepreciationCalculationMode;
   /**
    * AS_OF_DATE: through calculation date (min with fiscal year end). New runs
    * use this. FY_END is retained for existing stored runs / refresh logic.
@@ -646,7 +644,6 @@ async function insertDepreciationDetailRows(
     quarterNo: 1 | 2 | 3 | 4;
     calculationDateBs: string;
     depreciationScopeMode: DepreciationScopeMode;
-    calculationMode: DepreciationCalculationMode;
     assets: AssetDepRow[];
     carryForwardContext: DepreciationRunCarryForwardContext;
   }
@@ -657,7 +654,6 @@ async function insertDepreciationDetailRows(
     quarterNo,
     calculationDateBs,
     depreciationScopeMode,
-    calculationMode,
     assets,
     carryForwardContext,
   } = args;
@@ -745,7 +741,6 @@ async function insertDepreciationDetailRows(
       depreciationStartBs,
       depRatePercent: depRate,
       method,
-      calculationMode,
       fiscalYearStart: fy,
       quarter: quarterNo,
       depreciationScopeMode,
@@ -872,9 +867,6 @@ export async function createDepreciationRun(
       throw new Error("Branch not found.");
     }
   }
-
-  const calculationMode: DepreciationCalculationMode =
-    input.calculationMode ?? "ERP_ACCURATE";
 
   const depreciationScopeMode: DepreciationScopeMode =
     input.depreciationScopeMode === "FY_END" ||
@@ -1022,7 +1014,6 @@ export async function createDepreciationRun(
         quarterNo,
         calculationDateBs,
         depreciationScopeMode,
-        calculationMode,
         assets,
         carryForwardContext,
       }
@@ -1116,7 +1107,6 @@ export async function refreshDepreciationRunDetailsFromAssets(
 
   const depreciationScopeMode =
     parseDepreciationScopeMode(run.depreciation_scope_mode) ?? "FY_END";
-  const calculationMode: DepreciationCalculationMode = "ERP_ACCURATE";
   const branchId = run.branch_id;
 
   const assets = await loadAssetsForRun(branchId);
@@ -1224,7 +1214,6 @@ export async function refreshDepreciationRunDetailsFromAssets(
         quarterNo,
         calculationDateBs,
         depreciationScopeMode,
-        calculationMode,
         assets,
         carryForwardContext,
       }
@@ -1422,7 +1411,6 @@ export async function createDepreciationRunFromMasterForm(input: {
     depTitle: input.depTitle,
     calculationDateBs: calcBs,
     branchId: null,
-    calculationMode: "ERP_ACCURATE",
     depreciationScopeMode: "AS_OF_DATE",
   });
 }

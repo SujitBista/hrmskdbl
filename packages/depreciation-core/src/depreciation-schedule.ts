@@ -30,6 +30,16 @@ export type CalculationMode = DepreciationCalculationMode;
 /** Canonical method codes aligned with API-style names. */
 export type DepreciationMethodCode = "STRAIGHT_LINE" | "DECLINING_BALANCE";
 
+/** Asset group label meaning the group is not depreciated. */
+export const NO_DEPRECIATION_METHOD = "-";
+
+export function isNoDepreciationMethod(
+  raw: string | null | undefined
+): boolean {
+  if (raw == null || typeof raw !== "string") return false;
+  return raw.trim() === NO_DEPRECIATION_METHOD;
+}
+
 export type DepreciationPeriodMode =
   | "monthly"
   | "quarterly"
@@ -90,6 +100,7 @@ export function parseDepreciationMethod(
   raw: string | null | undefined
 ): DepreciationMethodCode | null {
   if (raw == null || typeof raw !== "string") return null;
+  if (isNoDepreciationMethod(raw)) return null;
   const t = raw.trim().toLowerCase().replace(/\s+/g, "_");
   if (
     t === "straight_line" ||

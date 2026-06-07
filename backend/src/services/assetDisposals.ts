@@ -8,6 +8,7 @@ import {
   fiscalYearStartFromBsDate,
   nepaliCalendarMonthIndexFromBs,
   normalizeBsDateEnglish,
+  isNoDepreciationMethod,
   parseDepreciationMethod,
 } from "@hrmskdbl/depreciation-core";
 import {
@@ -263,6 +264,27 @@ export function calculateAssetDisposalAmounts(
   );
   if (purchaseAmount === null || purchaseAmount <= 0) {
     throw new Error("Asset has no valid depreciable cost.");
+  }
+
+  const rawMethod = asset.asset_dep_method ?? asset.group_dep_method;
+  if (isNoDepreciationMethod(rawMethod)) {
+    const registerBv =
+      asset.book_value != null && asset.book_value !== ""
+        ? Number.parseFloat(asset.book_value)
+        : NaN;
+    const netBookValueAtDisposal = roundMoney(
+      Number.isFinite(registerBv) && registerBv > 0 ? registerBv : purchaseAmount
+    );
+    const { profitAmount, lossAmount } = calculateDisposalGainLoss({
+      disposalAmount,
+      netBookValue: netBookValueAtDisposal,
+    });
+    return {
+      netBookValueAtDisposal,
+      accumulatedDepreciationAtDisposal: 0,
+      profitAmount,
+      lossAmount,
+    };
   }
 
   const depRate = parseDepRatePercent(asset.asset_dep_rate ?? asset.group_dep_rate);

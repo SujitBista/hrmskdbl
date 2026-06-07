@@ -30,9 +30,14 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
 
 const DEPRECIATION_METHODS = [
+  "-",
   "Declining Balance",
   "Straight Line",
 ] as const;
+
+function isNoDepreciationMethod(method: string): boolean {
+  return method.trim() === "-";
+}
 
 const editFieldClass =
   "mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2";
@@ -79,7 +84,11 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       setEditName(editTarget.name);
       setEditDepMethod(editTarget.dep_method ?? "");
       setEditDepRate(
-        editTarget.dep_rate != null ? String(editTarget.dep_rate) : ""
+        isNoDepreciationMethod(editTarget.dep_method ?? "")
+          ? ""
+          : editTarget.dep_rate != null
+            ? String(editTarget.dep_rate)
+            : ""
       );
       setActionError(null);
       el.showModal();
@@ -177,9 +186,13 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
       setActionError("Depreciation method is required.");
       return;
     }
+    const noDepreciation = isNoDepreciationMethod(editDepMethod);
     const parsedDepRate =
       editDepRate.trim() === "" ? NaN : Number.parseFloat(editDepRate);
-    if (!Number.isFinite(parsedDepRate) || parsedDepRate <= 0) {
+    if (
+      !noDepreciation &&
+      (!Number.isFinite(parsedDepRate) || parsedDepRate <= 0)
+    ) {
       setActionError("Dep rate must be greater than zero.");
       return;
     }
@@ -192,7 +205,7 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
           code: editCode,
           name: editName,
           dep_method: editDepMethod,
-          dep_rate: parsedDepRate,
+          dep_rate: noDepreciation ? 0 : parsedDepRate,
         }),
       });
       const json = (await res.json()) as { error?: string };
@@ -321,7 +334,11 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
                     {g.dep_method ?? "—"}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-700">
-                    {g.dep_rate != null ? g.dep_rate : "—"}
+                    {isNoDepreciationMethod(g.dep_method ?? "")
+                      ? "—"
+                      : g.dep_rate != null
+                        ? g.dep_rate
+                        : "—"}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                     {formatAdminDateTime(g.created_at)}
@@ -524,7 +541,13 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
                   <select
                     id={`${searchId}-edit-dep-method`}
                     value={editDepMethod}
-                    onChange={(e) => setEditDepMethod(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setEditDepMethod(next);
+                      if (isNoDepreciationMethod(next)) {
+                        setEditDepRate("");
+                      }
+                    }}
                     className={editFieldClass}
                     required
                   >
@@ -536,24 +559,26 @@ export function GroupsTable({ refreshKey }: { refreshKey: number }) {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label
-                    htmlFor={`${searchId}-edit-dep-rate`}
-                    className="block text-sm font-medium text-slate-700"
-                  >
-                    Dep rate (%)
-                  </label>
-                  <input
-                    id={`${searchId}-edit-dep-rate`}
-                    type="number"
-                    min={0}
-                    step="any"
-                    required
-                    value={editDepRate}
-                    onChange={(e) => setEditDepRate(e.target.value)}
-                    className={editFieldClass}
-                  />
-                </div>
+                {!isNoDepreciationMethod(editDepMethod) ? (
+                  <div>
+                    <label
+                      htmlFor={`${searchId}-edit-dep-rate`}
+                      className="block text-sm font-medium text-slate-700"
+                    >
+                      Dep rate (%)
+                    </label>
+                    <input
+                      id={`${searchId}-edit-dep-rate`}
+                      type="number"
+                      min={0}
+                      step="any"
+                      required
+                      value={editDepRate}
+                      onChange={(e) => setEditDepRate(e.target.value)}
+                      className={editFieldClass}
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
             {actionError && editTarget ? (

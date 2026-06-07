@@ -18,6 +18,7 @@ import {
   maxEligibleQuarter,
   nepaliMonthNameToCalendarIndex,
   normalizeBsDateEnglish,
+  isNoDepreciationMethod,
   parseDepreciationMethod,
   parseDepreciationScopeMode,
   type DepreciationCalculationMode,
@@ -175,6 +176,9 @@ export function isDepreciableAssetEligibleForDepreciationSchedule(
   a: DepreciationScheduleAssetRow
 ): boolean {
   if (a.asset_status === "DISPOSED") {
+    return false;
+  }
+  if (isNoDepreciationMethod(a.asset_dep_method ?? a.group_dep_method)) {
     return false;
   }
   const purchaseAmount = grossDepreciableAmountForRun(
@@ -670,6 +674,9 @@ async function insertDepreciationDetailRows(
   const fyStartBs = fiscalYearStartBs(fy);
 
   for (const a of assets) {
+    if (isNoDepreciationMethod(a.asset_dep_method ?? a.group_dep_method)) {
+      continue;
+    }
     const purchaseAmount = grossDepreciableAmountForRun(
       a.book_value,
       a.purchase_qty,

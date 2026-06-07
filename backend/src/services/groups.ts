@@ -1,6 +1,7 @@
 import { query } from "../db.js";
 
 export const DEPRECIATION_METHODS = [
+  "-",
   "Declining Balance",
   "Straight Line",
 ] as const;
@@ -234,7 +235,16 @@ export function parseGroupPayload(body: unknown): CreateGroupInput {
   }
   const dep_method = depMethodTrimmed;
 
+  const noDepreciation = dep_method === "-";
   const dep_rate = parseOptionalRate("Dep rate", b.dep_rate);
+  if (noDepreciation) {
+    return {
+      code,
+      name,
+      dep_method,
+      dep_rate: dep_rate ?? 0,
+    };
+  }
   if (dep_rate === null) {
     throw new Error("Dep rate is required.");
   }

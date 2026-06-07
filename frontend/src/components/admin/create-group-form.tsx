@@ -3,9 +3,14 @@
 import { FormEvent, useId, useState } from "react";
 
 const DEPRECIATION_METHODS = [
+  "-",
   "Declining Balance",
   "Straight Line",
 ] as const;
+
+function isNoDepreciationMethod(method: string): boolean {
+  return method.trim() === "-";
+}
 
 type Props = {
   onCreated?: () => void;
@@ -32,9 +37,13 @@ export function CreateGroupForm({ onCreated }: Props) {
       setError("Depreciation method is required.");
       return;
     }
+    const noDepreciation = isNoDepreciationMethod(depMethod);
     const parsedDepRate =
       depRate.trim() === "" ? NaN : Number.parseFloat(depRate);
-    if (!Number.isFinite(parsedDepRate) || parsedDepRate <= 0) {
+    if (
+      !noDepreciation &&
+      (!Number.isFinite(parsedDepRate) || parsedDepRate <= 0)
+    ) {
       setError("Dep rate must be greater than zero.");
       return;
     }
@@ -47,7 +56,7 @@ export function CreateGroupForm({ onCreated }: Props) {
           code,
           name,
           dep_method: depMethod,
-          dep_rate: parsedDepRate,
+          dep_rate: noDepreciation ? 0 : parsedDepRate,
         }),
       });
       const data = (await res.json()) as { error?: string };
@@ -139,7 +148,13 @@ export function CreateGroupForm({ onCreated }: Props) {
               <select
                 id={`${formId}-dep-method`}
                 value={depMethod}
-                onChange={(ev) => setDepMethod(ev.target.value)}
+                onChange={(ev) => {
+                  const next = ev.target.value;
+                  setDepMethod(next);
+                  if (isNoDepreciationMethod(next)) {
+                    setDepRate("");
+                  }
+                }}
                 className={inputClass}
                 required
               >
@@ -151,24 +166,26 @@ export function CreateGroupForm({ onCreated }: Props) {
                 ))}
               </select>
             </div>
-            <div>
-              <label
-                htmlFor={`${formId}-dep-rate`}
-                className="block text-sm font-medium text-slate-700"
-              >
-                Dep rate (%)
-              </label>
-              <input
-                id={`${formId}-dep-rate`}
-                type="number"
-                min={0}
-                step="any"
-                required
-                value={depRate}
-                onChange={(ev) => setDepRate(ev.target.value)}
-                className={inputClass}
-              />
-            </div>
+            {!isNoDepreciationMethod(depMethod) ? (
+              <div>
+                <label
+                  htmlFor={`${formId}-dep-rate`}
+                  className="block text-sm font-medium text-slate-700"
+                >
+                  Dep rate (%)
+                </label>
+                <input
+                  id={`${formId}-dep-rate`}
+                  type="number"
+                  min={0}
+                  step="any"
+                  required
+                  value={depRate}
+                  onChange={(ev) => setDepRate(ev.target.value)}
+                  className={inputClass}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 

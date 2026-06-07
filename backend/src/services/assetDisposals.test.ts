@@ -89,6 +89,24 @@ describe("asset disposal calculations", () => {
     expect(result.netBookValueAtDisposal).toBeLessThan(100000);
     expect(result.profitAmount + result.lossAmount).toBeGreaterThanOrEqual(0);
   });
+
+  it("uses full cost as NBV with zero accumulated depreciation when group has no depreciation", () => {
+    const result = calculateAssetDisposalAmounts(
+      sampleAsset({
+        asset_dep_method: "-",
+        group_dep_method: "-",
+        asset_dep_rate: "0",
+        group_dep_rate: "0",
+      }),
+      "2080/07/01",
+      95000
+    );
+
+    expect(result.accumulatedDepreciationAtDisposal).toBe(0);
+    expect(result.netBookValueAtDisposal).toBe(100000);
+    expect(result.lossAmount).toBe(5000);
+    expect(result.profitAmount).toBe(0);
+  });
 });
 
 describe("disposed asset depreciation inclusion", () => {

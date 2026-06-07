@@ -16,6 +16,8 @@ import {
   firstProjectedYearEndBs,
   parseCalculationMode,
   parseDepreciationMethod,
+  isNoDepreciationMethod,
+  NO_DEPRECIATION_METHOD,
 } from "./depreciation-schedule";
 
 describe("depreciationCommencementFromRegister", () => {
@@ -56,6 +58,12 @@ describe("parseDepreciationMethod", () => {
     expect(parseDepreciationMethod("DECLINING_BALANCE")).toBe(
       "DECLINING_BALANCE"
     );
+  });
+
+  it("treats no-depreciation group label as null", () => {
+    expect(parseDepreciationMethod(NO_DEPRECIATION_METHOD)).toBeNull();
+    expect(isNoDepreciationMethod("-")).toBe(true);
+    expect(isNoDepreciationMethod("Straight Line")).toBe(false);
   });
 });
 

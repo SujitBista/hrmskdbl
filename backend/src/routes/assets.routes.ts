@@ -11,6 +11,7 @@ import {
   postAsset,
   postAssetAllocationChange,
   postAssetDisposal,
+  postBulkAssetDisposal,
   postAssetsImport,
 } from "../controllers/assets.controller.js";
 
@@ -27,6 +28,7 @@ assetsRouter.get(
 );
 assetsRouter.get("/api/admin/assets/allocations", getAssetAllocations);
 assetsRouter.get("/api/admin/assets/disposals", getAssetDisposals);
+assetsRouter.post("/api/admin/assets/disposals/bulk", postBulkAssetDisposal);
 assetsRouter.get("/api/admin/assets/:id/disposal", getAssetDisposalById);
 assetsRouter.post("/api/admin/assets/:id/disposal", postAssetDisposal);
 assetsRouter.post(

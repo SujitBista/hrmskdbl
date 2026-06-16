@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertAssetCanBeDisposed,
   assertDisposalDateIsValidForAsset,
+  BulkDisposalValidationError,
   calculateAssetDisposalAmounts,
   calculateDisposalGainLoss,
+  parseBulkDisposeAssetPayload,
   type DisposalAssetDepRow,
 } from "./assetDisposals.js";
 import {
@@ -166,5 +168,71 @@ describe("disposed asset depreciation inclusion", () => {
         closingBookValue: 68_200,
       })
     ).toEqual({ bookValue: 72_500, balanceAmount: 68_200 });
+  });
+});
+
+describe("bulk disposal payload parsing", () => {
+  it("parses a valid bulk disposal request", () => {
+    const result = parseBulkDisposeAssetPayload(
+      {
+        disposal_date_bs: "2080/07/01",
+        disposal_type: "SOLD",
+        reference_no: "REF-1",
+        notes: "Batch sale",
+        items: [
+          { asset_id: 1, disposal_amount: 50000 },
+          { asset_id: 2, disposal_amount: 0 },
+        ],
+      },
+      99
+    );
+    expect(result.disposal_date_bs).toBe("2080/07/01");
+    expect(result.disposal_type).toBe("SOLD");
+    expect(result.reference_no).toBe("REF-1");
+    expect(result.notes).toBe("Batch sale");
+    expect(result.created_by).toBe(99);
+    expect(result.items).toEqual([
+      { asset_id: 1, disposal_amount: 50000 },
+      { asset_id: 2, disposal_amount: 0 },
+    ]);
+  });
+
+  it("rejects duplicate asset_id values", () => {
+    expect(() =>
+      parseBulkDisposeAssetPayload(
+        {
+          disposal_date_bs: "2080/07/01",
+          disposal_type: "SCRAPPED",
+          items: [
+            { asset_id: 1, disposal_amount: 0 },
+            { asset_id: 1, disposal_amount: 0 },
+          ],
+        },
+        null
+      )
+    ).toThrow(/duplicate asset_id/i);
+  });
+
+  it("requires at least one item", () => {
+    expect(() =>
+      parseBulkDisposeAssetPayload(
+        {
+          disposal_date_bs: "2080/07/01",
+          disposal_type: "LOST",
+          items: [],
+        },
+        null
+      )
+    ).toThrow(/at least one asset/i);
+  });
+});
+
+describe("BulkDisposalValidationError", () => {
+  it("carries per-item errors", () => {
+    const err = new BulkDisposalValidationError([
+      { asset_id: 3, error: "Asset is already disposed." },
+    ]);
+    expect(err.itemErrors).toHaveLength(1);
+    expect(err.message).toMatch(/validation failed/i);
   });
 });

@@ -37,6 +37,35 @@ export type DisposeAssetInput = {
   created_by: number | null;
 };
 
+export type BulkDisposeItemInput = {
+  asset_id: number;
+  disposal_amount: number;
+};
+
+export type BulkDisposeAssetInput = {
+  disposal_date_bs: string;
+  disposal_type: AssetDisposalType;
+  reference_no: string | null;
+  notes: string | null;
+  created_by: number | null;
+  items: BulkDisposeItemInput[];
+};
+
+export type BulkDisposalItemError = {
+  asset_id: number;
+  error: string;
+};
+
+export class BulkDisposalValidationError extends Error {
+  readonly itemErrors: BulkDisposalItemError[];
+
+  constructor(itemErrors: BulkDisposalItemError[]) {
+    super("Bulk disposal validation failed.");
+    this.name = "BulkDisposalValidationError";
+    this.itemErrors = itemErrors;
+  }
+}
+
 export type AssetDisposalRow = {
   id: number;
   asset_id: number;
@@ -138,6 +167,99 @@ export function parseDisposeAssetPayload(
     notes,
     created_by: createdBy,
   };
+}
+
+function parseBulkDisposeCommonFields(
+  body: Record<string, unknown>,
+  createdBy: number | null
+): Omit<BulkDisposeAssetInput, "items"> {
+  const disposalDateBs = normalizeBsDateEnglish(
+    typeof body.disposal_date_bs === "string" ? body.disposal_date_bs.trim() : ""
+  );
+  if (!disposalDateBs || !/^\d{4}\/\d{2}\/\d{2}$/.test(disposalDateBs)) {
+    throw new Error("Disposal date must be YYYY/MM/DD (Bikram Sambat).");
+  }
+
+  const typeRaw =
+    typeof body.disposal_type === "string"
+      ? body.disposal_type.trim().toUpperCase()
+      : "";
+  if (!DISPOSAL_TYPES.includes(typeRaw as AssetDisposalType)) {
+    throw new Error("Select a valid disposal type.");
+  }
+
+  const referenceNo =
+    typeof body.reference_no === "string" && body.reference_no.trim() !== ""
+      ? body.reference_no.trim().slice(0, 255)
+      : null;
+  const notes =
+    typeof body.notes === "string" && body.notes.trim() !== ""
+      ? body.notes.trim()
+      : null;
+
+  return {
+    disposal_date_bs: disposalDateBs,
+    disposal_type: typeRaw as AssetDisposalType,
+    reference_no: referenceNo,
+    notes,
+    created_by: createdBy,
+  };
+}
+
+export function parseBulkDisposeAssetPayload(
+  body: unknown,
+  createdBy: number | null
+): BulkDisposeAssetInput {
+  if (!body || typeof body !== "object") {
+    throw new Error("Invalid request body.");
+  }
+  const b = body as Record<string, unknown>;
+  const common = parseBulkDisposeCommonFields(b, createdBy);
+
+  if (!Array.isArray(b.items) || b.items.length === 0) {
+    throw new Error("At least one asset is required.");
+  }
+
+  const items: BulkDisposeItemInput[] = [];
+  const seenAssetIds = new Set<number>();
+
+  for (const rawItem of b.items) {
+    if (!rawItem || typeof rawItem !== "object") {
+      throw new Error("Each disposal item must be an object.");
+    }
+    const item = rawItem as Record<string, unknown>;
+    const assetIdRaw = item.asset_id;
+    const assetId =
+      typeof assetIdRaw === "number"
+        ? assetIdRaw
+        : Number.parseInt(String(assetIdRaw ?? ""), 10);
+    if (!Number.isFinite(assetId) || assetId < 1) {
+      throw new Error("Each item must have a valid asset_id.");
+    }
+    if (seenAssetIds.has(assetId)) {
+      throw new Error("Duplicate asset_id values are not allowed.");
+    }
+    seenAssetIds.add(assetId);
+
+    const amountRaw = item.disposal_amount;
+    const disposalAmount =
+      typeof amountRaw === "number"
+        ? amountRaw
+        : Number(String(amountRaw ?? ""));
+    if (!Number.isFinite(disposalAmount)) {
+      throw new Error(`Disposal amount is required for asset ${assetId}.`);
+    }
+    if (disposalAmount < 0) {
+      throw new Error(`Disposal amount cannot be negative for asset ${assetId}.`);
+    }
+
+    items.push({
+      asset_id: assetId,
+      disposal_amount: roundMoney(disposalAmount),
+    });
+  }
+
+  return { ...common, items };
 }
 
 export function calculateDisposalGainLoss(params: {
@@ -357,116 +479,7 @@ export async function disposeAsset(
   }
 
   const disposal = await withTransaction(async (client) => {
-    const asset = await loadAssetForDisposal(client, assetId);
-    if (!asset) {
-      return null;
-    }
-    const existing = await client.query<{ id: number }>(
-      `SELECT id FROM hrms_asset_disposals WHERE asset_id = $1 LIMIT 1`,
-      [assetId]
-    );
-    assertAssetCanBeDisposed({
-      assetStatus: asset.asset_status,
-      hasExistingDisposal: Boolean(existing.rows[0]),
-    });
-
-    assertDisposalDateIsValidForAsset({
-      disposalDateBs: input.disposal_date_bs,
-      purchaseDateBs: asset.purchase_date_bs,
-      depreciationStartDateBs: asset.depreciation_start_date_bs,
-    });
-
-    const amounts = calculateAssetDisposalAmounts(
-      asset,
-      input.disposal_date_bs,
-      input.disposal_amount
-    );
-
-    const inserted = await client.query<AssetDisposalRow>(
-      `WITH inserted AS (
-         INSERT INTO hrms_asset_disposals (
-           asset_id,
-           disposal_date_bs,
-           disposal_date_ad,
-           disposal_type,
-           disposal_amount,
-           net_book_value_at_disposal,
-           accumulated_depreciation_at_disposal,
-           profit_amount,
-           loss_amount,
-           reference_no,
-           notes,
-           created_by,
-           updated_at
-         )
-         VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-         RETURNING
-           id,
-           asset_id,
-           disposal_date_bs,
-           disposal_date_ad,
-           disposal_type,
-           disposal_amount,
-           net_book_value_at_disposal,
-           accumulated_depreciation_at_disposal,
-           profit_amount,
-           loss_amount,
-           reference_no,
-           notes,
-           created_by,
-           approved_by,
-           created_at,
-           updated_at
-       )
-       SELECT
-         i.id,
-         i.asset_id,
-         a.asset_code,
-         a.asset_name,
-         i.disposal_date_bs,
-         i.disposal_date_ad::text,
-         i.disposal_type,
-         i.disposal_amount::text,
-         i.net_book_value_at_disposal::text,
-         i.accumulated_depreciation_at_disposal::text,
-         i.profit_amount::text,
-         i.loss_amount::text,
-         i.reference_no,
-         i.notes,
-         i.created_by,
-         i.approved_by,
-         i.created_at::text,
-         i.updated_at::text
-       FROM inserted i
-       INNER JOIN hrms_assets a ON a.id = i.asset_id`,
-      [
-        assetId,
-        input.disposal_date_bs,
-        input.disposal_type,
-        input.disposal_amount,
-        amounts.netBookValueAtDisposal,
-        amounts.accumulatedDepreciationAtDisposal,
-        amounts.profitAmount,
-        amounts.lossAmount,
-        input.reference_no,
-        input.notes,
-        input.created_by,
-      ]
-    );
-
-    await client.query(
-      `UPDATE hrms_assets
-       SET asset_status = 'DISPOSED',
-           working_status = 'Disposed'
-       WHERE id = $1`,
-      [assetId]
-    );
-
-    const disposal = inserted.rows[0];
-    if (!disposal) {
-      throw new Error("Failed to save disposal.");
-    }
-    return disposal;
+    return disposeAssetInTransaction(client, assetId, input);
   });
   if (disposal) {
     try {
@@ -476,6 +489,218 @@ export async function disposeAsset(
     }
   }
   return disposal;
+}
+
+async function disposeAssetInTransaction(
+  client: PoolClient,
+  assetId: number,
+  input: DisposeAssetInput,
+  preloadedAsset?: DisposalAssetDepRow | null
+): Promise<AssetDisposalRow | null> {
+  const asset =
+    preloadedAsset === undefined
+      ? await loadAssetForDisposal(client, assetId)
+      : preloadedAsset;
+  if (!asset) {
+    return null;
+  }
+  const existing = await client.query<{ id: number }>(
+    `SELECT id FROM hrms_asset_disposals WHERE asset_id = $1 LIMIT 1`,
+    [assetId]
+  );
+  assertAssetCanBeDisposed({
+    assetStatus: asset.asset_status,
+    hasExistingDisposal: Boolean(existing.rows[0]),
+  });
+
+  assertDisposalDateIsValidForAsset({
+    disposalDateBs: input.disposal_date_bs,
+    purchaseDateBs: asset.purchase_date_bs,
+    depreciationStartDateBs: asset.depreciation_start_date_bs,
+  });
+
+  const amounts = calculateAssetDisposalAmounts(
+    asset,
+    input.disposal_date_bs,
+    input.disposal_amount
+  );
+
+  const inserted = await client.query<AssetDisposalRow>(
+    `WITH inserted AS (
+       INSERT INTO hrms_asset_disposals (
+         asset_id,
+         disposal_date_bs,
+         disposal_date_ad,
+         disposal_type,
+         disposal_amount,
+         net_book_value_at_disposal,
+         accumulated_depreciation_at_disposal,
+         profit_amount,
+         loss_amount,
+         reference_no,
+         notes,
+         created_by,
+         updated_at
+       )
+       VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+       RETURNING
+         id,
+         asset_id,
+         disposal_date_bs,
+         disposal_date_ad,
+         disposal_type,
+         disposal_amount,
+         net_book_value_at_disposal,
+         accumulated_depreciation_at_disposal,
+         profit_amount,
+         loss_amount,
+         reference_no,
+         notes,
+         created_by,
+         approved_by,
+         created_at,
+         updated_at
+     )
+     SELECT
+       i.id,
+       i.asset_id,
+       a.asset_code,
+       a.asset_name,
+       i.disposal_date_bs,
+       i.disposal_date_ad::text,
+       i.disposal_type,
+       i.disposal_amount::text,
+       i.net_book_value_at_disposal::text,
+       i.accumulated_depreciation_at_disposal::text,
+       i.profit_amount::text,
+       i.loss_amount::text,
+       i.reference_no,
+       i.notes,
+       i.created_by,
+       i.approved_by,
+       i.created_at::text,
+       i.updated_at::text
+     FROM inserted i
+     INNER JOIN hrms_assets a ON a.id = i.asset_id`,
+    [
+      assetId,
+      input.disposal_date_bs,
+      input.disposal_type,
+      input.disposal_amount,
+      amounts.netBookValueAtDisposal,
+      amounts.accumulatedDepreciationAtDisposal,
+      amounts.profitAmount,
+      amounts.lossAmount,
+      input.reference_no,
+      input.notes,
+      input.created_by,
+    ]
+  );
+
+  await client.query(
+    `UPDATE hrms_assets
+     SET asset_status = 'DISPOSED',
+         working_status = 'Disposed'
+     WHERE id = $1`,
+    [assetId]
+  );
+
+  const disposal = inserted.rows[0];
+  if (!disposal) {
+    throw new Error("Failed to save disposal.");
+  }
+  return disposal;
+}
+
+export async function bulkDisposeAssets(
+  input: BulkDisposeAssetInput
+): Promise<AssetDisposalRow[]> {
+  const { disposals, assetIds } = await withTransaction(async (client) => {
+    const itemErrors: BulkDisposalItemError[] = [];
+    const assetsById = new Map<number, DisposalAssetDepRow>();
+
+    for (const item of input.items) {
+      try {
+        const asset = await loadAssetForDisposal(client, item.asset_id);
+        if (!asset) {
+          itemErrors.push({
+            asset_id: item.asset_id,
+            error: "Asset not found.",
+          });
+          continue;
+        }
+        const existing = await client.query<{ id: number }>(
+          `SELECT id FROM hrms_asset_disposals WHERE asset_id = $1 LIMIT 1`,
+          [item.asset_id]
+        );
+        assertAssetCanBeDisposed({
+          assetStatus: asset.asset_status,
+          hasExistingDisposal: Boolean(existing.rows[0]),
+        });
+        assertDisposalDateIsValidForAsset({
+          disposalDateBs: input.disposal_date_bs,
+          purchaseDateBs: asset.purchase_date_bs,
+          depreciationStartDateBs: asset.depreciation_start_date_bs,
+        });
+        calculateAssetDisposalAmounts(
+          asset,
+          input.disposal_date_bs,
+          item.disposal_amount
+        );
+        assetsById.set(item.asset_id, asset);
+      } catch (err) {
+        itemErrors.push({
+          asset_id: item.asset_id,
+          error: err instanceof Error ? err.message : "Validation failed.",
+        });
+      }
+    }
+
+    if (itemErrors.length > 0) {
+      throw new BulkDisposalValidationError(itemErrors);
+    }
+
+    const disposals: AssetDisposalRow[] = [];
+    for (const item of input.items) {
+      const asset = assetsById.get(item.asset_id);
+      if (!asset) {
+        throw new Error(`Asset ${item.asset_id} not found.`);
+      }
+      const itemInput: DisposeAssetInput = {
+        disposal_date_bs: input.disposal_date_bs,
+        disposal_type: input.disposal_type,
+        disposal_amount: item.disposal_amount,
+        reference_no: input.reference_no,
+        notes: input.notes,
+        created_by: input.created_by,
+      };
+      const disposal = await disposeAssetInTransaction(
+        client,
+        item.asset_id,
+        itemInput,
+        asset
+      );
+      if (!disposal) {
+        throw new Error(`Asset ${item.asset_id} not found.`);
+      }
+      disposals.push(disposal);
+    }
+
+    return {
+      disposals,
+      assetIds: input.items.map((item) => item.asset_id),
+    };
+  });
+
+  for (const assetId of assetIds) {
+    try {
+      await refreshMutableDepreciationRunsForAsset(assetId);
+    } catch {
+      // Disposal is already committed; future runs read the DISPOSED status directly.
+    }
+  }
+
+  return disposals;
 }
 
 export async function getDisposalByAssetId(

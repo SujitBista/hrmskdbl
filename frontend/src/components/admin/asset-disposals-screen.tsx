@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   DisposalDialog,
 } from "@/components/admin/asset-register-assets-table";
+import { BulkDisposalDialog } from "@/components/admin/bulk-disposal-dialog";
 import type { AssetDisposal, AssetRegisterRow } from "./asset-register-types";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatAdminDateTime } from "@/lib/format-datetime";
@@ -129,6 +130,10 @@ export function AssetDisposalsScreen() {
   const [disposeTarget, setDisposeTarget] = useState<AssetRegisterRow | null>(
     null
   );
+  const [selectedById, setSelectedById] = useState<
+    Map<number, AssetRegisterRow>
+  >(() => new Map());
+  const [bulkDisposeOpen, setBulkDisposeOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -216,9 +221,58 @@ export function AssetDisposalsScreen() {
     void loadDisposedAssets();
   }, [loadDisposedAssets, refreshKey]);
 
+  useEffect(() => {
+    setSelectedById(new Map());
+    setBulkDisposeOpen(false);
+  }, [activePage, activeSearch]);
+
+  const allOnPageSelected =
+    activeRows.length > 0 && activeRows.every((a) => selectedById.has(a.id));
+  const selectedAssets = useMemo(
+    () => Array.from(selectedById.values()),
+    [selectedById]
+  );
+
+  function toggleAssetSelection(asset: AssetRegisterRow) {
+    setSelectedById((prev) => {
+      const next = new Map(prev);
+      if (next.has(asset.id)) {
+        next.delete(asset.id);
+      } else {
+        next.set(asset.id, asset);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedById((prev) => {
+      const next = new Map(prev);
+      if (allOnPageSelected) {
+        for (const a of activeRows) {
+          next.delete(a.id);
+        }
+      } else {
+        for (const a of activeRows) {
+          next.set(a.id, a);
+        }
+      }
+      return next;
+    });
+  }
+
   function refreshAfterDisposal() {
     setRefreshKey((k) => k + 1);
     setDisposedPage(1);
+  }
+
+  function handleBulkDisposed(options?: { refreshOnly?: boolean }) {
+    refreshAfterDisposal();
+    if (options?.refreshOnly) {
+      return;
+    }
+    setSelectedById(new Map());
+    setBulkDisposeOpen(false);
   }
 
   return (
@@ -235,7 +289,17 @@ export function AssetDisposalsScreen() {
               history below.
             </p>
           </div>
-          <div className="w-full sm:max-w-xs">
+          <div className="flex w-full flex-col gap-3 sm:max-w-md sm:flex-row sm:items-end">
+            {selectedById.size > 0 ? (
+              <button
+                type="button"
+                onClick={() => setBulkDisposeOpen(true)}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-800"
+              >
+                Bulk Dispose ({selectedById.size})
+              </button>
+            ) : null}
+            <div className="w-full sm:max-w-xs">
             <label
               htmlFor="asset-disposal-active-search"
               className="block text-sm font-medium text-slate-700"
@@ -250,6 +314,7 @@ export function AssetDisposalsScreen() {
               placeholder="Code, name, group, branch..."
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-900 shadow-sm outline-none ring-emerald-800/30 focus:ring-2"
             />
+            </div>
           </div>
         </div>
 
@@ -257,6 +322,16 @@ export function AssetDisposalsScreen() {
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
               <tr>
+                <th scope="col" className="px-3 py-3 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleSelectAllOnPage}
+                    disabled={activeRows.length === 0}
+                    aria-label="Select all active assets on this page"
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+                  />
+                </th>
                 <th scope="col" className="px-4 py-3 font-medium">
                   Asset ID
                 </th>
@@ -283,14 +358,14 @@ export function AssetDisposalsScreen() {
             <tbody className="divide-y divide-slate-100">
               {activeLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                     Loading...
                   </td>
                 </tr>
               ) : activeError ? (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-4 py-8 text-center text-red-600"
                     role="alert"
                   >
@@ -299,7 +374,7 @@ export function AssetDisposalsScreen() {
                 </tr>
               ) : activeRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                     {activeSearch
                       ? "No active assets match your search."
                       : "No active assets available for disposal."}
@@ -308,6 +383,15 @@ export function AssetDisposalsScreen() {
               ) : (
                 activeRows.map((asset) => (
                   <tr key={asset.id} className="bg-white hover:bg-slate-50/80">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedById.has(asset.id)}
+                        onChange={() => toggleAssetSelection(asset)}
+                        aria-label={`Select ${asset.asset_name}`}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+                      />
+                    </td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">
                       {asset.id}
                     </td>
@@ -515,6 +599,15 @@ export function AssetDisposalsScreen() {
         asset={disposeTarget}
         onClose={() => setDisposeTarget(null)}
         onDisposed={refreshAfterDisposal}
+      />
+      <BulkDisposalDialog
+        open={bulkDisposeOpen}
+        assets={selectedAssets}
+        onClose={() => {
+          setBulkDisposeOpen(false);
+          setSelectedById(new Map());
+        }}
+        onDisposed={handleBulkDisposed}
       />
     </div>
   );

@@ -14,9 +14,12 @@ import {
   listAssets,
 } from "../services/assets.js";
 import {
+  bulkDisposeAssets,
+  BulkDisposalValidationError,
   disposeAsset,
   getDisposalByAssetId,
   listDisposedAssets,
+  parseBulkDisposeAssetPayload,
   parseDisposeAssetPayload,
 } from "../services/assetDisposals.js";
 import { clampListParams } from "../services/branches.js";
@@ -423,6 +426,44 @@ export async function postAssetDisposal(
     }
     console.error(err);
     res.status(500).json({ error: "Could not dispose asset." });
+  }
+}
+
+export async function postBulkAssetDisposal(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  let admin: AdminJwtPayload;
+  try {
+    admin = verifyAdminToken(token);
+  } catch {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  try {
+    const payload = parseBulkDisposeAssetPayload(req.body, admin.sub);
+    const disposals = await bulkDisposeAssets(payload);
+    res.status(201).json({ disposals });
+  } catch (err) {
+    if (err instanceof BulkDisposalValidationError) {
+      res.status(400).json({
+        error: err.message,
+        item_errors: err.itemErrors,
+      });
+      return;
+    }
+    if (err instanceof Error) {
+      const status = /already disposed/i.test(err.message) ? 409 : 400;
+      res.status(status).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not dispose assets." });
   }
 }
 

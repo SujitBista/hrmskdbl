@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -21,6 +22,7 @@ import { formatAdminDateTime } from "@/lib/format-datetime";
 import { NepaliDatePicker } from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 import { AssetRegisterEditDialog } from "./asset-register-edit-dialog";
+import { BulkDisposalDialog } from "./bulk-disposal-dialog";
 import type { AssetDisposal, AssetRegisterRow } from "./asset-register-types";
 import {
   bsDateToPickerValue,
@@ -51,7 +53,7 @@ type DepartmentOption = { id: number; name: string };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
 const SEARCH_DEBOUNCE_MS = 350;
-const COL_COUNT = 19;
+const COL_COUNT = 20;
 const DISPOSAL_TYPES = [
   "SOLD",
   "SCRAPPED",
@@ -121,6 +123,7 @@ export function DisposalDialog({
   onClose: () => void;
   onDisposed: () => void;
 }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const [disposalDateBs, setDisposalDateBs] = useState("");
   const [disposalType, setDisposalType] =
     useState<(typeof DISPOSAL_TYPES)[number]>("SOLD");
@@ -147,6 +150,16 @@ export function DisposalDialog({
   }, []);
 
   useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    if (asset) {
+      el.showModal();
+    } else {
+      el.close();
+    }
+  }, [asset]);
+
+  useEffect(() => {
     if (!asset) {
       setSaved(null);
       setError(null);
@@ -160,8 +173,6 @@ export function DisposalDialog({
     setError(null);
     setSaved(null);
   }, [asset]);
-
-  if (!asset) return null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -211,9 +222,11 @@ export function DisposalDialog({
 
   return (
     <dialog
-      open
+      ref={dialogRef}
+      onClose={onClose}
       className="fixed left-1/2 top-1/2 z-[200] max-h-[90vh] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-visible rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-black/40"
     >
+      {asset ? (
       <form onSubmit={(e) => void submit(e)} className="p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -229,7 +242,7 @@ export function DisposalDialog({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => dialogRef.current?.close()}
             className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700"
           >
             Close
@@ -359,7 +372,7 @@ export function DisposalDialog({
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => dialogRef.current?.close()}
             disabled={submitting}
             className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
           >
@@ -376,6 +389,7 @@ export function DisposalDialog({
           ) : null}
         </div>
       </form>
+      ) : null}
     </dialog>
   );
 }
@@ -424,6 +438,10 @@ export function AssetRegisterAssetsTable({
   const [disposeTarget, setDisposeTarget] = useState<AssetRegisterRow | null>(
     null
   );
+  const [selectedById, setSelectedById] = useState<
+    Map<number, AssetRegisterRow>
+  >(() => new Map());
+  const [bulkDisposeOpen, setBulkDisposeOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -554,7 +572,58 @@ export function AssetRegisterAssetsTable({
     }
   }
 
+  useEffect(() => {
+    setSelectedById(new Map());
+    setBulkDisposeOpen(false);
+  }, [page, debouncedSearch, assetStatusFilter]);
+
   const assets = data?.assets ?? [];
+  const selectableOnPage = assets.filter((a) => a.asset_status === "ACTIVE");
+  const allOnPageSelected =
+    selectableOnPage.length > 0 &&
+    selectableOnPage.every((a) => selectedById.has(a.id));
+  const selectedAssets = useMemo(
+    () => Array.from(selectedById.values()),
+    [selectedById]
+  );
+
+  function toggleAssetSelection(asset: AssetRegisterRow) {
+    setSelectedById((prev) => {
+      const next = new Map(prev);
+      if (next.has(asset.id)) {
+        next.delete(asset.id);
+      } else {
+        next.set(asset.id, asset);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedById((prev) => {
+      const next = new Map(prev);
+      if (allOnPageSelected) {
+        for (const a of selectableOnPage) {
+          next.delete(a.id);
+        }
+      } else {
+        for (const a of selectableOnPage) {
+          next.set(a.id, a);
+        }
+      }
+      return next;
+    });
+  }
+
+  function handleBulkDisposed(options?: { refreshOnly?: boolean }) {
+    void load();
+    if (options?.refreshOnly) {
+      return;
+    }
+    setSelectedById(new Map());
+    setBulkDisposeOpen(false);
+  }
+
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -576,6 +645,15 @@ export function AssetRegisterAssetsTable({
           </p>
         </div>
         <div className="flex w-full flex-col gap-3 sm:max-w-xl sm:flex-row sm:items-end">
+          {selectedById.size > 0 ? (
+            <button
+              type="button"
+              onClick={() => setBulkDisposeOpen(true)}
+              className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-800"
+            >
+              Bulk Dispose ({selectedById.size})
+            </button>
+          ) : null}
           <div className="w-full sm:max-w-xs">
           <label
             htmlFor={`${tableId}-search`}
@@ -622,6 +700,16 @@ export function AssetRegisterAssetsTable({
         <table className="w-full min-w-[1400px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-600">
             <tr>
+              <th scope="col" className="px-3 py-3 font-medium">
+                <input
+                  type="checkbox"
+                  checked={allOnPageSelected}
+                  onChange={toggleSelectAllOnPage}
+                  disabled={selectableOnPage.length === 0}
+                  aria-label="Select all active assets on this page"
+                  className="h-4 w-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+                />
+              </th>
               <th
                 scope="col"
                 className="px-4 py-3 font-medium whitespace-nowrap tabular-nums"
@@ -744,8 +832,22 @@ export function AssetRegisterAssetsTable({
               </tr>
             ) : (
               assets.map((a) => {
+                const isSelectable = a.asset_status === "ACTIVE";
                 return (
                   <tr key={a.id} className="bg-white hover:bg-slate-50/80">
+                    <td className="px-3 py-3">
+                      {isSelectable ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedById.has(a.id)}
+                          onChange={() => toggleAssetSelection(a)}
+                          aria-label={`Select ${a.asset_name}`}
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-800/30"
+                        />
+                      ) : (
+                        <span className="inline-block w-4" aria-hidden />
+                      )}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-slate-700">
                       {a.id}
                     </td>
@@ -973,6 +1075,15 @@ export function AssetRegisterAssetsTable({
         asset={disposeTarget}
         onClose={() => setDisposeTarget(null)}
         onDisposed={() => void load()}
+      />
+      <BulkDisposalDialog
+        open={bulkDisposeOpen}
+        assets={selectedAssets}
+        onClose={() => {
+          setBulkDisposeOpen(false);
+          setSelectedById(new Map());
+        }}
+        onDisposed={handleBulkDisposed}
       />
     </section>
   );

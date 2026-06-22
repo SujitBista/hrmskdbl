@@ -68,12 +68,26 @@ function formatAmount(value: string): string {
   }).format(n);
 }
 
+/** Plain two-decimal string for CSV (no locale thousands separators). */
+function formatCsvDecimal(value: string | number): string {
+  const n = typeof value === "number" ? value : Number.parseFloat(value);
+  if (!Number.isFinite(n)) return typeof value === "string" ? value : "";
+  return n.toFixed(2);
+}
+
 /** ERP `TotalDepAmount` = depreciation base minus closing WDV (matches register export). */
 function formatTotalDepAmount(d: DetailRow): string {
   const basis = Number.parseFloat(d.depreciation_cost_basis);
   const closing = Number.parseFloat(d.balance_amount);
   if (!Number.isFinite(basis) || !Number.isFinite(closing)) return "—";
   return formatAmount(String(basis - closing));
+}
+
+function formatCsvTotalDepAmount(d: DetailRow): string {
+  const basis = Number.parseFloat(d.depreciation_cost_basis);
+  const closing = Number.parseFloat(d.balance_amount);
+  if (!Number.isFinite(basis) || !Number.isFinite(closing)) return "";
+  return formatCsvDecimal(basis - closing);
 }
 
 const DEPRECIATION_HUB =
@@ -409,24 +423,17 @@ export function DepreciationRunDetailScreen() {
           `"${formatAssetCodeForDisplay(d.asset_code).replace(/"/g, '""')}"`,
           `"${d.group_name.replace(/"/g, '""')}"`,
           d.purchase_date_bs,
-          d.actual_purchase_price,
-          d.depreciation_cost_basis,
+          formatCsvDecimal(d.actual_purchase_price),
+          formatCsvDecimal(d.depreciation_cost_basis),
           d.register_depreciation_start_bs ?? "",
           d.dep_start_date_bs,
-          d.dep_rate,
+          formatCsvDecimal(d.dep_rate),
           d.dep_days,
-          d.dep_amount,
-          d.accumulate_dep,
-          d.book_value,
-          (() => {
-            const basis = Number.parseFloat(d.depreciation_cost_basis);
-            const closing = Number.parseFloat(d.balance_amount);
-            if (!Number.isFinite(basis) || !Number.isFinite(closing)) {
-              return "";
-            }
-            return String(basis - closing);
-          })(),
-          d.balance_amount,
+          formatCsvDecimal(d.dep_amount),
+          formatCsvDecimal(d.accumulate_dep),
+          formatCsvDecimal(d.book_value),
+          formatCsvTotalDepAmount(d),
+          formatCsvDecimal(d.balance_amount),
         ].join(",")
       );
       downloadCsv(

@@ -1131,6 +1131,14 @@ export async function createDepreciationRun(
 }
 
 function serverTodayBsNormalized(): string | null {
+  const override = process.env.DEPRECIATION_SERVER_TODAY_BS?.trim();
+  if (override) {
+    try {
+      return normalizeBsDateEnglish(override);
+    } catch {
+      return null;
+    }
+  }
   try {
     return normalizeBsDateEnglish(bsDateFromJsDate(new Date()).trim());
   } catch {

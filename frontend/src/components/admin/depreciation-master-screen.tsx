@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
+import { DepreciationSectionNav } from "./depreciation-section-nav";
 
 const SKIPPED_STORAGE_KEY = "hrmskdbl_depreciation_skipped";
 
@@ -532,6 +533,7 @@ export function DepreciationMasterScreen() {
   return (
     <div className="flex flex-col gap-4">
       <FixedAssetSectionTabs />
+      <DepreciationSectionNav />
 
       {fyRolloverStatus?.depreciationOpeningFyHelpText ? (
         <p

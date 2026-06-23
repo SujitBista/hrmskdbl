@@ -376,19 +376,19 @@ export type CreateDepreciationRunInput = {
   status?: DepreciationRunStatus;
 };
 
-/** Configured first system-managed depreciation fiscal year (migration opening FY). */
-export function getDepreciationOpeningFiscalYear(): number | null {
-  const raw = process.env.DEPRECIATION_OPENING_FY?.trim();
-  if (raw == null || raw === "") return null;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 2000) return null;
-  return Math.floor(n);
-}
+import {
+  depreciationPriorFyStrictCarryForwardFloor,
+  getDepreciationOpeningFiscalYear,
+  getDepreciationOpeningFiscalYearFromEnv,
+  getDepreciationPriorFyStrictCarryForwardFloor,
+} from "./depreciationSettings.js";
 
-/** Minimum prior FY for which a posted final run is required (opening FY when set, else 2000). */
-export function depreciationPriorFyStrictCarryForwardFloor(): number {
-  return getDepreciationOpeningFiscalYear() ?? 2000;
-}
+export {
+  depreciationPriorFyStrictCarryForwardFloor,
+  getDepreciationOpeningFiscalYear,
+  getDepreciationOpeningFiscalYearFromEnv,
+  getDepreciationPriorFyStrictCarryForwardFloor,
+} from "./depreciationSettings.js";
 
 export function formatDepreciationOpeningFyLabel(openingFyStart: number): string {
   return `${openingFyStart}-${openingFyStart + 1}`;
@@ -400,10 +400,11 @@ export function depreciationOpeningFyHelpText(openingFyStart: number): string {
 
 /** True when the new FY must use a posted prior-FY Q4/FY_END run (not register WDV). */
 export function priorFiscalYearRequiresStrictCarryForward(
-  fiscalYearStart: number
+  fiscalYearStart: number,
+  openingFy: number | null
 ): boolean {
   const priorFy = Math.floor(fiscalYearStart) - 1;
-  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  const floor = depreciationPriorFyStrictCarryForwardFloor(openingFy);
   return Number.isFinite(priorFy) && priorFy >= floor;
 }
 
@@ -445,11 +446,16 @@ function parseDepreciationMoneyField(raw: string | null): number | null {
 export async function loadPriorFyCarryForward(
   client: PoolClient,
   fiscalYearStart: number,
-  branchId: number | null
+  branchId: number | null,
+  openingFy?: number | null
 ): Promise<PriorFyCarryForward | null> {
   const fy = Math.floor(fiscalYearStart);
   const priorFy = fy - 1;
-  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  const resolvedOpening =
+    openingFy === undefined
+      ? await getDepreciationOpeningFiscalYear(client)
+      : openingFy;
+  const floor = depreciationPriorFyStrictCarryForwardFloor(resolvedOpening);
   if (!Number.isFinite(priorFy) || priorFy < floor) {
     return null;
   }
@@ -504,9 +510,10 @@ export async function loadPriorFyCarryForward(
  */
 export function assertPriorFyCarryForwardForDepreciationRun(
   fiscalYearStart: number,
-  priorCarryForward: PriorFyCarryForward | null
+  priorCarryForward: PriorFyCarryForward | null,
+  openingFy: number | null
 ): void {
-  if (!priorFiscalYearRequiresStrictCarryForward(fiscalYearStart)) {
+  if (!priorFiscalYearRequiresStrictCarryForward(fiscalYearStart, openingFy)) {
     return;
   }
   if (priorCarryForward !== null) {
@@ -583,14 +590,19 @@ export type DepreciationRunCarryForwardContext =
 
 export function resolveDepreciationRunCarryForwardContext(
   fiscalYearStart: number,
-  priorCarryForward: PriorFyCarryForward | null
+  priorCarryForward: PriorFyCarryForward | null,
+  openingFy: number | null
 ): DepreciationRunCarryForwardContext {
-  assertPriorFyCarryForwardForDepreciationRun(fiscalYearStart, priorCarryForward);
+  assertPriorFyCarryForwardForDepreciationRun(
+    fiscalYearStart,
+    priorCarryForward,
+    openingFy
+  );
   if (priorCarryForward !== null) {
     return { mode: "strict", prior: priorCarryForward };
   }
   if (
-    priorFiscalYearRequiresStrictCarryForward(fiscalYearStart) &&
+    priorFiscalYearRequiresStrictCarryForward(fiscalYearStart, openingFy) &&
     allowLegacyRegisterCarryForward()
   ) {
     return { mode: "legacy" };
@@ -971,10 +983,17 @@ export async function createDepreciationRun(
       [fy, branchId]
     );
 
-    const priorCarryForward = await loadPriorFyCarryForward(client, fy, branchId);
+    const openingFy = await getDepreciationOpeningFiscalYear(client);
+    const priorCarryForward = await loadPriorFyCarryForward(
+      client,
+      fy,
+      branchId,
+      openingFy
+    );
     const carryForwardContext = resolveDepreciationRunCarryForwardContext(
       fy,
-      priorCarryForward
+      priorCarryForward,
+      openingFy
     );
     if (carryForwardContext.mode === "strict") {
       assertEligibleAssetsHavePriorFyCarryForward({
@@ -1183,10 +1202,17 @@ export async function refreshDepreciationRunDetailsFromAssets(
       [fy, branchId]
     );
 
-    const priorCarryForward = await loadPriorFyCarryForward(client, fy, branchId);
+    const openingFy = await getDepreciationOpeningFiscalYear(client);
+    const priorCarryForward = await loadPriorFyCarryForward(
+      client,
+      fy,
+      branchId,
+      openingFy
+    );
     const carryForwardContext = resolveDepreciationRunCarryForwardContext(
       fy,
-      priorCarryForward
+      priorCarryForward,
+      openingFy
     );
     if (carryForwardContext.mode === "strict") {
       assertEligibleAssetsHavePriorFyCarryForward({
@@ -1655,7 +1681,7 @@ export async function createPriorFyEndDepreciationDraft(
     throw new Error("Could not determine current fiscal year.");
   }
   const priorFy = currentFy - 1;
-  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  const floor = await getDepreciationPriorFyStrictCarryForwardFloor();
   if (priorFy < floor) {
     throw new Error("No prior fiscal year is available for FY_END depreciation.");
   }

@@ -16,6 +16,7 @@ import {
   normalizeBsDateEnglish,
 } from "@/lib/bs-date-english";
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
+import { DepreciationSectionNav } from "./depreciation-section-nav";
 
 const inputClass =
   "w-full rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)]/50 focus:ring-2 focus:ring-[var(--brand-primary)]/20";
@@ -179,6 +180,7 @@ export function DepreciationNewRunScreen() {
     <div className="min-h-[calc(100vh-8rem)] bg-[var(--background)] pb-10">
       <div className="mx-auto max-w-4xl px-4 pt-4 sm:px-5">
         <FixedAssetSectionTabs />
+        <DepreciationSectionNav />
 
         <nav className="text-xs text-slate-500" aria-label="Breadcrumb">
           <span>Modules</span>

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DepreciationRunListRow } from "./depreciation-master-screen";
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
+import { DepreciationSectionNav } from "./depreciation-section-nav";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { normalizeBsDateEnglish } from "@/lib/bs-date-english";
 import { compareBsDateString } from "@hrmskdbl/depreciation-core";
@@ -491,6 +492,7 @@ export function DepreciationRunDetailScreen() {
   return (
     <div className="flex flex-col gap-4">
       <FixedAssetSectionTabs />
+      <DepreciationSectionNav />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           {run ? (

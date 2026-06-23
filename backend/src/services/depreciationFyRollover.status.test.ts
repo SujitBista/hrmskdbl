@@ -17,6 +17,7 @@ describe("resolveFyRolloverStatus", () => {
         priorFiscalYearStart: 1999,
         rolloverApplied: false,
         priorFyFinalRun: null,
+        priorFyStrictCarryForwardFloor: 2000,
       })
     ).toMatchObject({
       status: "not_required",
@@ -31,6 +32,7 @@ describe("resolveFyRolloverStatus", () => {
         priorFiscalYearStart: 2083,
         rolloverApplied: true,
         priorFyFinalRun: { id: 10, status: "posted" },
+        priorFyStrictCarryForwardFloor: 2000,
       })
     ).toMatchObject({
       status: "completed",
@@ -45,6 +47,7 @@ describe("resolveFyRolloverStatus", () => {
       priorFiscalYearStart: 2083,
       rolloverApplied: false,
       priorFyFinalRun: null,
+      priorFyStrictCarryForwardFloor: 2000,
     });
     expect(status.status).toBe("blocked");
     expect(status.blockers).toContain(PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE);
@@ -57,6 +60,7 @@ describe("resolveFyRolloverStatus", () => {
       priorFiscalYearStart: 2083,
       rolloverApplied: false,
       priorFyFinalRun: { id: 42, status: "draft" },
+      priorFyStrictCarryForwardFloor: 2000,
     });
     expect(status.status).toBe("blocked");
     expect(status.priorFyFinalRunId).toBe(42);
@@ -70,6 +74,7 @@ describe("resolveFyRolloverStatus", () => {
         priorFiscalYearStart: 2083,
         rolloverApplied: false,
         priorFyFinalRun: { id: 7, status: "posted" },
+        priorFyStrictCarryForwardFloor: 2000,
       })
     ).toMatchObject({
       status: "pending",
@@ -78,14 +83,14 @@ describe("resolveFyRolloverStatus", () => {
     });
   });
 
-  it("returns not_required when prior FY is before DEPRECIATION_OPENING_FY", () => {
-    vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
+  it("returns not_required when prior FY is before opening fiscal year floor", () => {
     expect(
       resolveFyRolloverStatus({
         currentFiscalYearStart: 2082,
         priorFiscalYearStart: 2081,
         rolloverApplied: false,
         priorFyFinalRun: null,
+        priorFyStrictCarryForwardFloor: 2082,
       })
     ).toMatchObject({
       status: "not_required",
@@ -94,12 +99,12 @@ describe("resolveFyRolloverStatus", () => {
   });
 
   it("requires prior FY final when current FY is after opening FY", () => {
-    vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
     const status = resolveFyRolloverStatus({
       currentFiscalYearStart: 2083,
       priorFiscalYearStart: 2082,
       rolloverApplied: false,
       priorFyFinalRun: null,
+      priorFyStrictCarryForwardFloor: 2082,
     });
     expect(status.status).toBe("blocked");
     expect(status.blockers).toContain(PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE);

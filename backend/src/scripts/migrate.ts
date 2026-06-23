@@ -485,6 +485,33 @@ async function migrate() {
     ON hrms_depreciation_fy_rollovers (new_fiscal_year_start, (COALESCE(branch_id, -1)));
   `);
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_depreciation_settings (
+      id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      opening_fiscal_year INTEGER NOT NULL CHECK (opening_fiscal_year >= 2000),
+      configured_by_admin_id INTEGER,
+      configured_by_admin_email VARCHAR(255) NOT NULL,
+      configured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS hrms_depreciation_settings_audit_logs (
+      id SERIAL PRIMARY KEY,
+      action VARCHAR(32) NOT NULL CHECK (action IN ('CREATED', 'UPDATED')),
+      opening_fiscal_year INTEGER NOT NULL CHECK (opening_fiscal_year >= 2000),
+      previous_opening_fiscal_year INTEGER CHECK (previous_opening_fiscal_year IS NULL OR previous_opening_fiscal_year >= 2000),
+      configured_by_admin_id INTEGER,
+      configured_by_admin_email VARCHAR(255) NOT NULL,
+      configured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS hrms_depreciation_settings_audit_logs_created_at
+    ON hrms_depreciation_settings_audit_logs (configured_at DESC);
+  `);
+
   console.log("Migration complete.");
 }
 

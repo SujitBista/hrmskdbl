@@ -6,8 +6,8 @@ import {
   fiscalYearStartFromBsDate,
   normalizeBsDateEnglish,
 } from "@hrmskdbl/depreciation-core";
-import type { DepreciationFyRolloverResult } from "./depreciationFyRollover.js";
-import { performDepreciationRolloverForCurrentFiscalYear } from "./depreciationFyRollover.js";
+import type { DepreciationFyRolloverStatus } from "./depreciationFyRollover.js";
+import { detectDepreciationRolloverForCurrentFiscalYear } from "./depreciationFyRollover.js";
 
 const log = createLogger("depreciationAutomation");
 
@@ -22,8 +22,8 @@ export type EnsureFiscalYearAutomationResult = {
   nowAdIso: string;
   currentBsDate: string | null;
   fiscalYearStart: number | null;
-  /** Result of idempotent FY depreciation rollover for the current BS fiscal year, if applicable. */
-  depreciationRollover: DepreciationFyRolloverResult | null;
+  /** FY rollover workflow status for the current BS fiscal year (detection only; no auto-rollover). */
+  fyRolloverStatus: DepreciationFyRolloverStatus | null;
   /** True when a DB transaction was opened and the FY advisory lock was taken. */
   ranWithTransactionLock: boolean;
 };
@@ -62,10 +62,8 @@ async function withFiscalYearAutomationLock<T>(
 }
 
 /**
- * Fiscal-year automation: runs idempotent depreciation rollover (carry-forward
- * register WDV from the prior FY’s posted final run) in its own transaction, then
- * takes a short transaction + `pg_advisory_xact_lock` per fiscal year for any
- * additional serialized work.
+ * Fiscal-year automation: detects FY rollover status from server BS date only.
+ * Does not create, post, or apply FY_END depreciation or rollover automatically.
  */
 export async function ensureCurrentFiscalYearAutomation(): Promise<EnsureFiscalYearAutomationResult> {
   const nowAdIso = new Date().toISOString();
@@ -86,17 +84,16 @@ export async function ensureCurrentFiscalYearAutomation(): Promise<EnsureFiscalY
       nowAdIso,
       currentBsDate,
       fiscalYearStart: null,
-      depreciationRollover: null,
+      fyRolloverStatus: null,
       ranWithTransactionLock: false,
     };
   }
 
-  let depreciationRollover: DepreciationFyRolloverResult | null = null;
+  let fyRolloverStatus: DepreciationFyRolloverStatus | null = null;
   try {
-    depreciationRollover =
-      await performDepreciationRolloverForCurrentFiscalYear();
+    fyRolloverStatus = await detectDepreciationRolloverForCurrentFiscalYear();
   } catch (err) {
-    log.error("ensureCurrentFiscalYearAutomation: rollover failed", err, {
+    log.error("ensureCurrentFiscalYearAutomation: status detection failed", err, {
       fiscalYearStart,
     });
     throw err;
@@ -110,7 +107,7 @@ export async function ensureCurrentFiscalYearAutomation(): Promise<EnsureFiscalY
         fiscalYearStart,
         currentBsDate,
         nowAdIso,
-        depreciationRolloverStatus: depreciationRollover?.status,
+        fyRolloverStatus: fyRolloverStatus?.status,
       });
     });
     await client.query("COMMIT");
@@ -118,7 +115,7 @@ export async function ensureCurrentFiscalYearAutomation(): Promise<EnsureFiscalY
       nowAdIso,
       currentBsDate,
       fiscalYearStart,
-      depreciationRollover,
+      fyRolloverStatus,
       ranWithTransactionLock: true,
     };
   } catch (err) {

@@ -2,16 +2,19 @@ import type { PoolClient } from "pg";
 import { pool, query } from "../db.js";
 import { createLogger } from "../logger.js";
 import {
-  fiscalYearEndBs,
   fiscalYearStartFromBsDate,
   normalizeBsDateEnglish,
 } from "@hrmskdbl/depreciation-core";
 import {
-  createDepreciationRun,
+  depreciationOpeningFyHelpText,
+  depreciationPriorFyStrictCarryForwardFloor,
+  getDepreciationOpeningFiscalYear,
   getServerTodayBsEnglish,
   grossDepreciableAmountForRun,
   isDepreciableAssetEligibleForDepreciationSchedule,
   loadDepreciationScheduleAssetsForBranch,
+  recordDepreciationAudit,
+  type DepreciationRunActor,
   type DepreciationScheduleAssetRow,
 } from "./depreciationRuns.js";
 
@@ -19,11 +22,47 @@ const log = createLogger("depreciationFyRollover");
 
 const ROLLOVER_LOCK_LABEL = "hrms_depr_fy_rollover";
 
+export const PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE =
+  "PRIOR_FY_FINAL_DEPRECIATION_REQUIRED";
+
+export class PriorFyFinalDepreciationRequiredError extends Error {
+  readonly code = PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE;
+
+  constructor(message?: string) {
+    super(
+      message ??
+        "Prior fiscal year final depreciation must be created and posted before rollover."
+    );
+    this.name = "PriorFyFinalDepreciationRequiredError";
+  }
+}
+
 export type DepreciationFyRolloverRunDetailRow = {
   asset_id: number;
   asset_code: string | null;
   asset_name: string;
   balance_amount: string | null;
+};
+
+export type FyRolloverStatus =
+  | "blocked"
+  | "pending"
+  | "completed"
+  | "not_required";
+
+export type DepreciationFyRolloverStatus = {
+  currentFiscalYearStart: number;
+  priorFiscalYearStart: number;
+  status: FyRolloverStatus;
+  priorFyFinalRunId: number | null;
+  blockers: string[];
+  depreciationOpeningFiscalYearStart?: number | null;
+  depreciationOpeningFyHelpText?: string | null;
+};
+
+type PriorFyFinalRunSnapshot = {
+  id: number;
+  status: string;
 };
 
 function formatAssetLabel(a: {
@@ -57,6 +96,80 @@ function parseClosingBalanceAmount(raw: string | null): number | null {
   const n = Number.parseFloat(s);
   if (!Number.isFinite(n)) return null;
   return n;
+}
+
+/**
+ * Pure status resolver for FY rollover (testable without DB).
+ */
+export function resolveFyRolloverStatus(input: {
+  currentFiscalYearStart: number;
+  priorFiscalYearStart: number;
+  rolloverApplied: boolean;
+  priorFyFinalRun: PriorFyFinalRunSnapshot | null;
+}): DepreciationFyRolloverStatus {
+  const blockers: string[] = [];
+  const priorFyFinalRunId = input.priorFyFinalRun?.id ?? null;
+
+  if (input.priorFiscalYearStart < depreciationPriorFyStrictCarryForwardFloor()) {
+    return {
+      currentFiscalYearStart: input.currentFiscalYearStart,
+      priorFiscalYearStart: input.priorFiscalYearStart,
+      status: "not_required",
+      priorFyFinalRunId,
+      blockers,
+    };
+  }
+
+  if (input.rolloverApplied) {
+    return {
+      currentFiscalYearStart: input.currentFiscalYearStart,
+      priorFiscalYearStart: input.priorFiscalYearStart,
+      status: "completed",
+      priorFyFinalRunId,
+      blockers,
+    };
+  }
+
+  if (!input.priorFyFinalRun) {
+    blockers.push(PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE);
+    return {
+      currentFiscalYearStart: input.currentFiscalYearStart,
+      priorFiscalYearStart: input.priorFiscalYearStart,
+      status: "blocked",
+      priorFyFinalRunId: null,
+      blockers,
+    };
+  }
+
+  if (input.priorFyFinalRun.status === "draft" || input.priorFyFinalRun.status === "review_pending") {
+    blockers.push("PRIOR_FY_FINAL_DEPRECIATION_NOT_POSTED");
+    return {
+      currentFiscalYearStart: input.currentFiscalYearStart,
+      priorFiscalYearStart: input.priorFiscalYearStart,
+      status: "blocked",
+      priorFyFinalRunId,
+      blockers,
+    };
+  }
+
+  if (input.priorFyFinalRun.status !== "posted") {
+    blockers.push(PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE);
+    return {
+      currentFiscalYearStart: input.currentFiscalYearStart,
+      priorFiscalYearStart: input.priorFiscalYearStart,
+      status: "blocked",
+      priorFyFinalRunId,
+      blockers,
+    };
+  }
+
+  return {
+    currentFiscalYearStart: input.currentFiscalYearStart,
+    priorFiscalYearStart: input.priorFiscalYearStart,
+    status: "pending",
+    priorFyFinalRunId,
+    blockers,
+  };
 }
 
 /**
@@ -177,56 +290,135 @@ async function getPostedFinalRunId(
   return r.rows[0]?.id ?? null;
 }
 
-/**
- * Ensures a posted FY-end (final) depreciation run exists for the prior fiscal year.
- * Creates a Q4 FY_END run through fiscal year end when missing.
- */
-export async function ensurePostedFinalDepreciationRunForYear(input: {
+async function getLatestPriorFyFinalRun(
+  priorFiscalYearStart: number,
+  branchId: number | null
+): Promise<PriorFyFinalRunSnapshot | null> {
+  const r = await query<{ id: number; status: string }>(
+    `SELECT id, status FROM hrms_depreciation_runs r
+     WHERE r.fiscal_year_start = $1
+       AND COALESCE(r.branch_id, -1) = COALESCE($2::integer, -1)
+       AND r.is_final_for_fy = true
+       AND r.depreciation_scope_mode = 'FY_END'
+       AND r.status <> 'void'
+     ORDER BY r.id DESC
+     LIMIT 1`,
+    [priorFiscalYearStart, branchId]
+  );
+  return r.rows[0] ?? null;
+}
+
+function withDepreciationOpeningFyFields(
+  status: DepreciationFyRolloverStatus
+): DepreciationFyRolloverStatus {
+  const opening = getDepreciationOpeningFiscalYear();
+  if (opening === null) {
+    return status;
+  }
+  return {
+    ...status,
+    depreciationOpeningFiscalYearStart: opening,
+    depreciationOpeningFyHelpText: depreciationOpeningFyHelpText(opening),
+  };
+}
+
+async function isRolloverApplied(
+  newFiscalYearStart: number,
+  branchId: number | null
+): Promise<boolean> {
+  const r = await query<{ id: number }>(
+    `SELECT id FROM hrms_depreciation_fy_rollovers
+     WHERE new_fiscal_year_start = $1
+       AND COALESCE(branch_id, -1) = COALESCE($2::integer, -1)
+     LIMIT 1`,
+    [newFiscalYearStart, branchId]
+  );
+  return Boolean(r.rows[0]);
+}
+
+function resolveCurrentFiscalYearFromServer(): number | null {
+  const bsRaw = getServerTodayBsEnglish();
+  if (!bsRaw) return null;
+  const bs = normalizeBsDateEnglish(bsRaw.trim());
+  if (!bs) return null;
+  return fiscalYearStartFromBsDate(bs);
+}
+
+/** Returns FY rollover workflow status for the current server BS fiscal year. */
+export async function getDepreciationFyRolloverStatus(input?: {
+  branchId?: number | null;
+}): Promise<DepreciationFyRolloverStatus> {
+  const currentFy = resolveCurrentFiscalYearFromServer();
+  if (currentFy === null || currentFy < 2001) {
+    return withDepreciationOpeningFyFields({
+      currentFiscalYearStart: currentFy ?? 0,
+      priorFiscalYearStart: (currentFy ?? 0) - 1,
+      status: "not_required",
+      priorFyFinalRunId: null,
+      blockers: [],
+    });
+  }
+
+  const branchId =
+    input?.branchId === undefined || input?.branchId === null
+      ? null
+      : Math.floor(Number(input.branchId));
+  if (branchId !== null && (!Number.isFinite(branchId) || branchId < 1)) {
+    throw new Error("Invalid branch.");
+  }
+
+  const priorFy = currentFy - 1;
+  const [rolloverApplied, priorFyFinalRun] = await Promise.all([
+    isRolloverApplied(currentFy, branchId),
+    getLatestPriorFyFinalRun(priorFy, branchId),
+  ]);
+
+  return withDepreciationOpeningFyFields(
+    resolveFyRolloverStatus({
+      currentFiscalYearStart: currentFy,
+      priorFiscalYearStart: priorFy,
+      rolloverApplied,
+      priorFyFinalRun,
+    })
+  );
+}
+
+async function requirePostedFinalDepreciationRunForYear(input: {
   fiscalYearStart: number;
   branchId?: number | null;
-}): Promise<{ runId: number; created: boolean }> {
+}): Promise<number> {
   const fy = Math.floor(input.fiscalYearStart);
   const branchId =
     input.branchId === undefined || input.branchId === null
       ? null
       : Math.floor(Number(input.branchId));
-  if (!Number.isFinite(fy) || fy < 2000) {
-    throw new Error("Invalid fiscal year.");
-  }
-  if (branchId !== null && (!Number.isFinite(branchId) || branchId < 1)) {
-    throw new Error("Invalid branch.");
+
+  const postedId = await getPostedFinalRunId(null, fy, branchId);
+  if (postedId !== null) {
+    return postedId;
   }
 
-  const existing = await getPostedFinalRunId(null, fy, branchId);
-  if (existing !== null) {
-    return { runId: existing, created: false };
+  const latest = await getLatestPriorFyFinalRun(fy, branchId);
+  if (latest && (latest.status === "draft" || latest.status === "review_pending")) {
+    throw new PriorFyFinalDepreciationRequiredError(
+      `Prior fiscal year FY_END depreciation exists as ${latest.status} but is not posted. Post it before rollover.`
+    );
   }
 
-  const fyEndBs = fiscalYearEndBs(fy);
-  const { run } = await createDepreciationRun({
-    fiscalYearStart: fy,
-    quarterNo: 4,
-    fiscalProgressBs: fyEndBs,
-    calculationDateBs: fyEndBs,
-    depreciationScopeMode: "FY_END",
-    branchId,
-    depTitle: "Fiscal year closing (rollover)",
-    remarks: "Auto-created final depreciation run for fiscal-year rollover.",
-  });
-  return { runId: run.id, created: true };
+  throw new PriorFyFinalDepreciationRequiredError();
 }
 
 /**
- * Idempotent depreciation-only fiscal year rollover: after a final run exists for
+ * Idempotent depreciation-only fiscal year rollover: after a posted final run exists for
  * `newFiscalYearStart - 1`, copies closing written-down values from that run into
  * `hrms_assets.book_value` and records a single marker row per new FY (+ branch).
  *
- * Uses a transaction-scoped advisory lock plus a unique index so concurrent callers
- * cannot apply the same rollover twice.
+ * Does not create or post FY_END depreciation — admin must do that first.
  */
 export async function performDepreciationFiscalYearRollover(input: {
   newFiscalYearStart: number;
   branchId?: number | null;
+  actor?: DepreciationRunActor;
 }): Promise<DepreciationFyRolloverResult> {
   const newFy = Math.floor(input.newFiscalYearStart);
   const branchId =
@@ -242,7 +434,8 @@ export async function performDepreciationFiscalYearRollover(input: {
   }
 
   const priorFy = newFy - 1;
-  if (priorFy < 2000) {
+  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  if (priorFy < floor) {
     return {
       status: "skipped_no_prior_year",
       newFiscalYearStart: newFy,
@@ -252,10 +445,28 @@ export async function performDepreciationFiscalYearRollover(input: {
     };
   }
 
-  const { runId: sourceFinalRunId } = await ensurePostedFinalDepreciationRunForYear({
-    fiscalYearStart: priorFy,
-    branchId,
-  });
+  let sourceFinalRunId: number;
+  try {
+    sourceFinalRunId = await requirePostedFinalDepreciationRunForYear({
+      fiscalYearStart: priorFy,
+      branchId,
+    });
+  } catch (err) {
+    if (err instanceof PriorFyFinalDepreciationRequiredError && input.actor) {
+      await recordDepreciationAudit({
+        depreciationRunId: null,
+        action: "FY_ROLLOVER_BLOCKED",
+        actor: input.actor,
+        metadata: {
+          newFiscalYearStart: newFy,
+          priorFiscalYearStart: priorFy,
+          branchId,
+          code: PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE,
+        },
+      });
+    }
+    throw err;
+  }
 
   const client = await pool.connect();
   try {
@@ -351,6 +562,19 @@ export async function performDepreciationFiscalYearRollover(input: {
       branchId,
       sourceFinalRunId,
     });
+
+    await recordDepreciationAudit({
+      depreciationRunId: sourceFinalRunId,
+      action: "FY_ROLLOVER_APPLIED",
+      actor: input.actor,
+      metadata: {
+        newFiscalYearStart: newFy,
+        priorFiscalYearStart: priorFy,
+        branchId,
+        sourceFinalRunId,
+      },
+    });
+
     return {
       status: "applied",
       newFiscalYearStart: newFy,
@@ -374,16 +598,16 @@ export async function performDepreciationFiscalYearRollover(input: {
   }
 }
 
-/** Runs FY rollover for the fiscal year containing the server BS “today” date. */
-export async function performDepreciationRolloverForCurrentFiscalYear(): Promise<DepreciationFyRolloverResult | null> {
+/** Detects current FY from server BS date; does not run rollover automatically. */
+export async function detectDepreciationRolloverForCurrentFiscalYear(): Promise<DepreciationFyRolloverStatus | null> {
   const bsRaw = getServerTodayBsEnglish();
   if (!bsRaw) {
-    log.warn("performDepreciationRolloverForCurrentFiscalYear: no server BS date");
+    log.warn("detectDepreciationRolloverForCurrentFiscalYear: no server BS date");
     return null;
   }
   const bs = normalizeBsDateEnglish(bsRaw.trim());
   if (!bs) return null;
   const fy = fiscalYearStartFromBsDate(bs);
   if (fy === null) return null;
-  return performDepreciationFiscalYearRollover({ newFiscalYearStart: fy, branchId: null });
+  return getDepreciationFyRolloverStatus({ branchId: null });
 }

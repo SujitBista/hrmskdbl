@@ -10,16 +10,23 @@ import {
 } from "../middleware/auth.js";
 import {
   createDepreciationRunFromMasterForm,
+  createPriorFyEndDepreciationDraft,
   deleteDepreciationRun,
   ensureDepreciationRunForCurrentFiscalYear,
   getDepreciationRunById,
   listDepreciationRuns,
   listDetailsForRun,
+  postDepreciationRun as postDepreciationRunService,
   refreshDepreciationRunDetailsFromAssets,
   updateDepreciationRunRemarks,
   voidDepreciationRun,
 } from "../services/depreciationRuns.js";
-import { performDepreciationFiscalYearRollover } from "../services/depreciationFyRollover.js";
+import {
+  getDepreciationFyRolloverStatus,
+  performDepreciationFiscalYearRollover,
+  PriorFyFinalDepreciationRequiredError,
+  PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE,
+} from "../services/depreciationFyRollover.js";
 import { depreciationActorFromAdmin } from "../utils/depreciationActor.js";
 
 function parseRunId(req: Request): number | null {
@@ -51,11 +58,96 @@ export async function postDepreciationRunEnsureCurrent(
   }
 }
 
-export async function postDepreciationFyRollover(
+export async function getDepreciationFyRolloverStatusHandler(
   req: Request,
   res: Response
 ): Promise<void> {
   if (!requireAdminAuth(req, res)) {
+    return;
+  }
+  try {
+    let branchId: number | null | undefined;
+    const rawBr = req.query.branchId;
+    if (rawBr === undefined || rawBr === null || rawBr === "") {
+      branchId = null;
+    } else if (typeof rawBr === "string" && rawBr.trim() !== "") {
+      branchId = Number.parseInt(rawBr.trim(), 10);
+    } else if (typeof rawBr === "number" && Number.isFinite(rawBr)) {
+      branchId = Math.floor(rawBr);
+    }
+    const resolvedBranchId =
+      branchId !== undefined &&
+      branchId !== null &&
+      Number.isFinite(branchId) &&
+      branchId >= 1
+        ? branchId
+        : null;
+    const status = await getDepreciationFyRolloverStatus({
+      branchId: resolvedBranchId,
+    });
+    res.json(status);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not load FY rollover status." });
+  }
+}
+
+export async function postDepreciationFyRolloverPriorFyFinal(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const admin = requireAdminWithPayloadAuth(req, res);
+  if (!admin) {
+    return;
+  }
+  try {
+    const body =
+      req.body && typeof req.body === "object"
+        ? (req.body as Record<string, unknown>)
+        : {};
+    let branchId: number | null | undefined;
+    const rawBr = body.branchId;
+    if (rawBr === null || rawBr === undefined || rawBr === "") {
+      branchId = null;
+    } else if (typeof rawBr === "number" && Number.isFinite(rawBr)) {
+      branchId = Math.floor(rawBr);
+    } else if (typeof rawBr === "string" && rawBr.trim() !== "") {
+      branchId = Number.parseInt(rawBr.trim(), 10);
+    }
+    const resolvedBranchId =
+      branchId !== undefined &&
+      branchId !== null &&
+      Number.isFinite(branchId) &&
+      branchId >= 1
+        ? branchId
+        : null;
+    const result = await createPriorFyEndDepreciationDraft({
+      branchId: resolvedBranchId,
+      actor: depreciationActorFromAdmin(admin),
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res
+      .status(500)
+      .json({ error: "Could not create prior FY_END depreciation draft." });
+  }
+}
+
+export async function postDepreciationFyRollover(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const admin = requireAdminWithPayloadAuth(req, res);
+  if (!admin) {
     return;
   }
   try {
@@ -108,9 +200,17 @@ export async function postDepreciationFyRollover(
     const result = await performDepreciationFiscalYearRollover({
       newFiscalYearStart: newFiscalYearStart,
       branchId: resolvedBranchId,
+      actor: depreciationActorFromAdmin(admin),
     });
     res.json(result);
   } catch (err) {
+    if (err instanceof PriorFyFinalDepreciationRequiredError) {
+      res.status(400).json({
+        error: err.message,
+        code: PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE,
+      });
+      return;
+    }
     if (err instanceof Error) {
       res.status(400).json({ error: err.message });
       return;
@@ -353,6 +453,36 @@ export async function postDepreciationRunVoid(
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not void depreciation run." });
+  }
+}
+
+export async function postDepreciationRunPost(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const admin = requireAdminWithPayloadAuth(req, res);
+  if (!admin) {
+    return;
+  }
+  const id = parseRunId(req);
+  if (id === null) {
+    res.status(400).json({ error: "Invalid run id." });
+    return;
+  }
+  try {
+    const run = await postDepreciationRunService(id, depreciationActorFromAdmin(admin));
+    res.json({ run });
+  } catch (err) {
+    if (err instanceof Error) {
+      if (err.message === "Depreciation run not found.") {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Could not post depreciation run." });
   }
 }
 

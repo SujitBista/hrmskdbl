@@ -355,6 +355,8 @@ export type DepreciationSkippedAsset = {
   reason: string;
 };
 
+export type DepreciationRunStatus = "draft" | "review_pending" | "posted" | "void";
+
 export type CreateDepreciationRunInput = {
   fiscalYearStart: number;
   quarterNo: 1 | 2 | 3 | 4;
@@ -370,14 +372,39 @@ export type CreateDepreciationRunInput = {
   depreciationScopeMode?: DepreciationScopeMode;
   /** Optional BS date for the run; defaults to server “today” in BS. */
   calculationDateBs?: string | null;
+  /** Draft FY_END runs require explicit posting before FY rollover. Defaults to `posted`. */
+  status?: DepreciationRunStatus;
 };
+
+/** Configured first system-managed depreciation fiscal year (migration opening FY). */
+export function getDepreciationOpeningFiscalYear(): number | null {
+  const raw = process.env.DEPRECIATION_OPENING_FY?.trim();
+  if (raw == null || raw === "") return null;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 2000) return null;
+  return Math.floor(n);
+}
+
+/** Minimum prior FY for which a posted final run is required (opening FY when set, else 2000). */
+export function depreciationPriorFyStrictCarryForwardFloor(): number {
+  return getDepreciationOpeningFiscalYear() ?? 2000;
+}
+
+export function formatDepreciationOpeningFyLabel(openingFyStart: number): string {
+  return `${openingFyStart}-${openingFyStart + 1}`;
+}
+
+export function depreciationOpeningFyHelpText(openingFyStart: number): string {
+  return `Opening FY: ${formatDepreciationOpeningFyLabel(openingFyStart)}. Historical book values before this FY are treated as migrated opening balances.`;
+}
 
 /** True when the new FY must use a posted prior-FY Q4/FY_END run (not register WDV). */
 export function priorFiscalYearRequiresStrictCarryForward(
   fiscalYearStart: number
 ): boolean {
   const priorFy = Math.floor(fiscalYearStart) - 1;
-  return Number.isFinite(priorFy) && priorFy >= 2000;
+  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  return Number.isFinite(priorFy) && priorFy >= floor;
 }
 
 export function missingPriorFyFinalDepreciationErrorMessage(
@@ -422,7 +449,8 @@ export async function loadPriorFyCarryForward(
 ): Promise<PriorFyCarryForward | null> {
   const fy = Math.floor(fiscalYearStart);
   const priorFy = fy - 1;
-  if (!Number.isFinite(priorFy) || priorFy < 2000) {
+  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  if (!Number.isFinite(priorFy) || priorFy < floor) {
     return null;
   }
   const runResult = await client.query<{ id: number }>(
@@ -887,6 +915,12 @@ export async function createDepreciationRun(
         : "Fiscal Year Depreciation";
   const monthsCovered = 12;
   const isFinal = depreciationScopeMode === "FY_END";
+  const runStatus: DepreciationRunStatus =
+    input.status === "draft" ||
+    input.status === "review_pending" ||
+    input.status === "posted"
+      ? input.status
+      : "posted";
 
   let calculationDateBs = (() => {
     const raw = input.calculationDateBs;
@@ -959,13 +993,39 @@ export async function createDepreciationRun(
      *   without deleting other as-of snapshots.
      */
     if (depreciationScopeMode === "FY_END") {
-      await client.query(
-        `DELETE FROM hrms_depreciation_runs
+      const postedFinal = await client.query<{ id: number }>(
+        `SELECT id FROM hrms_depreciation_runs
          WHERE fiscal_year_start = $1
            AND COALESCE(branch_id, -1) = COALESCE($2, -1)
-           AND depreciation_scope_mode = 'FY_END'`,
+           AND depreciation_scope_mode = 'FY_END'
+           AND is_final_for_fy = true
+           AND status = 'posted'
+         LIMIT 1`,
         [fy, branchId]
       );
+      if (postedFinal.rows[0] && runStatus !== "posted") {
+        throw new Error(
+          `A posted FY_END depreciation run already exists for fiscal year ${fy}.`
+        );
+      }
+      if (runStatus === "draft" || runStatus === "review_pending") {
+        await client.query(
+          `DELETE FROM hrms_depreciation_runs
+           WHERE fiscal_year_start = $1
+             AND COALESCE(branch_id, -1) = COALESCE($2, -1)
+             AND depreciation_scope_mode = 'FY_END'
+             AND status IN ('draft', 'review_pending')`,
+          [fy, branchId]
+        );
+      } else {
+        await client.query(
+          `DELETE FROM hrms_depreciation_runs
+           WHERE fiscal_year_start = $1
+             AND COALESCE(branch_id, -1) = COALESCE($2, -1)
+             AND depreciation_scope_mode = 'FY_END'`,
+          [fy, branchId]
+        );
+      }
     } else {
       await client.query(
         `DELETE FROM hrms_depreciation_runs
@@ -983,7 +1043,7 @@ export async function createDepreciationRun(
         calculation_date_ad, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
         status, branch_id, updated_at
       ) VALUES (
-        $1, $2, $3, $4, NOW(), $5, $6, $7, $8, 'posted', $9, NOW()
+        $1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, NOW()
       )
       RETURNING id, fiscal_year_start, dep_title, quarter_no, months_covered,
         calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
@@ -997,6 +1057,7 @@ export async function createDepreciationRun(
         depreciationScopeMode,
         input.remarks?.trim() ?? null,
         isFinal,
+        runStatus,
         branchId,
       ]
     );
@@ -1474,7 +1535,14 @@ async function insertDepreciationRunAudit(
   client: PoolClient,
   input: {
     depreciationRunId: number | null;
-    action: "DELETE" | "DELETE_BLOCKED_FINAL" | "VOID";
+    action:
+      | "DELETE"
+      | "DELETE_BLOCKED_FINAL"
+      | "VOID"
+      | "FY_END_CREATED"
+      | "FY_END_POSTED"
+      | "FY_ROLLOVER_APPLIED"
+      | "FY_ROLLOVER_BLOCKED";
     actor: DepreciationRunActor;
     overrideUsed: boolean;
     metadata?: Record<string, unknown>;
@@ -1516,6 +1584,241 @@ async function insertDepreciationRunAudit(
       return;
     }
     throw err;
+  }
+}
+
+const SYSTEM_DEPRECIATION_ACTOR: DepreciationRunActor = {
+  adminId: 0,
+  adminEmail: "system@internal",
+  isSuperAdmin: false,
+};
+
+/** Records a depreciation audit log entry (rollover, FY_END lifecycle, etc.). */
+export async function recordDepreciationAudit(input: {
+  depreciationRunId: number | null;
+  action:
+    | "DELETE"
+    | "DELETE_BLOCKED_FINAL"
+    | "VOID"
+    | "FY_END_CREATED"
+    | "FY_END_POSTED"
+    | "FY_ROLLOVER_APPLIED"
+    | "FY_ROLLOVER_BLOCKED";
+  actor?: DepreciationRunActor;
+  overrideUsed?: boolean;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await insertDepreciationRunAudit(client, {
+      depreciationRunId: input.depreciationRunId,
+      action: input.action,
+      actor: input.actor ?? SYSTEM_DEPRECIATION_ACTOR,
+      overrideUsed: input.overrideUsed ?? false,
+      metadata: input.metadata,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Creates a draft FY_END depreciation run for the fiscal year immediately before
+ * the server’s current BS fiscal year (admin review before posting).
+ */
+export async function createPriorFyEndDepreciationDraft(
+  input: {
+    branchId?: number | null;
+    actor: DepreciationRunActor;
+  }
+): Promise<{
+  run: DepreciationRunRow;
+  detailsInserted: number;
+  skippedAssets: DepreciationSkippedAsset[];
+  priorFiscalYearStart: number;
+}> {
+  const bsRaw = getServerTodayBsEnglish();
+  if (!bsRaw) {
+    throw new Error("Could not determine server BS date.");
+  }
+  const currentFy = fiscalYearStartFromBsDate(bsRaw);
+  if (currentFy === null || currentFy < 2001) {
+    throw new Error("Could not determine current fiscal year.");
+  }
+  const priorFy = currentFy - 1;
+  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  if (priorFy < floor) {
+    throw new Error("No prior fiscal year is available for FY_END depreciation.");
+  }
+
+  const branchId =
+    input.branchId === undefined || input.branchId === null
+      ? null
+      : Math.floor(Number(input.branchId));
+  if (branchId !== null && (!Number.isFinite(branchId) || branchId < 1)) {
+    throw new Error("Invalid branch.");
+  }
+
+  const existingPosted = await query<{ id: number }>(
+    `SELECT id FROM hrms_depreciation_runs
+     WHERE fiscal_year_start = $1
+       AND COALESCE(branch_id, -1) = COALESCE($2::integer, -1)
+       AND is_final_for_fy = true
+       AND status = 'posted'
+     LIMIT 1`,
+    [priorFy, branchId]
+  );
+  if (existingPosted.rows[0]) {
+    throw new Error(
+      `Posted FY_END depreciation already exists for fiscal year ${priorFy}.`
+    );
+  }
+
+  const fyEndBs = fiscalYearEndBs(priorFy);
+  const result = await createDepreciationRun({
+    fiscalYearStart: priorFy,
+    quarterNo: 4,
+    fiscalProgressBs: fyEndBs,
+    calculationDateBs: fyEndBs,
+    depreciationScopeMode: "FY_END",
+    branchId,
+    depTitle: "Fiscal year closing (FY_END)",
+    remarks: "Draft FY_END depreciation for prior fiscal year — review and post before rollover.",
+    status: "draft",
+  });
+
+  await recordDepreciationAudit({
+    depreciationRunId: result.run.id,
+    action: "FY_END_CREATED",
+    actor: input.actor,
+    metadata: {
+      fiscalYearStart: priorFy,
+      branchId,
+      quarterNo: 4,
+      depreciationScopeMode: "FY_END",
+      status: "draft",
+    },
+  });
+
+  return {
+    ...result,
+    priorFiscalYearStart: priorFy,
+  };
+}
+
+/** Posts a draft or review_pending FY_END depreciation run after admin review. */
+export async function postDepreciationRun(
+  id: number,
+  actor: DepreciationRunActor
+): Promise<DepreciationRunRow> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existingResult = await client.query<DepreciationRunRow>(
+      `SELECT id, fiscal_year_start, dep_title, quarter_no, months_covered,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
+        status, branch_id, created_at::text, updated_at::text
+       FROM hrms_depreciation_runs
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      await client.query("COMMIT");
+      throw new Error("Depreciation run not found.");
+    }
+    if (existing.status === "posted") {
+      await client.query("COMMIT");
+      return existing;
+    }
+    if (existing.status === "void") {
+      throw new Error("Cannot post a void depreciation run.");
+    }
+    if (existing.status !== "draft" && existing.status !== "review_pending") {
+      throw new Error(`Cannot post depreciation run with status "${existing.status}".`);
+    }
+    if (
+      existing.depreciation_scope_mode !== "FY_END" ||
+      !existing.is_final_for_fy
+    ) {
+      throw new Error("Only FY_END final depreciation runs can be posted through this action.");
+    }
+
+    const detailCount = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM hrms_depreciation_run_details
+       WHERE depreciation_run_id = $1`,
+      [id]
+    );
+    const count = Number.parseInt(detailCount.rows[0]?.count ?? "0", 10);
+    if (!Number.isFinite(count) || count < 1) {
+      throw new Error(
+        "Cannot post FY_END depreciation with no detail lines. Refresh details and review first."
+      );
+    }
+
+    const conflict = await client.query<{ id: number }>(
+      `SELECT id FROM hrms_depreciation_runs
+       WHERE fiscal_year_start = $1
+         AND COALESCE(branch_id, -1) = COALESCE($2::integer, -1)
+         AND is_final_for_fy = true
+         AND status = 'posted'
+         AND id <> $3
+       LIMIT 1`,
+      [existing.fiscal_year_start, existing.branch_id, id]
+    );
+    if (conflict.rows[0]) {
+      throw new Error(
+        `Another posted FY_END run already exists for fiscal year ${existing.fiscal_year_start}.`
+      );
+    }
+
+    const updateResult = await client.query<DepreciationRunRow>(
+      `UPDATE hrms_depreciation_runs
+       SET status = 'posted', updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, fiscal_year_start, dep_title, quarter_no, months_covered,
+        calculation_date_ad::text, calculation_date_bs, depreciation_scope_mode, remarks, is_final_for_fy,
+        status, branch_id, created_at::text, updated_at::text`,
+      [id]
+    );
+    const updated = updateResult.rows[0];
+    if (!updated) {
+      await client.query("ROLLBACK");
+      throw new Error("Failed to post depreciation run.");
+    }
+
+    await insertDepreciationRunAudit(client, {
+      depreciationRunId: id,
+      action: "FY_END_POSTED",
+      actor,
+      overrideUsed: false,
+      metadata: {
+        runTitle: existing.dep_title,
+        fiscalYearStart: existing.fiscal_year_start,
+        priorStatus: existing.status,
+      },
+    });
+    await client.query("COMMIT");
+    return updated;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    client.release();
   }
 }
 

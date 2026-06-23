@@ -1,12 +1,15 @@
 import { Router } from "express";
 import {
   deleteDepreciationRunById,
+  getDepreciationFyRolloverStatusHandler,
   getDepreciationRunByIdHandler,
   getDepreciationRuns,
   patchDepreciationRun,
   postDepreciationFyRollover,
+  postDepreciationFyRolloverPriorFyFinal,
   postDepreciationRun,
   postDepreciationRunEnsureCurrent,
+  postDepreciationRunPost,
   postDepreciationRunRefreshDetails,
   postDepreciationRunVoid,
 } from "../controllers/depreciationRuns.controller.js";
@@ -20,6 +23,14 @@ depreciationRunsRouter.post(
 depreciationRunsRouter.post(
   "/api/admin/depreciation-fy-rollover",
   postDepreciationFyRollover
+);
+depreciationRunsRouter.get(
+  "/api/admin/depreciation-fy-rollover/status",
+  getDepreciationFyRolloverStatusHandler
+);
+depreciationRunsRouter.post(
+  "/api/admin/depreciation-fy-rollover/prior-fy-final",
+  postDepreciationFyRolloverPriorFyFinal
 );
 depreciationRunsRouter.get("/api/admin/depreciation-runs", getDepreciationRuns);
 depreciationRunsRouter.post("/api/admin/depreciation-runs", postDepreciationRun);
@@ -38,6 +49,10 @@ depreciationRunsRouter.delete(
 depreciationRunsRouter.post(
   "/api/admin/depreciation-runs/:id/void",
   postDepreciationRunVoid
+);
+depreciationRunsRouter.post(
+  "/api/admin/depreciation-runs/:id/post",
+  postDepreciationRunPost
 );
 depreciationRunsRouter.post(
   "/api/admin/depreciation-runs/:id/refresh-details",

@@ -4,6 +4,7 @@ import {
   assertEligibleAssetsHavePriorFyCarryForward,
   assertPriorFyCarryForwardForDepreciationRun,
   assetRequiresPriorFyCarryForward,
+  depreciationOpeningFyHelpText,
   missingPriorFyFinalDepreciationErrorMessage,
   priorFiscalYearRequiresStrictCarryForward,
   resolveDepreciationRunCarryForwardContext,
@@ -168,5 +169,33 @@ describe("prior fiscal year strict carry-forward", () => {
         priorCarryForward: priorCarryForward({ lines: [] }),
       })
     ).not.toThrow();
+  });
+
+  describe("DEPRECIATION_OPENING_FY migration", () => {
+    it("does not require strict carry-forward for the opening FY", () => {
+      vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
+      expect(priorFiscalYearRequiresStrictCarryForward(2082)).toBe(false);
+      expect(() =>
+        assertPriorFyCarryForwardForDepreciationRun(2082, null)
+      ).not.toThrow();
+      const ctx = resolveDepreciationRunCarryForwardContext(2082, null);
+      expect(ctx.mode).toBe("none");
+    });
+
+    it("requires strict carry-forward from the FY after opening FY", () => {
+      vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
+      expect(priorFiscalYearRequiresStrictCarryForward(2083)).toBe(true);
+      expect(() =>
+        assertPriorFyCarryForwardForDepreciationRun(2083, null)
+      ).toThrow(
+        missingPriorFyFinalDepreciationErrorMessage(2082, 2083)
+      );
+    });
+
+    it("exposes opening FY help text", () => {
+      expect(depreciationOpeningFyHelpText(2082)).toBe(
+        "Opening FY: 2082-2083. Historical book values before this FY are treated as migrated opening balances."
+      );
+    });
   });
 });

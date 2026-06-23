@@ -139,6 +139,8 @@ export function DepreciationRunDetailScreen() {
   >(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [postBusy, setPostBusy] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   const [todayBs, setTodayBs] = useState<string | null>(null);
   const [snapshotPinned, setSnapshotPinned] = useState(false);
@@ -316,6 +318,41 @@ export function DepreciationRunDetailScreen() {
     },
     [runId, load, router]
   );
+
+  const isDraftFyEnd =
+    run != null &&
+    run.depreciation_scope_mode === "FY_END" &&
+    run.is_final_for_fy &&
+    (run.status === "draft" || run.status === "review_pending");
+
+  async function postFyEndDepreciation() {
+    if (!run || !isDraftFyEnd) return;
+    if (
+      !window.confirm(
+        `Post FY_END depreciation run #${run.id}? After posting, it can be used for fiscal year rollover.`
+      )
+    ) {
+      return;
+    }
+    setPostBusy(true);
+    setPostError(null);
+    try {
+      const res = await fetch(`/api/admin/depreciation-runs/${run.id}/post`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setPostError(json.error ?? "Could not post FY_END depreciation.");
+        return;
+      }
+      await load();
+    } catch {
+      setPostError("Could not post FY_END depreciation.");
+    } finally {
+      setPostBusy(false);
+    }
+  }
 
   const asOfStale =
     run != null && todayBs != null && isAsOfDateStale(run, todayBs);
@@ -523,6 +560,16 @@ export function DepreciationRunDetailScreen() {
           ) : null}
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {isDraftFyEnd ? (
+            <button
+              type="button"
+              className="self-start rounded-lg border border-emerald-700 bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+              disabled={postBusy || pagination.total === 0}
+              onClick={() => void postFyEndDepreciation()}
+            >
+              {postBusy ? "Posting…" : "Post FY_END Depreciation"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="self-start rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50"
@@ -539,6 +586,23 @@ export function DepreciationRunDetailScreen() {
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {refreshError ? (
         <p className="text-sm text-red-600">{refreshError}</p>
+      ) : null}
+      {postError ? (
+        <p className="text-sm text-red-600">{postError}</p>
+      ) : null}
+
+      {isDraftFyEnd ? (
+        <div
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+          role="status"
+        >
+          <p className="font-medium">Draft FY_END depreciation — review required</p>
+          <p className="mt-1">
+            Review the detail lines below, then click{" "}
+            <span className="font-medium">Post FY_END Depreciation</span> before
+            running fiscal year rollover.
+          </p>
+        </div>
       ) : null}
 
       {run && asOfStale && snapshotPinned ? (

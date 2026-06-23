@@ -339,8 +339,12 @@ async function isRolloverApplied(
   return Boolean(r.rows[0]);
 }
 
-function resolveCurrentFiscalYearFromServer(): number | null {
-  const bsRaw = getServerTodayBsEnglish();
+function resolveCurrentFiscalYearFromServer(
+  asOfDateBs?: string | null
+): number | null {
+  const bsRaw =
+    asOfDateBs?.trim() ||
+    getServerTodayBsEnglish();
   if (!bsRaw) return null;
   const bs = normalizeBsDateEnglish(bsRaw.trim());
   if (!bs) return null;
@@ -350,8 +354,10 @@ function resolveCurrentFiscalYearFromServer(): number | null {
 /** Returns FY rollover workflow status for the current server BS fiscal year. */
 export async function getDepreciationFyRolloverStatus(input?: {
   branchId?: number | null;
+  /** E2E only: treat this BS date as “today” for current-FY detection. */
+  asOfDateBs?: string | null;
 }): Promise<DepreciationFyRolloverStatus> {
-  const currentFy = resolveCurrentFiscalYearFromServer();
+  const currentFy = resolveCurrentFiscalYearFromServer(input?.asOfDateBs);
   if (currentFy === null || currentFy < 2001) {
     return withDepreciationOpeningFyFields({
       currentFiscalYearStart: currentFy ?? 0,

@@ -82,8 +82,14 @@ export async function getDepreciationFyRolloverStatusHandler(
       branchId >= 1
         ? branchId
         : null;
+    let asOfDateBs: string | undefined;
+    const rawAsOf = req.query.asOfDateBs;
+    if (typeof rawAsOf === "string" && rawAsOf.trim() !== "") {
+      asOfDateBs = rawAsOf.trim();
+    }
     const status = await getDepreciationFyRolloverStatus({
       branchId: resolvedBranchId,
+      asOfDateBs,
     });
     res.json(status);
   } catch (err) {

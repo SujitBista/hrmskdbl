@@ -5,3 +5,5 @@ dist
 .env.local
 *.log
 .DS_Store
+e2e/test-results/
+e2e/fixtures/fy-transition.json

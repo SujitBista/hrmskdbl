@@ -26,19 +26,27 @@ describe("performDepreciationFiscalYearRollover (bank-safe)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("skips rollover when prior FY is before DEPRECIATION_OPENING_FY", async () => {
+  it("skips rollover when prior FY is before opening fiscal year", async () => {
     vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
+    vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes("hrms_depreciation_settings")) {
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    });
     const result = await performDepreciationFiscalYearRollover({
       newFiscalYearStart: 2082,
       branchId: null,
     });
     expect(result.status).toBe("skipped_no_prior_year");
     expect(result.priorFiscalYearStart).toBe(2081);
-    expect(query).not.toHaveBeenCalled();
   });
 
   it("throws PRIOR_FY_FINAL_DEPRECIATION_REQUIRED when prior posted final run is missing", async () => {
     vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes("hrms_depreciation_settings")) {
+        return { rows: [] };
+      }
       if (sql.includes("status = 'posted'")) {
         return { rows: [] };
       }
@@ -58,6 +66,9 @@ describe("performDepreciationFiscalYearRollover (bank-safe)", () => {
 
   it("throws when prior FY_END is draft (rollover still blocked)", async () => {
     vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes("hrms_depreciation_settings")) {
+        return { rows: [] };
+      }
       if (sql.includes("status = 'posted'")) {
         return { rows: [] };
       }
@@ -92,6 +103,9 @@ describe("performDepreciationFiscalYearRollover (bank-safe)", () => {
     );
 
     vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes("hrms_depreciation_settings")) {
+        return { rows: [] };
+      }
       if (sql.includes("status = 'posted'")) {
         return { rows: [{ id: 99 }] };
       }
@@ -134,6 +148,9 @@ describe("performDepreciationFiscalYearRollover (bank-safe)", () => {
     );
 
     vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes("hrms_depreciation_settings")) {
+        return { rows: [] };
+      }
       if (sql.includes("status = 'posted'")) {
         return { rows: [{ id: 88 }] };
       }

@@ -4,6 +4,7 @@ import { authRouter } from "./auth.routes.js";
 import { branchesRouter } from "./branches.routes.js";
 import { departmentsRouter } from "./departments.routes.js";
 import { depreciationRunsRouter } from "./depreciationRuns.routes.js";
+import { depreciationSettingsRouter } from "./depreciationSettings.routes.js";
 import { groupsRouter } from "./groups.routes.js";
 import { healthRouter } from "./health.routes.js";
 import { subGroupsRouter } from "./subGroups.routes.js";
@@ -17,4 +18,5 @@ export function registerRoutes(app: Express): void {
   app.use(departmentsRouter);
   app.use(assetsRouter);
   app.use(depreciationRunsRouter);
+  app.use(depreciationSettingsRouter);
 }

@@ -76,7 +76,7 @@ describe("prior fiscal year strict carry-forward", () => {
   });
 
   it("requires strict carry-forward for FY 2084 when prior FY is 2083", () => {
-    expect(priorFiscalYearRequiresStrictCarryForward(2084)).toBe(true);
+    expect(priorFiscalYearRequiresStrictCarryForward(2084, null)).toBe(true);
     expect(missingPriorFyFinalDepreciationErrorMessage(2083, 2084)).toBe(
       "Previous fiscal year final depreciation run is not posted. Please post Q4/FY_END depreciation for FY 2083 before creating depreciation for FY 2084."
     );
@@ -84,21 +84,21 @@ describe("prior fiscal year strict carry-forward", () => {
 
   it("blocks new FY run when prior posted final run is missing", () => {
     expect(() =>
-      assertPriorFyCarryForwardForDepreciationRun(2084, null)
+      assertPriorFyCarryForwardForDepreciationRun(2084, null, null)
     ).toThrow(
       missingPriorFyFinalDepreciationErrorMessage(2083, 2084)
     );
     expect(() =>
-      resolveDepreciationRunCarryForwardContext(2084, null)
+      resolveDepreciationRunCarryForwardContext(2084, null, null)
     ).toThrow(/Previous fiscal year final depreciation run is not posted/i);
   });
 
   it("allows new FY run when prior posted final run exists", () => {
     const prior = priorCarryForward();
     expect(() =>
-      assertPriorFyCarryForwardForDepreciationRun(2084, prior)
+      assertPriorFyCarryForwardForDepreciationRun(2084, prior, null)
     ).not.toThrow();
-    const ctx = resolveDepreciationRunCarryForwardContext(2084, prior);
+    const ctx = resolveDepreciationRunCarryForwardContext(2084, prior, null);
     expect(ctx.mode).toBe("strict");
     if (ctx.mode === "strict") {
       expect(ctx.prior.runId).toBe(99);
@@ -108,9 +108,9 @@ describe("prior fiscal year strict carry-forward", () => {
   it("allows legacy register fallback only when env flag is set", () => {
     vi.stubEnv("DEPRECIATION_LEGACY_REGISTER_CARRY_FORWARD", "true");
     expect(() =>
-      assertPriorFyCarryForwardForDepreciationRun(2084, null)
+      assertPriorFyCarryForwardForDepreciationRun(2084, null, null)
     ).not.toThrow();
-    const ctx = resolveDepreciationRunCarryForwardContext(2084, null);
+    const ctx = resolveDepreciationRunCarryForwardContext(2084, null, null);
     expect(ctx.mode).toBe("legacy");
   });
 
@@ -171,25 +171,31 @@ describe("prior fiscal year strict carry-forward", () => {
     ).not.toThrow();
   });
 
-  describe("DEPRECIATION_OPENING_FY migration", () => {
+  describe("opening fiscal year migration", () => {
+    const openingFy = 2082;
+
     it("does not require strict carry-forward for the opening FY", () => {
-      vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
-      expect(priorFiscalYearRequiresStrictCarryForward(2082)).toBe(false);
+      expect(priorFiscalYearRequiresStrictCarryForward(2082, openingFy)).toBe(
+        false
+      );
       expect(() =>
-        assertPriorFyCarryForwardForDepreciationRun(2082, null)
+        assertPriorFyCarryForwardForDepreciationRun(2082, null, openingFy)
       ).not.toThrow();
-      const ctx = resolveDepreciationRunCarryForwardContext(2082, null);
+      const ctx = resolveDepreciationRunCarryForwardContext(
+        2082,
+        null,
+        openingFy
+      );
       expect(ctx.mode).toBe("none");
     });
 
     it("requires strict carry-forward from the FY after opening FY", () => {
-      vi.stubEnv("DEPRECIATION_OPENING_FY", "2082");
-      expect(priorFiscalYearRequiresStrictCarryForward(2083)).toBe(true);
-      expect(() =>
-        assertPriorFyCarryForwardForDepreciationRun(2083, null)
-      ).toThrow(
-        missingPriorFyFinalDepreciationErrorMessage(2082, 2083)
+      expect(priorFiscalYearRequiresStrictCarryForward(2083, openingFy)).toBe(
+        true
       );
+      expect(() =>
+        assertPriorFyCarryForwardForDepreciationRun(2083, null, openingFy)
+      ).toThrow(missingPriorFyFinalDepreciationErrorMessage(2082, 2083));
     });
 
     it("exposes opening FY help text", () => {

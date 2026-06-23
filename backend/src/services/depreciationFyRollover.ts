@@ -6,8 +6,10 @@ import {
   normalizeBsDateEnglish,
 } from "@hrmskdbl/depreciation-core";
 import {
+  getDepreciationPriorFyStrictCarryForwardFloor,
+} from "./depreciationSettings.js";
+import {
   depreciationOpeningFyHelpText,
-  depreciationPriorFyStrictCarryForwardFloor,
   getDepreciationOpeningFiscalYear,
   getServerTodayBsEnglish,
   grossDepreciableAmountForRun,
@@ -106,11 +108,12 @@ export function resolveFyRolloverStatus(input: {
   priorFiscalYearStart: number;
   rolloverApplied: boolean;
   priorFyFinalRun: PriorFyFinalRunSnapshot | null;
+  priorFyStrictCarryForwardFloor: number;
 }): DepreciationFyRolloverStatus {
   const blockers: string[] = [];
   const priorFyFinalRunId = input.priorFyFinalRun?.id ?? null;
 
-  if (input.priorFiscalYearStart < depreciationPriorFyStrictCarryForwardFloor()) {
+  if (input.priorFiscalYearStart < input.priorFyStrictCarryForwardFloor) {
     return {
       currentFiscalYearStart: input.currentFiscalYearStart,
       priorFiscalYearStart: input.priorFiscalYearStart,
@@ -308,10 +311,10 @@ async function getLatestPriorFyFinalRun(
   return r.rows[0] ?? null;
 }
 
-function withDepreciationOpeningFyFields(
+async function withDepreciationOpeningFyFields(
   status: DepreciationFyRolloverStatus
-): DepreciationFyRolloverStatus {
-  const opening = getDepreciationOpeningFiscalYear();
+): Promise<DepreciationFyRolloverStatus> {
+  const opening = await getDepreciationOpeningFiscalYear();
   if (opening === null) {
     return status;
   }
@@ -368,10 +371,12 @@ export async function getDepreciationFyRolloverStatus(input?: {
   }
 
   const priorFy = currentFy - 1;
-  const [rolloverApplied, priorFyFinalRun] = await Promise.all([
-    isRolloverApplied(currentFy, branchId),
-    getLatestPriorFyFinalRun(priorFy, branchId),
-  ]);
+  const [rolloverApplied, priorFyFinalRun, priorFyStrictCarryForwardFloor] =
+    await Promise.all([
+      isRolloverApplied(currentFy, branchId),
+      getLatestPriorFyFinalRun(priorFy, branchId),
+      getDepreciationPriorFyStrictCarryForwardFloor(),
+    ]);
 
   return withDepreciationOpeningFyFields(
     resolveFyRolloverStatus({
@@ -379,6 +384,7 @@ export async function getDepreciationFyRolloverStatus(input?: {
       priorFiscalYearStart: priorFy,
       rolloverApplied,
       priorFyFinalRun,
+      priorFyStrictCarryForwardFloor,
     })
   );
 }
@@ -434,7 +440,7 @@ export async function performDepreciationFiscalYearRollover(input: {
   }
 
   const priorFy = newFy - 1;
-  const floor = depreciationPriorFyStrictCarryForwardFloor();
+  const floor = await getDepreciationPriorFyStrictCarryForwardFloor();
   if (priorFy < floor) {
     return {
       status: "skipped_no_prior_year",

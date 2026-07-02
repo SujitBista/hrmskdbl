@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "admin_token";
@@ -12,13 +11,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const res = await fetch(`${backendUrl}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      {
+        error:
+          "Could not reach the API server. Start the backend (e.g. npm run dev) and check BACKEND_URL.",
+      },
+      { status: 502 }
+    );
+  }
 
-  const data = (await res.json()) as { token?: string; admin?: unknown; error?: string };
+  let data = {} as { token?: string; admin?: unknown; error?: string };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return NextResponse.json(
+      { error: "Unexpected response from server." },
+      { status: 502 }
+    );
+  }
 
   if (!res.ok) {
     return NextResponse.json(
@@ -34,8 +53,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, data.token, {
+  const response = NextResponse.json({ admin: data.admin });
+  response.cookies.set(COOKIE_NAME, data.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -43,5 +62,5 @@ export async function POST(request: NextRequest) {
     maxAge: 60 * 60 * 24 * 7,
   });
 
-  return NextResponse.json({ admin: data.admin });
+  return response;
 }

@@ -7,6 +7,7 @@
     "packages/depreciation-core"
   ],
   "scripts": {
+    "build": "npm run build --workspace=@hrmskdbl/depreciation-core && npm run build --workspace=backend && npm run build --workspace=frontend",
     "dev": "concurrently -n \"api,web\" -c \"blue,green\" \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
     "db:migrate": "npm run migrate --workspace=backend",
     "db:seed": "npm run seed --workspace=backend",

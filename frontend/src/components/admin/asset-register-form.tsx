@@ -1,7 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useMemo, useState } from "react";
-import { NepaliDatePicker } from "nepali-datepicker-reactjs";
+import {
+  NepaliDatePicker,
+  type NepaliDatePickerValue,
+} from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 import * as XLSX from "xlsx";
 
@@ -1308,7 +1311,7 @@ export function AssetRegisterForm({
                 {purchaseDatePickerReady ? (
                   <NepaliDatePicker
                     value={bsDateToPickerValue(purchaseDateBs)}
-                    onChange={(value) => {
+                    onChange={(value: NepaliDatePickerValue) => {
                       const next = normalizeBsDateEnglish(value);
                       setPurchaseDateBs(next);
                       setDepreciationStartDateBs((prev) =>
@@ -1362,7 +1365,7 @@ export function AssetRegisterForm({
                 {purchaseDatePickerReady ? (
                   <NepaliDatePicker
                     value={bsDateToPickerValue(depreciationStartDateBs)}
-                    onChange={(value) =>
+                    onChange={(value: NepaliDatePickerValue) =>
                       setDepreciationStartDateBs(normalizeBsDateEnglish(value))
                     }
                     inputClassName={`${inputClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}

@@ -7,7 +7,10 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { NepaliDatePicker } from "nepali-datepicker-reactjs";
+import {
+  NepaliDatePicker,
+  type NepaliDatePickerValue,
+} from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 import { formatAssetCodeForDisplay } from "@/lib/format-asset-code";
 import { formatBranchOptionLabel } from "@/lib/format-branch-label";
@@ -532,7 +535,7 @@ export function AssetAllocationProfileModal({
                         {allocationDatePickerReady ? (
                           <NepaliDatePicker
                             value={bsDateToPickerValue(allocationDateBs)}
-                            onChange={(value) =>
+                            onChange={(value: NepaliDatePickerValue) =>
                               setAllocationDateBs(normalizeBsDateEnglish(value))
                             }
                             inputClassName={inputClass}

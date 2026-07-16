@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useState } from "react";
-import { NepaliDatePicker } from "nepali-datepicker-reactjs";
+import {
+  NepaliDatePicker,
+  type NepaliDatePickerValue,
+} from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 
 import {
@@ -236,10 +239,8 @@ export function DepreciationNewRunScreen() {
                     <>
                       <NepaliDatePicker
                         value={bsDateToPickerValue(calculationDateBs)}
-                        onChange={(value) => {
-                          const raw =
-                            typeof value === "string" ? value : String(value ?? "");
-                          setCalculationDateBs(normalizeBsDateEnglish(raw));
+                        onChange={(value: NepaliDatePickerValue) => {
+                          setCalculationDateBs(normalizeBsDateEnglish(value));
                         }}
                         inputClassName="relative z-0 min-h-[44px] w-full cursor-pointer rounded-lg border-0 bg-transparent px-3 py-2.5 text-sm opacity-0 outline-none"
                         className="w-full"

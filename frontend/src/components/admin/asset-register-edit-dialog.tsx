@@ -1,7 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
-import { NepaliDatePicker } from "nepali-datepicker-reactjs";
+import {
+  NepaliDatePicker,
+  type NepaliDatePickerValue,
+} from "nepali-datepicker-reactjs";
 import "nepali-datepicker-reactjs/dist/index.css";
 
 import {
@@ -504,7 +507,7 @@ export function AssetRegisterEditDialog({
               {purchaseDatePickerReady ? (
                 <NepaliDatePicker
                   value={bsDateToPickerValue(purchaseDateBs)}
-                  onChange={(value) => {
+                  onChange={(value: NepaliDatePickerValue) => {
                     const next = normalizeBsDateEnglish(value);
                     setPurchaseDateBs(next);
                     setDepreciationStartDateBs((prev) =>
@@ -544,7 +547,7 @@ export function AssetRegisterEditDialog({
               {purchaseDatePickerReady ? (
                 <NepaliDatePicker
                   value={bsDateToPickerValue(depreciationStartDateBs)}
-                  onChange={(value) =>
+                  onChange={(value: NepaliDatePickerValue) =>
                     setDepreciationStartDateBs(normalizeBsDateEnglish(value))
                   }
                   inputClassName={`${fieldClass} relative z-10 cursor-pointer border-transparent bg-transparent text-transparent caret-transparent shadow-none selection:bg-transparent`}

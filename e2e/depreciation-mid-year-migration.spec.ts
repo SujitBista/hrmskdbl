@@ -119,7 +119,7 @@ test.describe.serial("Depreciation mid-year migration", () => {
       .getByLabel(/First system depreciation date/i)
       .fill(fixture.firstSystemDepreciationDateBs);
     await page
-      .getByLabel(/Last externally processed date/i)
+      .getByLabel(/Last depreciation date calculated by the previous system/i)
       .fill(fixture.lastExternalDepreciationDateBs);
 
     // Settings may already be seeded and locked only after posted runs — seed clears runs.

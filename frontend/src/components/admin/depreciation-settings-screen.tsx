@@ -284,7 +284,8 @@ export function DepreciationSettingsScreen() {
                     htmlFor={`${formId}-last-external`}
                     className="mb-1 block text-sm font-medium text-slate-700"
                   >
-                    Last externally processed date (BS, optional)
+                    Last depreciation date calculated by the previous system
+                    (BS, optional)
                   </label>
                   <input
                     id={`${formId}-last-external`}

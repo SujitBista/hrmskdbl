@@ -205,23 +205,62 @@ export function isDepreciableAssetEligibleForDepreciationSchedule(
 }
 
 /**
- * Prior accumulated depreciation implied by the register when WDV (`book_value`)
- * is below gross cost (e.g. imported accumulated dep). Passed into quarter compute
- * so accumulated = max(schedule prior, this floor) + this-year slice.
+ * Prior accumulated depreciation implied by imported register WDV in the opening
+ * fiscal year: `gross − book_value`. Returns `undefined` when book_value is
+ * missing or invalid (callers in opening FY must validate first).
  */
 export function registerImpliedPriorAccumulatedDep(
   gross: number,
   registerBookValueText: string | null
 ): number | undefined {
-  if (!(gross > 0)) return undefined;
-  if (registerBookValueText == null || registerBookValueText === "") {
-    return undefined;
+  const validated = validateOpeningYearImportedBookValue(gross, registerBookValueText);
+  if (!validated.ok) return undefined;
+  return validated.priorAccumulatedDep;
+}
+
+export const MIGRATED_DEPRECIABLE_BOOK_VALUE_REQUIRED_MESSAGE =
+  "Imported book value is required for migrated depreciable assets in the opening fiscal year.";
+
+export const MIGRATED_BOOK_VALUE_EXCEEDS_GROSS_MESSAGE =
+  "Imported book value cannot exceed gross depreciable cost.";
+
+export const MIGRATED_BOOK_VALUE_NEGATIVE_MESSAGE =
+  "Imported book value cannot be negative.";
+
+export type OpeningYearImportedWdvValidation =
+  | { ok: true; priorAccumulatedDep: number; importedWdv: number }
+  | { ok: false; error: string };
+
+/**
+ * Validates imported WDV for opening-fiscal-year depreciation. When valid,
+ * opening WDV equals imported book_value and prior accumulated equals gross − WDV.
+ */
+export function validateOpeningYearImportedBookValue(
+  gross: number,
+  registerBookValueText: string | null
+): OpeningYearImportedWdvValidation {
+  if (!(gross > 0)) {
+    return { ok: false, error: "Gross depreciable cost must be positive." };
   }
-  const bv = Number.parseFloat(registerBookValueText);
-  if (!Number.isFinite(bv) || bv <= 0) return undefined;
-  const implied = gross - bv;
-  if (!(implied > 0)) return undefined;
-  return implied > gross ? gross : implied;
+  if (registerBookValueText == null || String(registerBookValueText).trim() === "") {
+    return { ok: false, error: MIGRATED_DEPRECIABLE_BOOK_VALUE_REQUIRED_MESSAGE };
+  }
+  const bv = Number.parseFloat(String(registerBookValueText).trim());
+  if (!Number.isFinite(bv)) {
+    return { ok: false, error: MIGRATED_DEPRECIABLE_BOOK_VALUE_REQUIRED_MESSAGE };
+  }
+  if (bv < 0) {
+    return { ok: false, error: MIGRATED_BOOK_VALUE_NEGATIVE_MESSAGE };
+  }
+  if (bv > gross) {
+    return { ok: false, error: MIGRATED_BOOK_VALUE_EXCEEDS_GROSS_MESSAGE };
+  }
+  const priorAccumulatedDep = roundMoney(gross - bv);
+  return { ok: true, priorAccumulatedDep, importedWdv: roundMoney(bv) };
+}
+
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function parseDepRatePercent(rate: string | null): number | null {
@@ -381,6 +420,7 @@ export type CreateDepreciationRunInput = {
 
 import {
   assertDepreciationPeriodEligibleForSystemMigration,
+  DEPRECIATION_SETTINGS_ADVISORY_LOCK_SQL,
   depreciationPriorFyStrictCarryForwardFloor,
   firstSystemDateForFiscalYear,
   getDepreciationOpeningFiscalYear,
@@ -426,8 +466,11 @@ export function missingPriorFyFinalDepreciationErrorMessage(
   return `Previous fiscal year final depreciation run is not posted. Please post Q4/FY_END depreciation for FY ${previousFY} before creating depreciation for FY ${newFY}.`;
 }
 
-/** When true, missing prior-FY final run falls back to register-implied prior accumulated dep. */
+/** When true, missing prior-FY final run falls back to register-implied prior accumulated dep. Never in production. */
 export function allowLegacyRegisterCarryForward(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
   const raw = process.env.DEPRECIATION_LEGACY_REGISTER_CARRY_FORWARD?.trim();
   if (raw == null || raw === "") return false;
   const v = raw.toLowerCase();
@@ -725,6 +768,8 @@ async function insertDepreciationDetailRows(
     migration,
     fy
   );
+  const isOpeningFiscalYear =
+    migration != null && fy === migration.openingFiscalYear;
 
   for (const a of assets) {
     if (isNoDepreciationMethod(a.asset_dep_method ?? a.group_dep_method)) {
@@ -739,9 +784,29 @@ async function insertDepreciationDetailRows(
     const useRegisterPriorAccum =
       carryForwardContext.mode === "legacy" ||
       carryForwardContext.mode === "none";
-    const registerPriorAccum = useRegisterPriorAccum
-      ? registerImpliedPriorAccumulatedDep(purchaseAmount ?? 0, a.book_value)
-      : undefined;
+    let registerPriorAccum: number | undefined;
+    if (useRegisterPriorAccum) {
+      if (isOpeningFiscalYear) {
+        const validated = validateOpeningYearImportedBookValue(
+          purchaseAmount ?? 0,
+          a.book_value
+        );
+        if (!validated.ok) {
+          skippedAssets.push({
+            asset_id: a.id,
+            asset_name: a.asset_name,
+            reason: validated.error,
+          });
+          continue;
+        }
+        registerPriorAccum = validated.priorAccumulatedDep;
+      } else {
+        registerPriorAccum = registerImpliedPriorAccumulatedDep(
+          purchaseAmount ?? 0,
+          a.book_value
+        );
+      }
+    }
     const depRate = parseDepRatePercent(a.asset_dep_rate ?? a.group_dep_rate);
     const method = parseDepreciationMethod(a.asset_dep_method ?? a.group_dep_method);
     const depreciationStartBs = depreciationCommencementFromRegister(
@@ -992,8 +1057,8 @@ export async function createDepreciationRun(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Serialize writes for the same fiscal-year + branch scope to avoid
-    // concurrent delete/insert races against the unique FY/quarter index.
+    await client.query(DEPRECIATION_SETTINGS_ADVISORY_LOCK_SQL);
+    await client.query(`SELECT id FROM hrms_depreciation_settings WHERE id = 1 FOR UPDATE`);
     await client.query(
       `SELECT pg_advisory_xact_lock(
          hashtext('hrms_depr_run'),
@@ -1211,6 +1276,11 @@ export async function refreshDepreciationRunDetailsFromAssets(
   if (!run) {
     throw new Error("Depreciation run not found.");
   }
+  if (run.status === "posted" || run.status === "void") {
+    throw new Error(
+      `Cannot refresh a ${run.status} depreciation run. Only draft or review_pending runs can be refreshed.`
+    );
+  }
 
   const fy = run.fiscal_year_start;
   const q = run.quarter_no;
@@ -1235,6 +1305,8 @@ export async function refreshDepreciationRunDetailsFromAssets(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(DEPRECIATION_SETTINGS_ADVISORY_LOCK_SQL);
+    await client.query(`SELECT id FROM hrms_depreciation_settings WHERE id = 1 FOR UPDATE`);
     await client.query(
       `SELECT pg_advisory_xact_lock(
          hashtext('hrms_depr_run'),
@@ -1242,6 +1314,17 @@ export async function refreshDepreciationRunDetailsFromAssets(
        )`,
       [fy, branchId]
     );
+
+    const lockedRun = await client.query<{ status: string }>(
+      `SELECT status FROM hrms_depreciation_runs WHERE id = $1 FOR UPDATE`,
+      [runId]
+    );
+    const lockedStatus = lockedRun.rows[0]?.status;
+    if (lockedStatus === "posted" || lockedStatus === "void") {
+      throw new Error(
+        `Cannot refresh a ${lockedStatus} depreciation run. Only draft or review_pending runs can be refreshed.`
+      );
+    }
 
     const migration = await requireDepreciationMigrationSettings(client);
     const openingFy = migration.openingFiscalYear;
@@ -1416,6 +1499,7 @@ export async function refreshMutableDepreciationRunsForAsset(
      INNER JOIN hrms_depreciation_run_details d
        ON d.depreciation_run_id = r.id
      WHERE d.asset_id = $1
+       AND r.status IN ('draft', 'review_pending')
      ORDER BY r.id DESC`,
     [assetId]
   );
@@ -1449,10 +1533,12 @@ export async function refreshMutableDepreciationRunsForBranch(
       ? `SELECT id, is_final_for_fy
          FROM hrms_depreciation_runs
          WHERE branch_id IS NULL
+           AND status IN ('draft', 'review_pending')
          ORDER BY id DESC`
       : `SELECT id, is_final_for_fy
          FROM hrms_depreciation_runs
          WHERE branch_id = $1
+           AND status IN ('draft', 'review_pending')
          ORDER BY id DESC`,
     branchId === null ? [] : [branchId]
   );
@@ -1482,6 +1568,7 @@ export async function refreshAllMutableDepreciationRuns(): Promise<{
   const runs = await query<{ id: number; is_final_for_fy: boolean }>(
     `SELECT id, is_final_for_fy
      FROM hrms_depreciation_runs
+     WHERE status IN ('draft', 'review_pending')
      ORDER BY id DESC`
   );
 

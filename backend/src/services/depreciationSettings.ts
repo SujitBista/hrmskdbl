@@ -10,6 +10,12 @@ import {
 import { pool, query } from "../db.js";
 import type { DepreciationRunActor } from "./depreciationRuns.js";
 
+/** Serializes depreciation settings changes vs run create/refresh. */
+export const DEPRECIATION_SETTINGS_ADVISORY_LOCK_SQL = `SELECT pg_advisory_xact_lock(
+  hashtext('hrms_depr_settings'),
+  1
+)`;
+
 export type DepreciationSettingsRow = {
   opening_fiscal_year: number;
   first_system_depreciation_date_bs: string | null;
@@ -313,19 +319,19 @@ export function assertDepreciationPeriodEligibleForSystemMigration(params: {
 }
 
 export async function hasDepreciationOpeningFyLock(
-  openingFiscalYear?: number | null
+  openingFiscalYear?: number | null,
+  client?: PoolClient
 ): Promise<{
   locked: boolean;
   reason: string | null;
 }> {
   try {
-    const storedOpening = await getDepreciationOpeningFiscalYear();
+    const runQuery = client?.query.bind(client) ?? query;
+    const storedOpening = await getDepreciationOpeningFiscalYear(client);
     const openingFy =
       openingFiscalYear !== undefined && openingFiscalYear !== null
         ? openingFiscalYear
         : storedOpening;
-    // Lock against both the currently configured opening FY and the target FY
-    // so mid-edit cannot orphan existing opening-year runs.
     const fyParams =
       storedOpening != null &&
       openingFy != null &&
@@ -337,20 +343,16 @@ export async function hasDepreciationOpeningFyLock(
             ? [storedOpening]
             : [];
 
-    const r = await query<{
-      posted_opening_exists: boolean;
-      draft_opening_exists: boolean;
+    const r = await runQuery<{
+      opening_history_exists: boolean;
       rollover_exists: boolean;
     }>(
       fyParams.length === 0
         ? `SELECT
              EXISTS (
-               SELECT 1 FROM hrms_depreciation_runs WHERE status = 'posted'
-             ) AS posted_opening_exists,
-             EXISTS (
                SELECT 1 FROM hrms_depreciation_runs
-               WHERE status IN ('draft', 'review_pending')
-             ) AS draft_opening_exists,
+               WHERE status IN ('draft', 'review_pending', 'posted', 'void')
+             ) AS opening_history_exists,
              EXISTS (
                SELECT 1 FROM hrms_depreciation_fy_rollovers
              ) AS rollover_exists`
@@ -358,27 +360,30 @@ export async function hasDepreciationOpeningFyLock(
           ? `SELECT
                EXISTS (
                  SELECT 1 FROM hrms_depreciation_runs
-                 WHERE status = 'posted' AND fiscal_year_start = $1
-               ) AS posted_opening_exists,
-               EXISTS (
-                 SELECT 1 FROM hrms_depreciation_runs
-                 WHERE status IN ('draft', 'review_pending')
-                   AND fiscal_year_start = $1
-               ) AS draft_opening_exists,
+                 WHERE fiscal_year_start = $1
+                   AND status IN ('draft', 'review_pending', 'posted', 'void')
+               ) OR EXISTS (
+                 SELECT 1
+                 FROM hrms_depreciation_run_details d
+                 INNER JOIN hrms_depreciation_runs r
+                   ON r.id = d.depreciation_run_id
+                 WHERE r.fiscal_year_start = $1
+               ) AS opening_history_exists,
                EXISTS (
                  SELECT 1 FROM hrms_depreciation_fy_rollovers
                ) AS rollover_exists`
           : `SELECT
                EXISTS (
                  SELECT 1 FROM hrms_depreciation_runs
-                 WHERE status = 'posted'
-                   AND fiscal_year_start = ANY($1::int[])
-               ) AS posted_opening_exists,
-               EXISTS (
-                 SELECT 1 FROM hrms_depreciation_runs
-                 WHERE status IN ('draft', 'review_pending')
-                   AND fiscal_year_start = ANY($1::int[])
-               ) AS draft_opening_exists,
+                 WHERE fiscal_year_start = ANY($1::int[])
+                   AND status IN ('draft', 'review_pending', 'posted', 'void')
+               ) OR EXISTS (
+                 SELECT 1
+                 FROM hrms_depreciation_run_details d
+                 INNER JOIN hrms_depreciation_runs r
+                   ON r.id = d.depreciation_run_id
+                 WHERE r.fiscal_year_start = ANY($1::int[])
+               ) AS opening_history_exists,
                EXISTS (
                  SELECT 1 FROM hrms_depreciation_fy_rollovers
                ) AS rollover_exists`,
@@ -392,13 +397,13 @@ export async function hasDepreciationOpeningFyLock(
     if (!row) {
       return { locked: false, reason: null };
     }
-    if (row.posted_opening_exists) {
+    if (row.opening_history_exists) {
       return {
         locked: true,
         reason:
           openingFy != null
-            ? `Depreciation migration settings cannot be changed after a posted depreciation run exists for opening fiscal year ${openingFy}.`
-            : "Depreciation migration settings cannot be changed after a posted depreciation run exists.",
+            ? `Depreciation migration settings cannot be changed after opening fiscal year ${openingFy} depreciation accounting history exists (including voided posted runs).`
+            : "Depreciation migration settings cannot be changed after depreciation accounting history exists.",
       };
     }
     if (row.rollover_exists) {
@@ -406,15 +411,6 @@ export async function hasDepreciationOpeningFyLock(
         locked: true,
         reason:
           "Depreciation migration settings cannot be changed after a fiscal year rollover has been applied.",
-      };
-    }
-    if (row.draft_opening_exists) {
-      return {
-        locked: true,
-        reason:
-          openingFy != null
-            ? `Delete or recreate draft depreciation runs for opening fiscal year ${openingFy} before changing migration settings.`
-            : "Delete or recreate draft depreciation runs before changing migration settings.",
       };
     }
     return { locked: false, reason: null };
@@ -593,17 +589,17 @@ export async function upsertDepreciationSettings(input: {
     lastExternalDepreciationDateBs: input.lastExternalDepreciationDateBs,
   });
 
-  const lock = await hasDepreciationOpeningFyLock(openingFy);
-  if (lock.locked) {
-    throw new Error(
-      lock.reason ??
-        "Depreciation migration settings cannot be changed after depreciation processing has started."
-    );
-  }
-
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(DEPRECIATION_SETTINGS_ADVISORY_LOCK_SQL);
+    const lock = await hasDepreciationOpeningFyLock(openingFy, client);
+    if (lock.locked) {
+      throw new Error(
+        lock.reason ??
+          "Depreciation migration settings cannot be changed after depreciation processing has started."
+      );
+    }
 
     const existing = await client.query<{
       opening_fiscal_year: number;

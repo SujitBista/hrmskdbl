@@ -1,7 +1,9 @@
 import { pool, query } from "../db.js";
 import {
   fiscalYearStartFromBsDate,
+  isNoDepreciationMethod,
   normalizeBsDateEnglish,
+  parseDepreciationMethod,
 } from "@hrmskdbl/depreciation-core";
 import {
   clampListParams,
@@ -10,9 +12,13 @@ import {
 } from "./groups.js";
 import {
   getServerTodayBsEnglish,
+  MIGRATED_BOOK_VALUE_EXCEEDS_GROSS_MESSAGE,
+  MIGRATED_BOOK_VALUE_NEGATIVE_MESSAGE,
+  MIGRATED_DEPRECIABLE_BOOK_VALUE_REQUIRED_MESSAGE,
   refreshMutableDepreciationRunsForAsset,
   refreshMutableDepreciationRunsForBranch,
 } from "./depreciationRuns.js";
+import { resolveDepreciationMigrationSettings } from "./depreciationSettings.js";
 import type pg from "pg";
 
 const ASSET_CODE_PREFIX = "SKDBL";
@@ -75,6 +81,8 @@ export type CreateAssetInput = {
    * cost basis instead of purchase amount.
    */
   book_value: number | null;
+  /** BS date the imported WDV was measured (audit trail for migration). */
+  opening_balance_as_of_date_bs?: string | null;
   /**
    * When set (any allocation field in JSON), replaces allocation row on update.
    * When omitted on update, allocation is left unchanged. On create, defaults apply when omitted.
@@ -97,6 +105,11 @@ export type ImportAssetRowInput = {
   purchase_amount?: number | string | null;
   /** Current book / written-down value from import (maps to `hrms_assets.book_value`). */
   book_value?: number | string | null;
+  /**
+   * BS date the imported WDV represents. Must match configured
+   * `last_external_depreciation_date_bs` for migrated depreciable assets.
+   */
+  opening_balance_as_of_date_bs?: string | null;
   purchase_invoice_no?: string | null;
   allocation_remarks?: string | null;
   allocation_category_name?: string | null;
@@ -726,6 +739,68 @@ async function ensureBranchRowFromImportExcel(params: {
   );
 }
 
+export const MIGRATION_REGISTER_FROZEN_MESSAGE =
+  "The migration register is frozen after an opening fiscal year depreciation run has been posted. Additional migrated depreciable assets cannot be imported.";
+
+export const OPENING_BALANCE_DATE_MISMATCH_MESSAGE =
+  "Opening balance as-of date must match the configured last external depreciation date for every migrated depreciable asset in this import.";
+
+function isDepreciableImportGroup(group: {
+  dep_method: string | null;
+  dep_rate: string | null;
+}): boolean {
+  if (isNoDepreciationMethod(group.dep_method)) {
+    return false;
+  }
+  const method = parseDepreciationMethod(group.dep_method);
+  if (method === null) {
+    return false;
+  }
+  const rate = Number.parseFloat(String(group.dep_rate ?? "").trim());
+  return Number.isFinite(rate) && rate > 0;
+}
+
+function parseImportOpeningBalanceDateBs(
+  raw: string | null | undefined
+): string | null {
+  if (raw == null || String(raw).trim() === "") {
+    return null;
+  }
+  return normalizeBsDateEnglish(String(raw).trim());
+}
+
+export function validateMigratedDepreciableImportRow(params: {
+  grossCost: number | null;
+  bookValue: number | null;
+  openingBalanceAsOfDateBs: string | null;
+  expectedOpeningBalanceDateBs: string | null;
+}): void {
+  const { grossCost, bookValue, openingBalanceAsOfDateBs, expectedOpeningBalanceDateBs } =
+    params;
+  if (bookValue == null) {
+    throw new Error(MIGRATED_DEPRECIABLE_BOOK_VALUE_REQUIRED_MESSAGE);
+  }
+  if (bookValue < 0) {
+    throw new Error(MIGRATED_BOOK_VALUE_NEGATIVE_MESSAGE);
+  }
+  if (grossCost != null && grossCost > 0 && bookValue > grossCost) {
+    throw new Error(MIGRATED_BOOK_VALUE_EXCEEDS_GROSS_MESSAGE);
+  }
+  if (expectedOpeningBalanceDateBs == null) {
+    throw new Error(
+      "Depreciation migration settings must be configured before importing migrated depreciable assets."
+    );
+  }
+  if (openingBalanceAsOfDateBs == null) {
+    throw new Error(
+      "Opening balance as-of date (opening_balance_as_of_date_bs) is required for migrated depreciable assets."
+    );
+  }
+  if (openingBalanceAsOfDateBs !== expectedOpeningBalanceDateBs) {
+    throw new Error(OPENING_BALANCE_DATE_MISMATCH_MESSAGE);
+  }
+}
+
 export function parseImportAssetsPayload(body: unknown): ImportAssetsPayload {
   if (!body || typeof body !== "object") {
     throw new Error("Invalid request body.");
@@ -744,9 +819,13 @@ export async function importAssetsFromRows(
     throw new Error("No rows provided for import.");
   }
 
-  const groupsResult = await query<{ id: number; name: string; code: string }>(
-    `SELECT id, name, code FROM hrms_groups`
-  );
+  const groupsResult = await query<{
+    id: number;
+    name: string;
+    code: string;
+    dep_method: string | null;
+    dep_rate: string | null;
+  }>(`SELECT id, name, code, dep_method, dep_rate::text FROM hrms_groups`);
   const subGroupsResult = await query<{ id: number; group_id: number; name: string }>(
     `SELECT id, group_id, name FROM hrms_sub_groups`
   );
@@ -804,6 +883,23 @@ export async function importAssetsFromRows(
     );
   }
 
+  const groupById = new Map(groupsResult.rows.map((g) => [g.id, g]));
+  const migrationSettings = await resolveDepreciationMigrationSettings();
+  const expectedOpeningBalanceDateBs =
+    migrationSettings?.lastExternalDepreciationDateBs ?? null;
+  let migrationRegisterFrozen = false;
+  if (migrationSettings) {
+    const frozenResult = await query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM hrms_depreciation_runs
+         WHERE fiscal_year_start = $1
+           AND status = 'posted'
+       ) AS exists`,
+      [migrationSettings.openingFiscalYear]
+    );
+    migrationRegisterFrozen = frozenResult.rows[0]?.exists === true;
+  }
+
   let importedCount = 0;
   let skippedCount = 0;
   const errors: Array<{ row: number; message: string }> = [];
@@ -848,6 +944,12 @@ export async function importAssetsFromRows(
         throw new Error(
           `Group not found for "${groupName}". Use a group name or code that matches an existing asset group.`
         );
+      }
+      const groupMeta = groupById.get(group.id);
+      const depreciable =
+        groupMeta != null && isDepreciableImportGroup(groupMeta);
+      if (depreciable && migrationRegisterFrozen) {
+        throw new Error(MIGRATION_REGISTER_FROZEN_MESSAGE);
       }
 
       const branchNameRaw =
@@ -964,7 +1066,20 @@ export async function importAssetsFromRows(
 
       const bookVal = parseNumberish(row.book_value);
       const book_value =
-        bookVal !== null && bookVal > 0 ? bookVal : null;
+        bookVal !== null && bookVal >= 0 ? bookVal : null;
+      const openingBalanceAsOfDateBs = parseImportOpeningBalanceDateBs(
+        row.opening_balance_as_of_date_bs
+      );
+      const grossCost =
+        purchaseAmount != null && purchaseAmount > 0 ? purchaseAmount : null;
+      if (depreciable) {
+        validateMigratedDepreciableImportRow({
+          grossCost,
+          bookValue: book_value,
+          openingBalanceAsOfDateBs,
+          expectedOpeningBalanceDateBs,
+        });
+      }
 
       const input: CreateAssetInput = {
         asset_name: assetName,
@@ -980,6 +1095,7 @@ export async function importAssetsFromRows(
         unit_rate: unitRate,
         purchase_invoice_no: purchaseInvoiceNo,
         book_value,
+        opening_balance_as_of_date_bs: openingBalanceAsOfDateBs,
         allocation: allocationFromImportRow(row),
       };
       validatedInputs.push({ row: rowNumber, input });
@@ -1005,9 +1121,7 @@ export async function importAssetsFromRows(
     for (const item of validatedInputs) {
       const created = await createAssetsFromInput(item.input, client);
       importedCount += created.length;
-      if (resolveCreateUnitCount(item.input.purchase_qty) > 1) {
-        branchesToRefresh.add(item.input.branch_id);
-      }
+      branchesToRefresh.add(item.input.branch_id);
     }
     await client.query("COMMIT");
   } catch (err) {
@@ -1281,9 +1395,10 @@ async function createAssetWithClient(
         asset_name, group_id, sub_group_id, ownership_type, working_status,
         branch_id, department_id, purchase_date_bs, depreciation_start_date_bs,
         purchase_qty, unit_rate, purchase_invoice_no, old_book_value, book_value,
+        opening_balance_as_of_date_bs,
         dep_method_snapshot, dep_rate_snapshot
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING id, created_at::text`,
       [
         input.asset_name,
@@ -1300,6 +1415,7 @@ async function createAssetWithClient(
         input.purchase_invoice_no,
         null,
         input.book_value,
+        input.opening_balance_as_of_date_bs ?? null,
         refs.group_dep_method,
         refs.group_dep_rate,
       ]

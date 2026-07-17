@@ -67,7 +67,8 @@ export type ComputedQuarterAssetDetail = {
   depAmount: number;
   /**
    * Prior accumulated depreciation before this fiscal year’s slice (ERP register
-   * `AccumulateDep`): max(schedule prior, register floor), excluding `depAmount`.
+   * `AccumulateDep`), excluding `depAmount`. In the opening fiscal year this
+   * equals gross cost minus imported WDV; later years use posted FY_END carry-forward.
    */
   accumulateDep: number;
   /** Opening written-down value at FY start after prior dep (`BookValue` on ERP register). */
@@ -359,13 +360,12 @@ export function computeAssetQuarterCumulative(params: {
   /** Optional inclusive cap used when depreciation stops inside the selected period (for disposal). */
   depreciationEndBs?: string | null;
   /**
-   * Floors “prior accumulated depreciation” at least this amount (e.g. historical
-   * dep implied by imported register: gross cost minus carrying `book_value`).
-   * When set (and carry-forward is not), this value is authoritative: prior
-   * accumulated is pinned to it so migrated opening WDV is not overwritten by a
-   * recalculated schedule.
+   * Opening fiscal year only: prior accumulated depreciation implied by imported
+   * register WDV (`gross cost − book_value`). When set (including `0` when WDV
+   * equals gross cost), this value is authoritative and the historical schedule
+   * is never used for opening balances.
    *
-   * Ignored when {@link carryForwardPriorAccumulatedDep} is set (rollover path).
+   * Ignored when {@link carryForwardPriorAccumulatedDep} is set (later FY path).
    */
   registerPriorAccumulatedDep?: number | null;
   /**
@@ -501,15 +501,14 @@ export function computeAssetQuarterCumulative(params: {
     const registerPriorPinned =
       rawRegisterPrior != null &&
       Number.isFinite(rawRegisterPrior) &&
-      rawRegisterPrior > 0
+      rawRegisterPrior >= 0
         ? roundMoney(Math.min(Math.max(rawRegisterPrior, 0), cost))
         : null;
 
     if (registerPriorPinned !== null) {
       /**
-       * Imported / register WDV is authoritative for opening balances:
-       * prior accum = gross − imported WDV. Do not let a recalculated ERP
-       * schedule overwrite migrated opening WDV (especially mid-year go-live).
+       * Opening fiscal year: imported register WDV is authoritative.
+       * prior accum = gross − imported WDV (including zero when WDV equals gross).
        */
       priorYearsDepAmount = registerPriorPinned;
     } else {
@@ -531,8 +530,8 @@ export function computeAssetQuarterCumulative(params: {
   /**
    * Daily proration policy:
    * - Straight line: prorate against full gross cost.
-   * - Declining balance: prorate against FY opening written-down value after the
-   *   blended prior (schedule vs register floor), so this-year dep matches opening WDV.
+   * - Declining balance: prorate against FY opening written-down value after prior
+   *   accumulated (imported WDV in opening FY; posted FY_END carry-forward later).
    * - Fiscal-year rollover (carry-forward): both methods use opening WDV after
    *   pinned prior accumulated (requirement: openingWDV × rate × depDays / 365).
    */

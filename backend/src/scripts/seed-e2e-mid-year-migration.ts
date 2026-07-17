@@ -166,6 +166,7 @@ async function recreateMigratedAsset(input: {
     unit_rate: E2E_MID_GROSS_COST,
     purchase_invoice_no: "E2E-MID-INV-001",
     book_value: E2E_MID_IMPORTED_WDV,
+    opening_balance_as_of_date_bs: dayBeforeBsDate(E2E_MID_FIRST_SYSTEM_BS),
   });
 
   const asset = assets[0];

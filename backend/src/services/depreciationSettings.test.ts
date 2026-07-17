@@ -158,19 +158,18 @@ describe("depreciationSettings migration", () => {
   describe("Test H: settings locking", () => {
     it("locks when a posted opening-year run exists", async () => {
       vi.mocked(query)
-        .mockResolvedValueOnce({ rows: [] } as never) // getDepreciationOpeningFiscalYear
+        .mockResolvedValueOnce({ rows: [] } as never)
         .mockResolvedValueOnce({
           rows: [
             {
-              posted_opening_exists: true,
-              draft_opening_exists: false,
+              opening_history_exists: true,
               rollover_exists: false,
             },
           ],
         } as never);
       const lock = await hasDepreciationOpeningFyLock(2083);
       expect(lock.locked).toBe(true);
-      expect(lock.reason).toMatch(/posted depreciation run/i);
+      expect(lock.reason).toMatch(/depreciation accounting history/i);
     });
 
     it("locks when draft opening-year runs exist", async () => {
@@ -179,49 +178,38 @@ describe("depreciationSettings migration", () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              posted_opening_exists: false,
-              draft_opening_exists: true,
+              opening_history_exists: true,
               rollover_exists: false,
             },
           ],
         } as never);
       const lock = await hasDepreciationOpeningFyLock(2083);
       expect(lock.locked).toBe(true);
-      expect(lock.reason).toMatch(/draft/i);
+      expect(lock.reason).toMatch(/depreciation accounting history/i);
     });
 
     it("rejects upsert after posted opening-year run", async () => {
-      vi.mocked(query)
+      const client = mockClient();
+      client.query
+        .mockResolvedValueOnce(undefined as never)
+        .mockResolvedValueOnce(undefined as never)
+        .mockResolvedValueOnce({ rows: [] } as never)
         .mockResolvedValueOnce({
           rows: [
             {
-              opening_fiscal_year: 2083,
-              first_system_depreciation_date_bs: "2083/04/01",
-              last_external_depreciation_date_bs: null,
-              configured_by_admin_id: 1,
-              configured_by_admin_email: "admin@test",
-              configured_at: "2026-01-01",
-              created_at: "2026-01-01",
-              updated_at: "2026-01-01",
-            },
-          ],
-        } as never)
-        .mockResolvedValueOnce({
-          rows: [
-            {
-              posted_opening_exists: true,
-              draft_opening_exists: false,
+              opening_history_exists: true,
               rollover_exists: false,
             },
           ],
         } as never);
+
       await expect(
         upsertDepreciationSettings({
           openingFiscalYear: 2083,
           firstSystemDepreciationDateBs: "2083/06/01",
           actor: { adminId: 1, adminEmail: "admin@test", isSuperAdmin: false },
         })
-      ).rejects.toThrow(/posted depreciation run/i);
+      ).rejects.toThrow(/depreciation accounting history/i);
     });
   });
 
@@ -234,8 +222,7 @@ describe("depreciationSettings migration", () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              posted_opening_exists: false,
-              draft_opening_exists: false,
+              opening_history_exists: false,
               rollover_exists: false,
             },
           ],
@@ -252,25 +239,23 @@ describe("depreciationSettings migration", () => {
 
   describe("upsertDepreciationSettings", () => {
     it("creates settings with first-system date and audit log", async () => {
-      vi.mocked(query)
-        .mockResolvedValueOnce({ rows: [] } as never) // lock: getOpening
+      const client = mockClient();
+      client.query
+        .mockResolvedValueOnce(undefined as never)
+        .mockResolvedValueOnce(undefined as never)
+        .mockResolvedValueOnce({ rows: [] } as never)
         .mockResolvedValueOnce({
           rows: [
             {
-              posted_opening_exists: false,
-              draft_opening_exists: false,
+              opening_history_exists: false,
               rollover_exists: false,
             },
           ],
-        } as never);
-
-      const client = mockClient();
-      client.query
-        .mockResolvedValueOnce(undefined as never) // BEGIN
-        .mockResolvedValueOnce({ rows: [] } as never) // SELECT FOR UPDATE
-        .mockResolvedValueOnce(undefined as never) // INSERT settings
-        .mockResolvedValueOnce(undefined as never) // INSERT audit
-        .mockResolvedValueOnce(undefined as never); // COMMIT
+        } as never)
+        .mockResolvedValueOnce({ rows: [] } as never)
+        .mockResolvedValueOnce(undefined as never)
+        .mockResolvedValueOnce(undefined as never)
+        .mockResolvedValueOnce(undefined as never);
 
       vi.mocked(query)
         .mockResolvedValueOnce({
@@ -304,8 +289,7 @@ describe("depreciationSettings migration", () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              posted_opening_exists: false,
-              draft_opening_exists: false,
+              opening_history_exists: false,
               rollover_exists: false,
             },
           ],

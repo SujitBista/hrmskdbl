@@ -539,6 +539,10 @@ async function migrate() {
     ALTER TABLE hrms_depreciation_run_details
     ADD COLUMN IF NOT EXISTS effective_calc_start_date_bs VARCHAR(32);
   `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS opening_balance_as_of_date_bs VARCHAR(32);
+  `);
 
   console.log("Migration complete.");
 }

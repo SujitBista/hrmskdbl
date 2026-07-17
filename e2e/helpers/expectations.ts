@@ -33,7 +33,12 @@ export function expectedOpeningFyRunDetail(fixture: E2eFyTransitionFixture) {
     throw new Error("Could not resolve depreciation commencement date.");
   }
   const fyStartBs = fiscalYearStartBs(fixture.openingFiscalYear);
-  const effectiveFromBs = maxBsDateString(depreciationStartBs, fyStartBs);
+  const firstSystem =
+    fixture.firstSystemDepreciationDateBs ?? fyStartBs;
+  const effectiveFromBs = maxBsDateString(
+    maxBsDateString(depreciationStartBs, fyStartBs),
+    firstSystem
+  );
   const depDays = inclusiveCalendarDaysBetweenBs(
     effectiveFromBs,
     calculationDateBs
@@ -49,6 +54,7 @@ export function expectedOpeningFyRunDetail(fixture: E2eFyTransitionFixture) {
     depreciationScopeMode: "AS_OF_DATE",
     asOfDateBs: calculationDateBs,
     registerPriorAccumulatedDep: fixture.impliedPriorAccum,
+    firstSystemDepreciationDateBs: firstSystem,
   });
 
   if (!computed.ok) {
@@ -79,7 +85,12 @@ export function expectedDepDaysFromRegisterStart(
     throw new Error("Could not resolve depreciation commencement date.");
   }
   const fyStartBs = fiscalYearStartBs(fixture.openingFiscalYear);
-  const effectiveFromBs = maxBsDateString(depreciationStartBs, fyStartBs);
+  const firstSystem =
+    fixture.firstSystemDepreciationDateBs ?? fyStartBs;
+  const effectiveFromBs = maxBsDateString(
+    maxBsDateString(depreciationStartBs, fyStartBs),
+    firstSystem
+  );
   return inclusiveCalendarDaysBetweenBs(effectiveFromBs, periodEndBs);
 }
 

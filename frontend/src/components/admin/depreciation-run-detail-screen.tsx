@@ -47,6 +47,8 @@ type DetailRow = {
   accumulate_dep: string;
   dep_formula: string;
   dep_start_date_bs: string;
+  /** Inclusive start of system-owned depreciation days for this run. */
+  effective_calc_start_date_bs?: string | null;
   /** Current authoritative depreciation start date from asset register (live). */
   register_depreciation_start_bs?: string;
   balance_amount: string;
@@ -410,6 +412,7 @@ export function DepreciationRunDetailScreen() {
       "DepreciationCostBasis",
       "RegisterDepStartBS",
       "DepCommencementBS",
+      "EffectiveCalcStartBS",
       "DepRate",
       "DepDays",
       "DepAmount",
@@ -465,6 +468,7 @@ export function DepreciationRunDetailScreen() {
           formatCsvDecimal(d.depreciation_cost_basis),
           d.register_depreciation_start_bs ?? "",
           d.dep_start_date_bs,
+          d.effective_calc_start_date_bs ?? "",
           formatCsvDecimal(d.dep_rate),
           d.dep_days,
           formatCsvDecimal(d.dep_amount),
@@ -725,7 +729,7 @@ export function DepreciationRunDetailScreen() {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-emerald-900/10 bg-white shadow-sm">
-        <table className="min-w-[2140px] w-full table-fixed border-collapse text-left text-sm">
+        <table className="min-w-[2330px] w-full table-fixed border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-700">
               <th className="sticky top-0 z-30 w-[320px] min-w-[320px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
@@ -776,6 +780,9 @@ export function DepreciationRunDetailScreen() {
               <th className="sticky top-0 z-30 w-[190px] min-w-[190px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
                 Depreciation Start (BS)
               </th>
+              <th className="sticky top-0 z-30 w-[190px] min-w-[190px] whitespace-nowrap border border-slate-300 bg-slate-100 px-2 py-2">
+                Effective calc. start (BS)
+              </th>
               <th className="sticky right-0 top-0 z-40 w-[160px] min-w-[160px] whitespace-nowrap border border-slate-300 bg-white px-2 py-2 text-right shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
                 ClosingBookValue
               </th>
@@ -785,7 +792,7 @@ export function DepreciationRunDetailScreen() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={17}
+                  colSpan={18}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   Loading…
@@ -794,7 +801,7 @@ export function DepreciationRunDetailScreen() {
             ) : details.length === 0 ? (
               <tr>
                 <td
-                  colSpan={17}
+                  colSpan={18}
                   className="border border-slate-300 px-3 py-8 text-center text-slate-500"
                 >
                   No detail rows.
@@ -884,6 +891,12 @@ export function DepreciationRunDetailScreen() {
                     title="Depreciation start date used for this report calculation."
                   >
                     {d.dep_start_date_bs}
+                  </td>
+                  <td
+                    className="border border-slate-300 px-2 py-1.5 font-mono text-xs text-slate-800"
+                    title="First day included in system-owned depreciation for this run."
+                  >
+                    {d.effective_calc_start_date_bs ?? "—"}
                   </td>
                   <td className="sticky right-0 z-20 w-[160px] min-w-[160px] whitespace-nowrap border border-slate-300 bg-white px-2 py-1.5 text-right font-mono text-xs tabular-nums font-semibold text-emerald-900 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.28)]">
                     {formatAmount(d.balance_amount)}

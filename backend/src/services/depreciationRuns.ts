@@ -64,6 +64,8 @@ export type DepreciationRunDetailRow = {
   accumulate_dep: string;
   dep_formula: string;
   dep_start_date_bs: string;
+  /** Inclusive start of system-owned depreciation days for this run (may differ from register commencement after mid-year migration). */
+  effective_calc_start_date_bs: string | null;
   /** Current `hrms_assets.depreciation_start_date_bs` (register field; updates when asset is edited). */
   register_depreciation_start_bs: string;
   balance_amount: string;
@@ -336,6 +338,7 @@ export async function listDetailsForRun(
       d.dep_rate::text, d.dep_days, d.dep_amount::text, d.group_name, d.sub_group_name,
       d.branch_name, d.book_value::text, d.accumulate_dep::text, d.dep_formula,
       d.dep_start_date_bs,
+      d.effective_calc_start_date_bs,
       a.depreciation_start_date_bs AS register_depreciation_start_bs,
       d.balance_amount::text, d.created_at::text
      FROM hrms_depreciation_run_details d
@@ -377,17 +380,25 @@ export type CreateDepreciationRunInput = {
 };
 
 import {
+  assertDepreciationPeriodEligibleForSystemMigration,
   depreciationPriorFyStrictCarryForwardFloor,
+  firstSystemDateForFiscalYear,
   getDepreciationOpeningFiscalYear,
   getDepreciationOpeningFiscalYearFromEnv,
   getDepreciationPriorFyStrictCarryForwardFloor,
+  requireDepreciationMigrationSettings,
+  type DepreciationMigrationSettings,
 } from "./depreciationSettings.js";
 
 export {
+  assertDepreciationPeriodEligibleForSystemMigration,
+  DEPRECIATION_OPENING_FY_NOT_CONFIGURED_MESSAGE,
+  DEPRECIATION_PERIOD_BEFORE_MIGRATION_MESSAGE,
   depreciationPriorFyStrictCarryForwardFloor,
   getDepreciationOpeningFiscalYear,
   getDepreciationOpeningFiscalYearFromEnv,
   getDepreciationPriorFyStrictCarryForwardFloor,
+  requireDepreciationMigrationSettings,
 } from "./depreciationSettings.js";
 
 export function formatDepreciationOpeningFyLabel(openingFyStart: number): string {
@@ -686,6 +697,7 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode: DepreciationScopeMode;
     assets: AssetDepRow[];
     carryForwardContext: DepreciationRunCarryForwardContext;
+    migration: DepreciationMigrationSettings | null;
   }
 ): Promise<{ detailsInserted: number; skippedAssets: DepreciationSkippedAsset[] }> {
   const {
@@ -696,6 +708,7 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode,
     assets,
     carryForwardContext,
+    migration,
   } = args;
 
   const skippedAssets: DepreciationSkippedAsset[] = [];
@@ -708,6 +721,10 @@ async function insertDepreciationDetailRows(
     depreciationScopeMode,
   });
   const fyStartBs = fiscalYearStartBs(fy);
+  const firstSystemDepreciationDateBs = firstSystemDateForFiscalYear(
+    migration,
+    fy
+  );
 
   for (const a of assets) {
     if (isNoDepreciationMethod(a.asset_dep_method ?? a.group_dep_method)) {
@@ -792,6 +809,7 @@ async function insertDepreciationDetailRows(
         carryPrior !== undefined ? undefined : registerPriorAccum,
       carryForwardPriorAccumulatedDep:
         carryPrior !== undefined ? carryPrior : null,
+      firstSystemDepreciationDateBs,
     });
 
     if (!computed.ok) {
@@ -830,8 +848,8 @@ async function insertDepreciationDetailRows(
         depreciation_run_id, asset_id, fiscal_year, asset_name, dep_rate,
         dep_days, dep_amount, group_name, sub_group_name, branch_name,
         book_value, accumulate_dep, dep_formula, dep_start_date_bs,
-        balance_amount
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        effective_calc_start_date_bs, balance_amount
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         runId,
         a.id,
@@ -847,6 +865,7 @@ async function insertDepreciationDetailRows(
         d.accumulateDep,
         d.depFormula,
         depreciationStartBs,
+        d.effectiveCalcStartBs,
         balanceAmount,
       ]
     );
@@ -983,7 +1002,20 @@ export async function createDepreciationRun(
       [fy, branchId]
     );
 
-    const openingFy = await getDepreciationOpeningFiscalYear(client);
+    const migration = await requireDepreciationMigrationSettings(client);
+    const openingFy = migration.openingFiscalYear;
+    const selectedPeriodEndBs = selectedDepreciationPeriodEndBs({
+      fiscalYearStart: fy,
+      quarterNo,
+      calculationDateBs,
+      depreciationScopeMode,
+    });
+    assertDepreciationPeriodEligibleForSystemMigration({
+      periodEndBs: selectedPeriodEndBs,
+      fiscalYearStart: fy,
+      migration,
+    });
+
     const priorCarryForward = await loadPriorFyCarryForward(
       client,
       fy,
@@ -1096,6 +1128,7 @@ export async function createDepreciationRun(
         depreciationScopeMode,
         assets,
         carryForwardContext,
+        migration,
       }
     );
 
@@ -1210,7 +1243,9 @@ export async function refreshDepreciationRunDetailsFromAssets(
       [fy, branchId]
     );
 
-    const openingFy = await getDepreciationOpeningFiscalYear(client);
+    const migration = await requireDepreciationMigrationSettings(client);
+    const openingFy = migration.openingFiscalYear;
+
     const priorCarryForward = await loadPriorFyCarryForward(
       client,
       fy,
@@ -1301,6 +1336,17 @@ export async function refreshDepreciationRunDetailsFromAssets(
       [runId]
     );
 
+    assertDepreciationPeriodEligibleForSystemMigration({
+      periodEndBs: selectedDepreciationPeriodEndBs({
+        fiscalYearStart: fy,
+        quarterNo,
+        calculationDateBs,
+        depreciationScopeMode,
+      }),
+      fiscalYearStart: fy,
+      migration,
+    });
+
     const { detailsInserted, skippedAssets } = await insertDepreciationDetailRows(
       client,
       {
@@ -1311,6 +1357,7 @@ export async function refreshDepreciationRunDetailsFromAssets(
         depreciationScopeMode,
         assets,
         carryForwardContext,
+        migration,
       }
     );
 

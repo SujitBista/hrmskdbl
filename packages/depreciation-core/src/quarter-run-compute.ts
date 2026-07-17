@@ -75,9 +75,39 @@ export type ComputedQuarterAssetDetail = {
   /** Closing WDV after this run’s period (`ClosingBookValue`). */
   balanceAmount: number;
   depFormula: string;
+  /**
+   * Inclusive BS start of the days this system actually depreciates for the run
+   * (`max(asset commencement, FY Shrawan 1, optional first-system migration date)`).
+   */
+  effectiveCalcStartBs: string;
   /** Full timeline: `accumulatedDep` = prior + this-year; ties `balanceAmount`. */
   erpTimeline: LifetimeDepreciationTimeline;
 };
+
+/**
+ * Inclusive calculation start for a fiscal-year depreciation slice.
+ * When `firstSystemDepreciationDateBs` is set (opening FY only), mid-year
+ * migration days before that date are excluded.
+ */
+export function resolveEffectiveDepreciationFromBs(params: {
+  depreciationStartBs: string;
+  fiscalYearStart: number;
+  firstSystemDepreciationDateBs?: string | null;
+}): string {
+  const depStart =
+    normalizeBsDateEnglish(params.depreciationStartBs.trim()) ??
+    params.depreciationStartBs.trim();
+  const fyStartBs = fiscalYearStartBs(params.fiscalYearStart);
+  let effective = maxBsDate(depStart, fyStartBs);
+  const rawFirst = params.firstSystemDepreciationDateBs;
+  if (rawFirst != null && String(rawFirst).trim() !== "") {
+    const firstNorm = normalizeBsDateEnglish(String(rawFirst).trim());
+    if (firstNorm && isValidBsDateString(firstNorm)) {
+      effective = maxBsDate(effective, firstNorm);
+    }
+  }
+  return effective;
+}
 
 function cumulativeDepThrough(
   params: {
@@ -331,9 +361,9 @@ export function computeAssetQuarterCumulative(params: {
   /**
    * Floors “prior accumulated depreciation” at least this amount (e.g. historical
    * dep implied by imported register: gross cost minus carrying `book_value`).
-   * Combined with {@link purchaseAmount} as gross cost, yields accumulated =
-   * max(schedule prior, register floor) + this-year slice (clamped), so migrated
-   * assets do not lose imported accumulated depreciation.
+   * When set (and carry-forward is not), this value is authoritative: prior
+   * accumulated is pinned to it so migrated opening WDV is not overwritten by a
+   * recalculated schedule.
    *
    * Ignored when {@link carryForwardPriorAccumulatedDep} is set (rollover path).
    */
@@ -347,6 +377,13 @@ export function computeAssetQuarterCumulative(params: {
    * run end date (same as the non-carry-forward path).
    */
   carryForwardPriorAccumulatedDep?: number | null;
+  /**
+   * First BS date this application may calculate depreciation for (software
+   * migration / go-live). Only pass this for the opening fiscal year. Days
+   * before this date are excluded from `depDays` even when the asset’s real
+   * commencement is earlier. Does not alter `depreciationStartBs`.
+   */
+  firstSystemDepreciationDateBs?: string | null;
 }): { ok: true; detail: ComputedQuarterAssetDetail } | { ok: false; errors: string[] } {
   const scopeMode: DepreciationScopeMode =
     params.depreciationScopeMode ?? "FY_END";
@@ -398,6 +435,12 @@ export function computeAssetQuarterCumulative(params: {
     selectedPeriodEndBs = minBsDate(selectedPeriodEndBs, endNorm);
   }
 
+  const effectiveFromBs = resolveEffectiveDepreciationFromBs({
+    depreciationStartBs: depStart,
+    fiscalYearStart: params.fiscalYearStart,
+    firstSystemDepreciationDateBs: params.firstSystemDepreciationDateBs,
+  });
+
   if (compareBsDateString(depStart, selectedPeriodEndBs) > 0) {
     const cost = roundMoney(params.purchaseAmount);
     const rawCf = params.carryForwardPriorAccumulatedDep;
@@ -426,12 +469,11 @@ export function computeAssetQuarterCumulative(params: {
         bookValue: openingIdle,
         balanceAmount: openingIdle,
         depFormula: formatDepFormula(params.method, params.depRatePercent),
+        effectiveCalcStartBs: effectiveFromBs,
         erpTimeline: idleTimeline,
       },
     };
   }
-
-  const effectiveFromBs = maxBsDate(depStart, fyStartBs);
 
   let depDays = 0;
   if (compareBsDateString(effectiveFromBs, selectedPeriodEndBs) <= 0) {
@@ -455,30 +497,35 @@ export function computeAssetQuarterCumulative(params: {
   if (carryForward !== null) {
     priorYearsDepAmount = carryForward;
   } else {
-    const timeline = buildDepreciationTimelineToPeriodEnd({
-      purchaseAmount: params.purchaseAmount,
-      depreciationStartBs: depStart,
-      depRatePercent: params.depRatePercent,
-      method: params.method,
-      fiscalYearStart: params.fiscalYearStart,
-      selectedPeriodEndBs,
-    });
-    if (!timeline.ok) {
-      return { ok: false, errors: timeline.errors };
-    }
     const rawRegisterPrior = params.registerPriorAccumulatedDep;
-    const registerPriorFloor =
+    const registerPriorPinned =
       rawRegisterPrior != null &&
       Number.isFinite(rawRegisterPrior) &&
       rawRegisterPrior > 0
         ? roundMoney(Math.min(Math.max(rawRegisterPrior, 0), cost))
-        : 0;
-    priorYearsDepAmount = roundMoney(
-      Math.min(
-        cost,
-        Math.max(timeline.timeline.priorYearsDepAmount, registerPriorFloor)
-      )
-    );
+        : null;
+
+    if (registerPriorPinned !== null) {
+      /**
+       * Imported / register WDV is authoritative for opening balances:
+       * prior accum = gross − imported WDV. Do not let a recalculated ERP
+       * schedule overwrite migrated opening WDV (especially mid-year go-live).
+       */
+      priorYearsDepAmount = registerPriorPinned;
+    } else {
+      const timeline = buildDepreciationTimelineToPeriodEnd({
+        purchaseAmount: params.purchaseAmount,
+        depreciationStartBs: depStart,
+        depRatePercent: params.depRatePercent,
+        method: params.method,
+        fiscalYearStart: params.fiscalYearStart,
+        selectedPeriodEndBs,
+      });
+      if (!timeline.ok) {
+        return { ok: false, errors: timeline.errors };
+      }
+      priorYearsDepAmount = timeline.timeline.priorYearsDepAmount;
+    }
   }
 
   /**
@@ -517,6 +564,7 @@ export function computeAssetQuarterCumulative(params: {
       bookValue: clamped.openingBookValueOfFY,
       balanceAmount: clamped.closingBookValue,
       depFormula: formatDepFormula(params.method, params.depRatePercent),
+      effectiveCalcStartBs: effectiveFromBs,
       erpTimeline: clamped,
     },
   };

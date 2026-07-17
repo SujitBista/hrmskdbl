@@ -16,6 +16,10 @@ import {
   registerImpliedPriorAccumulatedDep,
   refreshMutableDepreciationRunsForAsset,
 } from "./depreciationRuns.js";
+import {
+  firstSystemDateForFiscalYear,
+  resolveDepreciationMigrationSettings,
+} from "./depreciationSettings.js";
 
 export const DISPOSAL_TYPES = [
   "SOLD",
@@ -371,7 +375,8 @@ export function assertAssetCanBeDisposed(params: {
 export function calculateAssetDisposalAmounts(
   asset: DisposalAssetDepRow,
   disposalDateBs: string,
-  disposalAmount: number
+  disposalAmount: number,
+  options?: { firstSystemDepreciationDateBs?: string | null }
 ): {
   netBookValueAtDisposal: number;
   accumulatedDepreciationAtDisposal: number;
@@ -449,6 +454,7 @@ export function calculateAssetDisposalAmounts(
     depreciationScopeMode: "AS_OF_DATE",
     asOfDateBs: disposalDateBs,
     registerPriorAccumulatedDep: registerPriorAccum,
+    firstSystemDepreciationDateBs: options?.firstSystemDepreciationDateBs ?? null,
   });
   if (!computed.ok) {
     throw new Error(computed.errors.join("; "));
@@ -519,10 +525,18 @@ async function disposeAssetInTransaction(
     depreciationStartDateBs: asset.depreciation_start_date_bs,
   });
 
+  const migration = await resolveDepreciationMigrationSettings(client);
+  const disposalFy = fiscalYearStartFromBsDate(input.disposal_date_bs);
   const amounts = calculateAssetDisposalAmounts(
     asset,
     input.disposal_date_bs,
-    input.disposal_amount
+    input.disposal_amount,
+    {
+      firstSystemDepreciationDateBs:
+        disposalFy == null
+          ? null
+          : firstSystemDateForFiscalYear(migration, disposalFy),
+    }
   );
 
   const inserted = await client.query<AssetDisposalRow>(
@@ -618,6 +632,12 @@ export async function bulkDisposeAssets(
   const { disposals, assetIds } = await withTransaction(async (client) => {
     const itemErrors: BulkDisposalItemError[] = [];
     const assetsById = new Map<number, DisposalAssetDepRow>();
+    const migration = await resolveDepreciationMigrationSettings(client);
+    const disposalFy = fiscalYearStartFromBsDate(input.disposal_date_bs);
+    const firstSystemDepreciationDateBs =
+      disposalFy == null
+        ? null
+        : firstSystemDateForFiscalYear(migration, disposalFy);
 
     for (const item of input.items) {
       try {
@@ -645,7 +665,8 @@ export async function bulkDisposeAssets(
         calculateAssetDisposalAmounts(
           asset,
           input.disposal_date_bs,
-          item.disposal_amount
+          item.disposal_amount,
+          { firstSystemDepreciationDateBs }
         );
         assetsById.set(item.asset_id, asset);
       } catch (err) {

@@ -1,10 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const backendPort = process.env.E2E_BACKEND_PORT ?? process.env.PORT ?? "4010";
+const frontendPort = process.env.E2E_FRONTEND_PORT ?? "3001";
 const backendUrl =
   process.env.E2E_BACKEND_URL ?? `http://localhost:${backendPort}`;
 const frontendUrl =
-  process.env.E2E_FRONTEND_URL ?? "http://localhost:3001";
+  process.env.E2E_FRONTEND_URL ?? `http://localhost:${frontendPort}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -47,7 +48,7 @@ export default defineConfig({
       },
     },
     {
-      command: "npm run dev --workspace=frontend -- --port 3001",
+      command: `npm run dev --workspace=frontend -- --port ${frontendPort}`,
       url: frontendUrl,
       reuseExistingServer: process.env.E2E_REUSE_SERVERS === "true",
       timeout: 120_000,

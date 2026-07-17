@@ -11,6 +11,7 @@
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/scripts/seed.ts",
     "seed:e2e-fy-transition": "tsx src/scripts/seed-e2e-fy-transition.ts",
+    "seed:e2e-mid-year-migration": "tsx src/scripts/seed-e2e-mid-year-migration.ts",
     "e2e:create-fy-end-draft": "tsx src/scripts/e2e-create-fy-end-draft.ts",
     "split-multi-qty-assets": "tsx src/scripts/split-multi-qty-assets.ts",
     "clear-depreciation": "tsx src/scripts/clear-depreciation-data.ts",

@@ -7,3 +7,4 @@ dist
 .DS_Store
 e2e/test-results/
 e2e/fixtures/fy-transition.json
+e2e/fixtures/mid-year-migration.json

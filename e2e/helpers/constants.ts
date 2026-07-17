@@ -3,6 +3,7 @@ import path from "node:path";
 
 export type E2eFyTransitionFixture = {
   openingFiscalYear: number;
+  firstSystemDepreciationDateBs?: string;
   branchId: number;
   groupId: number;
   departmentId: number;

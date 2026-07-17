@@ -8,6 +8,8 @@ import { DepreciationSectionNav } from "./depreciation-section-nav";
 
 type DepreciationSettingsView = {
   openingFiscalYear: number | null;
+  firstSystemDepreciationDateBs: string | null;
+  lastExternalDepreciationDateBs: string | null;
   source: "database" | "env" | "none";
   configuredByAdminId: number | null;
   configuredByAdminEmail: string | null;
@@ -21,6 +23,10 @@ type DepreciationSettingsAuditRow = {
   action: "CREATED" | "UPDATED";
   opening_fiscal_year: number;
   previous_opening_fiscal_year: number | null;
+  first_system_depreciation_date_bs: string | null;
+  previous_first_system_depreciation_date_bs: string | null;
+  last_external_depreciation_date_bs: string | null;
+  previous_last_external_depreciation_date_bs: string | null;
   configured_by_admin_id: number | null;
   configured_by_admin_email: string;
   configured_at: string;
@@ -38,7 +44,7 @@ function formatFiscalYearLabel(fyStart: number): string {
 
 function formatSourceLabel(source: DepreciationSettingsView["source"]): string {
   if (source === "database") return "Database";
-  if (source === "env") return "Environment (DEPRECIATION_OPENING_FY)";
+  if (source === "env") return "Environment fallback";
   return "Not configured";
 }
 
@@ -58,6 +64,8 @@ export function DepreciationSettingsScreen() {
     []
   );
   const [openingFyInput, setOpeningFyInput] = useState("");
+  const [firstSystemDateInput, setFirstSystemDateInput] = useState("");
+  const [lastExternalDateInput, setLastExternalDateInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +97,12 @@ export function DepreciationSettingsScreen() {
           ? String(nextSettings.openingFiscalYear)
           : ""
       );
+      setFirstSystemDateInput(
+        nextSettings?.firstSystemDepreciationDateBs ?? ""
+      );
+      setLastExternalDateInput(
+        nextSettings?.lastExternalDepreciationDateBs ?? ""
+      );
     } catch {
       setError("Could not load depreciation settings.");
       setSettings(null);
@@ -108,7 +122,14 @@ export function DepreciationSettingsScreen() {
     setError(null);
     const parsed = Number.parseInt(openingFyInput.trim(), 10);
     if (!Number.isFinite(parsed) || parsed < 2000) {
-      setError("Opening fiscal year must be an integer ≥ 2000 (e.g. 2082).");
+      setError("Opening fiscal year must be an integer ≥ 2000 (e.g. 2083).");
+      return;
+    }
+    const firstSystem = firstSystemDateInput.trim();
+    if (!firstSystem) {
+      setError(
+        "First system depreciation date is required (e.g. 2083/04/01 or 2083/06/01)."
+      );
       return;
     }
     setSaving(true);
@@ -116,7 +137,14 @@ export function DepreciationSettingsScreen() {
       const res = await fetch("/api/admin/depreciation-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openingFiscalYear: parsed }),
+        body: JSON.stringify({
+          openingFiscalYear: parsed,
+          firstSystemDepreciationDateBs: firstSystem,
+          lastExternalDepreciationDateBs:
+            lastExternalDateInput.trim() === ""
+              ? null
+              : lastExternalDateInput.trim(),
+        }),
       });
       const json = (await res.json()) as {
         settings?: DepreciationSettingsView;
@@ -129,6 +157,14 @@ export function DepreciationSettingsScreen() {
       }
       setSettings(json.settings ?? null);
       setAuditLogs(json.auditLogs ?? []);
+      if (json.settings) {
+        setFirstSystemDateInput(
+          json.settings.firstSystemDepreciationDateBs ?? ""
+        );
+        setLastExternalDateInput(
+          json.settings.lastExternalDepreciationDateBs ?? ""
+        );
+      }
       setSaveMessage("Depreciation settings saved.");
     } catch {
       setError("Could not save depreciation settings.");
@@ -149,9 +185,14 @@ export function DepreciationSettingsScreen() {
               Depreciation Settings
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Set the first system-managed depreciation fiscal year for migrated
-              data. Historical book values before this FY are treated as opening
-              balances. Prior FY_END runs are not required before this year.
+              Opening Fiscal Year is the first fiscal year managed by this
+              application.
+            </p>
+            <p className="mt-2 max-w-2xl text-sm text-slate-600">
+              For a mid-year migration, First System Depreciation Date is the
+              first date from which this application calculates depreciation.
+              Imported asset book values must represent balances immediately
+              before this date.
             </p>
           </div>
           <Link
@@ -201,7 +242,7 @@ export function DepreciationSettingsScreen() {
                     value={openingFyInput}
                     onChange={(e) => setOpeningFyInput(e.target.value)}
                     disabled={!settings?.editable}
-                    placeholder="e.g. 2082"
+                    placeholder="e.g. 2083"
                     required
                   />
                   {openingFyInput.trim() &&
@@ -213,6 +254,51 @@ export function DepreciationSettingsScreen() {
                       )}
                     </p>
                   ) : null}
+                </div>
+
+                <div>
+                  <label
+                    htmlFor={`${formId}-first-system`}
+                    className="mb-1 block text-sm font-medium text-slate-700"
+                  >
+                    First system depreciation date (BS)
+                  </label>
+                  <input
+                    id={`${formId}-first-system`}
+                    type="text"
+                    className={inputClass}
+                    value={firstSystemDateInput}
+                    onChange={(e) => setFirstSystemDateInput(e.target.value)}
+                    disabled={!settings?.editable}
+                    placeholder="e.g. 2083/04/01 or 2083/06/01"
+                    required
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Use Shrawan 1 for a fiscal-year-boundary go-live, or a later
+                    date for mid-year migration.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor={`${formId}-last-external`}
+                    className="mb-1 block text-sm font-medium text-slate-700"
+                  >
+                    Last externally processed date (BS, optional)
+                  </label>
+                  <input
+                    id={`${formId}-last-external`}
+                    type="text"
+                    className={inputClass}
+                    value={lastExternalDateInput}
+                    onChange={(e) => setLastExternalDateInput(e.target.value)}
+                    disabled={!settings?.editable}
+                    placeholder="Derived as day before first system date"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    When set, must be the day immediately before the first
+                    system depreciation date.
+                  </p>
                 </div>
 
                 <dl className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm">
@@ -247,12 +333,15 @@ export function DepreciationSettingsScreen() {
 
                 {settings?.source === "env" ? (
                   <p className="text-xs text-slate-500">
-                    Currently using{" "}
+                    Currently using environment fallbacks (
                     <code className="rounded bg-slate-100 px-1">
                       DEPRECIATION_OPENING_FY
-                    </code>{" "}
-                    from the environment. Save here to store the value in the
-                    database.
+                    </code>
+                    {" / "}
+                    <code className="rounded bg-slate-100 px-1">
+                      DEPRECIATION_FIRST_SYSTEM_DATE_BS
+                    </code>
+                    ). Save here to store values in the database.
                   </p>
                 ) : null}
 
@@ -281,6 +370,7 @@ export function DepreciationSettingsScreen() {
                           <th className="px-3 py-2 font-medium">When</th>
                           <th className="px-3 py-2 font-medium">Action</th>
                           <th className="px-3 py-2 font-medium">Opening FY</th>
+                          <th className="px-3 py-2 font-medium">First system</th>
                           <th className="px-3 py-2 font-medium">By</th>
                         </tr>
                       </thead>
@@ -299,6 +389,9 @@ export function DepreciationSettingsScreen() {
                             </td>
                             <td className="px-3 py-2 font-medium text-slate-900">
                               {formatFiscalYearLabel(row.opening_fiscal_year)}
+                            </td>
+                            <td className="px-3 py-2 text-slate-700">
+                              {row.first_system_depreciation_date_bs ?? "—"}
                             </td>
                             <td className="px-3 py-2 text-slate-600">
                               {row.configured_by_admin_email}

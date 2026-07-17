@@ -67,7 +67,8 @@ export type ComputedQuarterAssetDetail = {
   depAmount: number;
   /**
    * Prior accumulated depreciation before this fiscal year’s slice (ERP register
-   * `AccumulateDep`): max(schedule prior, register floor), excluding `depAmount`.
+   * `AccumulateDep`), excluding `depAmount`. In the opening fiscal year this
+   * equals gross cost minus imported WDV; later years use posted FY_END carry-forward.
    */
   accumulateDep: number;
   /** Opening written-down value at FY start after prior dep (`BookValue` on ERP register). */
@@ -75,9 +76,39 @@ export type ComputedQuarterAssetDetail = {
   /** Closing WDV after this run’s period (`ClosingBookValue`). */
   balanceAmount: number;
   depFormula: string;
+  /**
+   * Inclusive BS start of the days this system actually depreciates for the run
+   * (`max(asset commencement, FY Shrawan 1, optional first-system migration date)`).
+   */
+  effectiveCalcStartBs: string;
   /** Full timeline: `accumulatedDep` = prior + this-year; ties `balanceAmount`. */
   erpTimeline: LifetimeDepreciationTimeline;
 };
+
+/**
+ * Inclusive calculation start for a fiscal-year depreciation slice.
+ * When `firstSystemDepreciationDateBs` is set (opening FY only), mid-year
+ * migration days before that date are excluded.
+ */
+export function resolveEffectiveDepreciationFromBs(params: {
+  depreciationStartBs: string;
+  fiscalYearStart: number;
+  firstSystemDepreciationDateBs?: string | null;
+}): string {
+  const depStart =
+    normalizeBsDateEnglish(params.depreciationStartBs.trim()) ??
+    params.depreciationStartBs.trim();
+  const fyStartBs = fiscalYearStartBs(params.fiscalYearStart);
+  let effective = maxBsDate(depStart, fyStartBs);
+  const rawFirst = params.firstSystemDepreciationDateBs;
+  if (rawFirst != null && String(rawFirst).trim() !== "") {
+    const firstNorm = normalizeBsDateEnglish(String(rawFirst).trim());
+    if (firstNorm && isValidBsDateString(firstNorm)) {
+      effective = maxBsDate(effective, firstNorm);
+    }
+  }
+  return effective;
+}
 
 function cumulativeDepThrough(
   params: {
@@ -329,13 +360,12 @@ export function computeAssetQuarterCumulative(params: {
   /** Optional inclusive cap used when depreciation stops inside the selected period (for disposal). */
   depreciationEndBs?: string | null;
   /**
-   * Floors “prior accumulated depreciation” at least this amount (e.g. historical
-   * dep implied by imported register: gross cost minus carrying `book_value`).
-   * Combined with {@link purchaseAmount} as gross cost, yields accumulated =
-   * max(schedule prior, register floor) + this-year slice (clamped), so migrated
-   * assets do not lose imported accumulated depreciation.
+   * Opening fiscal year only: prior accumulated depreciation implied by imported
+   * register WDV (`gross cost − book_value`). When set (including `0` when WDV
+   * equals gross cost), this value is authoritative and the historical schedule
+   * is never used for opening balances.
    *
-   * Ignored when {@link carryForwardPriorAccumulatedDep} is set (rollover path).
+   * Ignored when {@link carryForwardPriorAccumulatedDep} is set (later FY path).
    */
   registerPriorAccumulatedDep?: number | null;
   /**
@@ -347,6 +377,13 @@ export function computeAssetQuarterCumulative(params: {
    * run end date (same as the non-carry-forward path).
    */
   carryForwardPriorAccumulatedDep?: number | null;
+  /**
+   * First BS date this application may calculate depreciation for (software
+   * migration / go-live). Only pass this for the opening fiscal year. Days
+   * before this date are excluded from `depDays` even when the asset’s real
+   * commencement is earlier. Does not alter `depreciationStartBs`.
+   */
+  firstSystemDepreciationDateBs?: string | null;
 }): { ok: true; detail: ComputedQuarterAssetDetail } | { ok: false; errors: string[] } {
   const scopeMode: DepreciationScopeMode =
     params.depreciationScopeMode ?? "FY_END";
@@ -398,6 +435,12 @@ export function computeAssetQuarterCumulative(params: {
     selectedPeriodEndBs = minBsDate(selectedPeriodEndBs, endNorm);
   }
 
+  const effectiveFromBs = resolveEffectiveDepreciationFromBs({
+    depreciationStartBs: depStart,
+    fiscalYearStart: params.fiscalYearStart,
+    firstSystemDepreciationDateBs: params.firstSystemDepreciationDateBs,
+  });
+
   if (compareBsDateString(depStart, selectedPeriodEndBs) > 0) {
     const cost = roundMoney(params.purchaseAmount);
     const rawCf = params.carryForwardPriorAccumulatedDep;
@@ -426,12 +469,11 @@ export function computeAssetQuarterCumulative(params: {
         bookValue: openingIdle,
         balanceAmount: openingIdle,
         depFormula: formatDepFormula(params.method, params.depRatePercent),
+        effectiveCalcStartBs: effectiveFromBs,
         erpTimeline: idleTimeline,
       },
     };
   }
-
-  const effectiveFromBs = maxBsDate(depStart, fyStartBs);
 
   let depDays = 0;
   if (compareBsDateString(effectiveFromBs, selectedPeriodEndBs) <= 0) {
@@ -455,37 +497,41 @@ export function computeAssetQuarterCumulative(params: {
   if (carryForward !== null) {
     priorYearsDepAmount = carryForward;
   } else {
-    const timeline = buildDepreciationTimelineToPeriodEnd({
-      purchaseAmount: params.purchaseAmount,
-      depreciationStartBs: depStart,
-      depRatePercent: params.depRatePercent,
-      method: params.method,
-      fiscalYearStart: params.fiscalYearStart,
-      selectedPeriodEndBs,
-    });
-    if (!timeline.ok) {
-      return { ok: false, errors: timeline.errors };
-    }
     const rawRegisterPrior = params.registerPriorAccumulatedDep;
-    const registerPriorFloor =
+    const registerPriorPinned =
       rawRegisterPrior != null &&
       Number.isFinite(rawRegisterPrior) &&
-      rawRegisterPrior > 0
+      rawRegisterPrior >= 0
         ? roundMoney(Math.min(Math.max(rawRegisterPrior, 0), cost))
-        : 0;
-    priorYearsDepAmount = roundMoney(
-      Math.min(
-        cost,
-        Math.max(timeline.timeline.priorYearsDepAmount, registerPriorFloor)
-      )
-    );
+        : null;
+
+    if (registerPriorPinned !== null) {
+      /**
+       * Opening fiscal year: imported register WDV is authoritative.
+       * prior accum = gross − imported WDV (including zero when WDV equals gross).
+       */
+      priorYearsDepAmount = registerPriorPinned;
+    } else {
+      const timeline = buildDepreciationTimelineToPeriodEnd({
+        purchaseAmount: params.purchaseAmount,
+        depreciationStartBs: depStart,
+        depRatePercent: params.depRatePercent,
+        method: params.method,
+        fiscalYearStart: params.fiscalYearStart,
+        selectedPeriodEndBs,
+      });
+      if (!timeline.ok) {
+        return { ok: false, errors: timeline.errors };
+      }
+      priorYearsDepAmount = timeline.timeline.priorYearsDepAmount;
+    }
   }
 
   /**
    * Daily proration policy:
    * - Straight line: prorate against full gross cost.
-   * - Declining balance: prorate against FY opening written-down value after the
-   *   blended prior (schedule vs register floor), so this-year dep matches opening WDV.
+   * - Declining balance: prorate against FY opening written-down value after prior
+   *   accumulated (imported WDV in opening FY; posted FY_END carry-forward later).
    * - Fiscal-year rollover (carry-forward): both methods use opening WDV after
    *   pinned prior accumulated (requirement: openingWDV × rate × depDays / 365).
    */
@@ -517,6 +563,7 @@ export function computeAssetQuarterCumulative(params: {
       bookValue: clamped.openingBookValueOfFY,
       balanceAmount: clamped.closingBookValue,
       depFormula: formatDepFormula(params.method, params.depRatePercent),
+      effectiveCalcStartBs: effectiveFromBs,
       erpTimeline: clamped,
     },
   };

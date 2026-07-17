@@ -110,6 +110,37 @@ export function maxBsDateString(a: string, b: string): string {
   return compareBsDateString(a, b) >= 0 ? a : b;
 }
 
+/** Earlier of two English BS dates (YYYY/MM/DD); requires both strings to parse. */
+export function minBsDateString(a: string, b: string): string {
+  return compareBsDateString(a, b) <= 0 ? a : b;
+}
+
+/** Day before a BS date (YYYY/MM/DD), or null if the input cannot be parsed. */
+export function dayBeforeBsDate(bs: string): string | null {
+  const nd = parseBs(normalizeBsDateEnglish(bs.trim()) ?? "");
+  if (!nd) return null;
+  try {
+    const d = new NepaliDateCtor(nd.toJsDate());
+    d.setDate(d.getDate() - 1);
+    return formatBs(d);
+  } catch {
+    return null;
+  }
+}
+
+/** Day after a BS date (YYYY/MM/DD), or null if the input cannot be parsed. */
+export function dayAfterBsDate(bs: string): string | null {
+  const nd = parseBs(normalizeBsDateEnglish(bs.trim()) ?? "");
+  if (!nd) return null;
+  try {
+    const d = new NepaliDateCtor(nd.toJsDate());
+    d.setDate(d.getDate() + 1);
+    return formatBs(d);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * BS date when depreciation may begin: the later of capitalization (purchase) and
  * register depreciation start. Missing/invalid depreciation start falls back to purchase only.

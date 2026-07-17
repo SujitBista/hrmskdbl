@@ -497,6 +497,14 @@ async function migrate() {
     );
   `);
   await query(`
+    ALTER TABLE hrms_depreciation_settings
+    ADD COLUMN IF NOT EXISTS first_system_depreciation_date_bs VARCHAR(32);
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_settings
+    ADD COLUMN IF NOT EXISTS last_external_depreciation_date_bs VARCHAR(32);
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS hrms_depreciation_settings_audit_logs (
       id SERIAL PRIMARY KEY,
       action VARCHAR(32) NOT NULL CHECK (action IN ('CREATED', 'UPDATED')),
@@ -508,8 +516,32 @@ async function migrate() {
     );
   `);
   await query(`
+    ALTER TABLE hrms_depreciation_settings_audit_logs
+    ADD COLUMN IF NOT EXISTS first_system_depreciation_date_bs VARCHAR(32);
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_settings_audit_logs
+    ADD COLUMN IF NOT EXISTS previous_first_system_depreciation_date_bs VARCHAR(32);
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_settings_audit_logs
+    ADD COLUMN IF NOT EXISTS last_external_depreciation_date_bs VARCHAR(32);
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_settings_audit_logs
+    ADD COLUMN IF NOT EXISTS previous_last_external_depreciation_date_bs VARCHAR(32);
+  `);
+  await query(`
     CREATE INDEX IF NOT EXISTS hrms_depreciation_settings_audit_logs_created_at
     ON hrms_depreciation_settings_audit_logs (configured_at DESC);
+  `);
+  await query(`
+    ALTER TABLE hrms_depreciation_run_details
+    ADD COLUMN IF NOT EXISTS effective_calc_start_date_bs VARCHAR(32);
+  `);
+  await query(`
+    ALTER TABLE hrms_assets
+    ADD COLUMN IF NOT EXISTS opening_balance_as_of_date_bs VARCHAR(32);
   `);
 
   console.log("Migration complete.");

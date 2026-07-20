@@ -1,13 +1,14 @@
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { shouldUseSecureAuthCookie } from "@/lib/should-use-secure-auth-cookie";
+import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "admin_token";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureAuthCookie(request),
     sameSite: "lax",
     path: "/",
     maxAge: 0,

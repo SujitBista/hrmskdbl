@@ -1,9 +1,11 @@
+import { shouldUseSecureAuthCookie } from "@/lib/should-use-secure-auth-cookie";
 import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "admin_token";
 
 export async function POST(request: NextRequest) {
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
+  const secureCookie = shouldUseSecureAuthCookie(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -56,7 +58,7 @@ export async function POST(request: NextRequest) {
   const response = NextResponse.json({ admin: data.admin });
   response.cookies.set(COOKIE_NAME, data.token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookie,
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,

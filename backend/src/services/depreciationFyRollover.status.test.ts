@@ -13,6 +13,7 @@ describe("resolveFyRolloverStatus", () => {
   it("returns not_required when prior fiscal year is before 2000", () => {
     expect(
       resolveFyRolloverStatus({
+        currentBsDate: "2083/04/01",
         currentFiscalYearStart: 2000,
         priorFiscalYearStart: 1999,
         rolloverApplied: false,
@@ -28,21 +29,25 @@ describe("resolveFyRolloverStatus", () => {
   it("returns completed when rollover is already applied", () => {
     expect(
       resolveFyRolloverStatus({
+        currentBsDate: "2084/04/01",
         currentFiscalYearStart: 2084,
         priorFiscalYearStart: 2083,
         rolloverApplied: true,
-        priorFyFinalRun: { id: 10, status: "posted" },
+        priorFyFinalRun: { id: 10, status: "posted", dep_title: "FY_END" },
         priorFyStrictCarryForwardFloor: 2000,
       })
     ).toMatchObject({
       status: "completed",
       priorFyFinalRunId: 10,
+      priorFyFinalRunStatus: "posted",
+      rolloverAllowed: false,
       blockers: [],
     });
   });
 
   it("returns blocked when prior FY final depreciation is missing", () => {
     const status = resolveFyRolloverStatus({
+      currentBsDate: "2084/04/01",
       currentFiscalYearStart: 2084,
       priorFiscalYearStart: 2083,
       rolloverApplied: false,
@@ -56,29 +61,33 @@ describe("resolveFyRolloverStatus", () => {
 
   it("returns blocked while FY_END exists as draft", () => {
     const status = resolveFyRolloverStatus({
+      currentBsDate: "2084/04/01",
       currentFiscalYearStart: 2084,
       priorFiscalYearStart: 2083,
       rolloverApplied: false,
-      priorFyFinalRun: { id: 42, status: "draft" },
+      priorFyFinalRun: { id: 42, status: "draft", dep_title: "FY_END" },
       priorFyStrictCarryForwardFloor: 2000,
     });
     expect(status.status).toBe("blocked");
     expect(status.priorFyFinalRunId).toBe(42);
+    expect(status.priorFyFinalRunStatus).toBe("draft");
     expect(status.blockers).toContain("PRIOR_FY_FINAL_DEPRECIATION_NOT_POSTED");
   });
 
   it("returns pending when prior FY final depreciation is posted", () => {
     expect(
       resolveFyRolloverStatus({
+        currentBsDate: "2084/04/01",
         currentFiscalYearStart: 2084,
         priorFiscalYearStart: 2083,
         rolloverApplied: false,
-        priorFyFinalRun: { id: 7, status: "posted" },
+        priorFyFinalRun: { id: 7, status: "posted", dep_title: "FY_END" },
         priorFyStrictCarryForwardFloor: 2000,
       })
     ).toMatchObject({
       status: "pending",
       priorFyFinalRunId: 7,
+      rolloverAllowed: true,
       blockers: [],
     });
   });
@@ -86,6 +95,7 @@ describe("resolveFyRolloverStatus", () => {
   it("returns not_required when prior FY is before opening fiscal year floor", () => {
     expect(
       resolveFyRolloverStatus({
+        currentBsDate: "2082/04/01",
         currentFiscalYearStart: 2082,
         priorFiscalYearStart: 2081,
         rolloverApplied: false,
@@ -100,6 +110,7 @@ describe("resolveFyRolloverStatus", () => {
 
   it("requires prior FY final when current FY is after opening FY", () => {
     const status = resolveFyRolloverStatus({
+      currentBsDate: "2083/04/01",
       currentFiscalYearStart: 2083,
       priorFiscalYearStart: 2082,
       rolloverApplied: false,

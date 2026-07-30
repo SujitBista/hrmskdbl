@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const backendPort = process.env.E2E_BACKEND_PORT ?? process.env.PORT ?? "4010";
+const backendPort = process.env.E2E_BACKEND_PORT ?? "4010";
 const frontendPort = process.env.E2E_FRONTEND_PORT ?? "3001";
 const backendUrl =
   process.env.E2E_BACKEND_URL ?? `http://localhost:${backendPort}`;

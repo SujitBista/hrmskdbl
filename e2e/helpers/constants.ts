@@ -29,4 +29,4 @@ export const E2E_ADMIN_PASSWORD =
 
 export const E2E_BACKEND_URL =
   process.env.E2E_BACKEND_URL ??
-  `http://localhost:${process.env.E2E_BACKEND_PORT ?? process.env.PORT ?? "4010"}`;
+  `http://localhost:${process.env.E2E_BACKEND_PORT ?? "4010"}`;

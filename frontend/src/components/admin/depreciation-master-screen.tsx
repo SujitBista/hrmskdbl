@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
+import {
+  DepreciationFyRolloverPanel,
+  type DepreciationFyRolloverActionResult,
+  type DepreciationFyRolloverStatusView,
+} from "./depreciation-fy-rollover-panel";
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 import { DepreciationSectionNav } from "./depreciation-section-nav";
 
@@ -173,56 +178,82 @@ export function DepreciationMasterScreen() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [voidLoading, setVoidLoading] = useState(false);
-  const [fyRolloverStatus, setFyRolloverStatus] = useState<{
-    currentFiscalYearStart: number;
-    priorFiscalYearStart: number;
-    status: "blocked" | "pending" | "completed" | "not_required";
-    priorFyFinalRunId: number | null;
-    blockers: string[];
-    depreciationOpeningFiscalYearStart?: number | null;
-    depreciationOpeningFyHelpText?: string | null;
-  } | null>(null);
+  const [fyRolloverStatus, setFyRolloverStatus] =
+    useState<DepreciationFyRolloverStatusView | null>(null);
+  const [fyRolloverLoading, setFyRolloverLoading] = useState(true);
+  const [fyRolloverError, setFyRolloverError] = useState<string | null>(null);
   const [createFyEndLoading, setCreateFyEndLoading] = useState(false);
-  const [rolloverConfirmOpen, setRolloverConfirmOpen] = useState(false);
   const [rolloverLoading, setRolloverLoading] = useState(false);
 
   const loadFyRolloverStatus = useCallback(async () => {
+    setFyRolloverLoading(true);
+    setFyRolloverError(null);
     try {
       const res = await fetch("/api/admin/depreciation-fy-rollover/status", {
         cache: "no-store",
       });
       const json = (await res.json()) as {
+        currentBsDate?: string | null;
         currentFiscalYearStart?: number;
         priorFiscalYearStart?: number;
         status?: "blocked" | "pending" | "completed" | "not_required";
         priorFyFinalRunId?: number | null;
+        priorFyFinalRunStatus?: string | null;
+        priorFyFinalRunTitle?: string | null;
         blockers?: string[];
+        rolloverAllowed?: boolean;
+        blockingReason?: string | null;
+        sourceFinalRunId?: number | null;
+        completedAt?: string | null;
+        completedByAdminId?: number | null;
+        completedByAdminEmail?: string | null;
         depreciationOpeningFiscalYearStart?: number | null;
         depreciationOpeningFyHelpText?: string | null;
+        migrationSettings?: DepreciationFyRolloverStatusView["migrationSettings"];
         error?: string;
       };
       if (!res.ok) {
         setFyRolloverStatus(null);
-        return;
+        setFyRolloverError(json.error ?? "Could not load FY rollover status.");
+        return null;
       }
       if (
         typeof json.currentFiscalYearStart === "number" &&
         typeof json.priorFiscalYearStart === "number" &&
         json.status
       ) {
-        setFyRolloverStatus({
+        const nextStatus: DepreciationFyRolloverStatusView = {
+          currentBsDate: json.currentBsDate ?? null,
           currentFiscalYearStart: json.currentFiscalYearStart,
           priorFiscalYearStart: json.priorFiscalYearStart,
           status: json.status,
           priorFyFinalRunId: json.priorFyFinalRunId ?? null,
+          priorFyFinalRunStatus: json.priorFyFinalRunStatus ?? null,
+          priorFyFinalRunTitle: json.priorFyFinalRunTitle ?? null,
           blockers: json.blockers ?? [],
+          rolloverAllowed: json.rolloverAllowed === true,
+          blockingReason: json.blockingReason ?? null,
+          sourceFinalRunId: json.sourceFinalRunId ?? null,
+          completedAt: json.completedAt ?? null,
+          completedByAdminId: json.completedByAdminId ?? null,
+          completedByAdminEmail: json.completedByAdminEmail ?? null,
           depreciationOpeningFiscalYearStart:
             json.depreciationOpeningFiscalYearStart ?? null,
           depreciationOpeningFyHelpText: json.depreciationOpeningFyHelpText ?? null,
-        });
+          migrationSettings: json.migrationSettings,
+        };
+        setFyRolloverStatus(nextStatus);
+        return nextStatus;
       }
+      setFyRolloverStatus(null);
+      setFyRolloverError("Could not load FY rollover status.");
+      return null;
     } catch {
       setFyRolloverStatus(null);
+      setFyRolloverError("Could not load FY rollover status.");
+      return null;
+    } finally {
+      setFyRolloverLoading(false);
     }
   }, []);
 
@@ -241,30 +272,22 @@ export function DepreciationMasterScreen() {
         return;
       }
       setRuns(json.runs ?? []);
+      await loadFyRolloverStatus();
     } catch {
       setError("Could not load runs.");
       setRuns([]);
+      await loadFyRolloverStatus();
     } finally {
       setLoading(false);
     }
-    await loadFyRolloverStatus();
   }, [loadFyRolloverStatus]);
 
   useEffect(() => {
-    void load();
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
-
-  const priorFyDraftRun = useMemo(() => {
-    if (!fyRolloverStatus?.priorFyFinalRunId) return null;
-    return runs.find((r) => r.id === fyRolloverStatus.priorFyFinalRunId) ?? null;
-  }, [runs, fyRolloverStatus?.priorFyFinalRunId]);
-
-  const hasUnpostedPriorFyDraft = Boolean(
-    fyRolloverStatus?.priorFyFinalRunId &&
-      (priorFyDraftRun?.status === "draft" ||
-        priorFyDraftRun?.status === "review_pending" ||
-        fyRolloverStatus.blockers.includes("PRIOR_FY_FINAL_DEPRECIATION_NOT_POSTED"))
-  );
 
   async function onCreatePriorFyEnd() {
     setCreateFyEndLoading(true);
@@ -294,7 +317,7 @@ export function DepreciationMasterScreen() {
     }
   }
 
-  async function onRunFyRolloverConfirmed() {
+  async function onRunFyRollover(): Promise<DepreciationFyRolloverActionResult> {
     setRolloverLoading(true);
     try {
       const res = await fetch("/api/admin/depreciation-fy-rollover", {
@@ -303,31 +326,42 @@ export function DepreciationMasterScreen() {
         body: JSON.stringify({}),
       });
       const json = (await res.json()) as {
-        status?: string;
+        status?: "applied" | "already_applied" | "skipped_no_prior_year";
+        newFiscalYearStart?: number;
+        priorFiscalYearStart?: number;
+        branchId?: number | null;
+        sourceFinalRunId?: number | null;
         error?: string;
         code?: string;
       };
       if (!res.ok) {
-        window.alert(json.error ?? "Fiscal year rollover failed.");
-        return;
+        throw new Error(json.error ?? "Fiscal year rollover failed.");
       }
-      setRolloverConfirmOpen(false);
-      window.alert(
-        json.status === "already_applied"
-          ? "Fiscal year rollover was already applied."
-          : "Fiscal year rollover completed successfully."
-      );
+      if (
+        !json.status ||
+        typeof json.newFiscalYearStart !== "number" ||
+        typeof json.priorFiscalYearStart !== "number"
+      ) {
+        throw new Error("Fiscal year rollover completed but returned an invalid response.");
+      }
       await load();
-    } catch {
-      window.alert("Could not reach the server to run fiscal year rollover.");
+      return {
+        status: json.status,
+        newFiscalYearStart: json.newFiscalYearStart,
+        priorFiscalYearStart: json.priorFiscalYearStart,
+        branchId: json.branchId ?? null,
+        sourceFinalRunId: json.sourceFinalRunId ?? null,
+      };
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? err.message
+          : "Could not reach the server to run fiscal year rollover."
+      );
     } finally {
       setRolloverLoading(false);
     }
   }
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   async function onQuickEnsureCurrentFy() {
     setQuickEnsureLoading(true);
@@ -535,84 +569,21 @@ export function DepreciationMasterScreen() {
       <FixedAssetSectionTabs />
       <DepreciationSectionNav />
 
-      {fyRolloverStatus?.depreciationOpeningFyHelpText ? (
-        <p
-          className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600"
-          role="note"
-        >
-          {fyRolloverStatus.depreciationOpeningFyHelpText}
-        </p>
-      ) : null}
-
-      {fyRolloverStatus &&
-      fyRolloverStatus.status !== "not_required" ? (
-        <div
-          className={`rounded-lg border px-4 py-3 ${
-            fyRolloverStatus.status === "blocked"
-              ? "border-red-300 bg-red-50"
-              : fyRolloverStatus.status === "pending"
-                ? "border-amber-300 bg-amber-50"
-                : "border-emerald-300 bg-emerald-50"
-          }`}
-          role="status"
-        >
-          <p
-            className={`text-sm font-medium ${
-              fyRolloverStatus.status === "blocked"
-                ? "text-red-900"
-                : fyRolloverStatus.status === "pending"
-                  ? "text-amber-950"
-                  : "text-emerald-900"
-            }`}
-          >
-            {fyRolloverStatus.status === "blocked"
-              ? "FY rollover blocked. Please create and post prior FY final depreciation."
-              : fyRolloverStatus.status === "pending"
-                ? "FY rollover pending. Prior FY final depreciation is posted."
-                : "FY rollover completed."}
-          </p>
-          <p className="mt-1 text-xs text-slate-600">
-            Current FY {formatFiscalYearLabel(fyRolloverStatus.currentFiscalYearStart)}
-            {" · "}
-            Prior FY {formatFiscalYearLabel(fyRolloverStatus.priorFiscalYearStart)}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {fyRolloverStatus.status === "blocked" &&
-            !hasUnpostedPriorFyDraft ? (
-              <button
-                type="button"
-                className={toolbarQuick}
-                disabled={createFyEndLoading}
-                onClick={() => void onCreatePriorFyEnd()}
-              >
-                {createFyEndLoading
-                  ? "Creating…"
-                  : "Create FY_END Depreciation"}
-              </button>
-            ) : null}
-            {hasUnpostedPriorFyDraft && fyRolloverStatus.priorFyFinalRunId ? (
-              <>
-                <Link
-                  href={`/admin/dashboard/asset-register/depreciation/${fyRolloverStatus.priorFyFinalRunId}`}
-                  className={toolbarRowAction}
-                >
-                  Review FY_END Depreciation
-                </Link>
-              </>
-            ) : null}
-            {fyRolloverStatus.status === "pending" ? (
-              <button
-                type="button"
-                className={toolbarAddNew}
-                disabled={rolloverLoading}
-                onClick={() => setRolloverConfirmOpen(true)}
-              >
-                Run FY Rollover
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      <DepreciationFyRolloverPanel
+        status={fyRolloverStatus}
+        loading={fyRolloverLoading}
+        error={fyRolloverError}
+        createFyEndLoading={createFyEndLoading}
+        rolloverLoading={rolloverLoading}
+        priorFyRunHref={
+          fyRolloverStatus?.priorFyFinalRunId
+            ? `/admin/dashboard/asset-register/depreciation/${fyRolloverStatus.priorFyFinalRunId}`
+            : null
+        }
+        onCreatePriorFyEnd={onCreatePriorFyEnd}
+        onRefreshStatusBeforeConfirm={loadFyRolloverStatus}
+        onRunRollover={onRunFyRollover}
+      />
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div className="min-w-0 flex-1">
@@ -930,50 +901,6 @@ export function DepreciationMasterScreen() {
                 disabled={deleteLoading}
               >
                 {deleteLoading ? "Deleting…" : "Confirm delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {rolloverConfirmOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-          role="dialog"
-          aria-modal
-          aria-labelledby={`${formId}-rollover-title`}
-        >
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
-            <h3
-              id={`${formId}-rollover-title`}
-              className="text-base font-semibold text-slate-900"
-            >
-              Run fiscal year rollover?
-            </h3>
-            <p className="mt-2 text-sm text-slate-600">
-              This copies closing written-down values from the posted prior FY
-              final depreciation run into the asset register for FY{" "}
-              {fyRolloverStatus
-                ? formatFiscalYearLabel(fyRolloverStatus.currentFiscalYearStart)
-                : ""}
-              . This action is idempotent but should only be run after admin
-              review.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                className={btnClass}
-                onClick={() => setRolloverConfirmOpen(false)}
-                disabled={rolloverLoading}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className={btnPrimary}
-                onClick={() => void onRunFyRolloverConfirmed()}
-                disabled={rolloverLoading}
-              >
-                {rolloverLoading ? "Running…" : "Confirm rollover"}
               </button>
             </div>
           </div>

@@ -1,0 +1,305 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/link", () => ({
+  default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => (
+    <a href={href} className={className}>
+      {children}
+    </a>
+  ),
+}));
+
+import {
+  DepreciationFyRolloverPanel,
+  type DepreciationFyRolloverActionResult,
+  type DepreciationFyRolloverStatusView,
+} from "./depreciation-fy-rollover-panel";
+
+afterEach(() => {
+  cleanup();
+});
+
+function buildStatus(
+  overrides: Partial<DepreciationFyRolloverStatusView> = {}
+): DepreciationFyRolloverStatusView {
+  return {
+    currentBsDate: "2083/04/01",
+    currentFiscalYearStart: 2083,
+    priorFiscalYearStart: 2082,
+    status: "pending",
+    priorFyFinalRunId: 88,
+    priorFyFinalRunStatus: "posted",
+    priorFyFinalRunTitle: "Fiscal year closing (FY_END)",
+    blockers: [],
+    rolloverAllowed: true,
+    blockingReason: null,
+    sourceFinalRunId: 88,
+    completedAt: null,
+    completedByAdminId: null,
+    completedByAdminEmail: null,
+    depreciationOpeningFiscalYearStart: 2082,
+    depreciationOpeningFyHelpText: "Opening FY: 2082-2083.",
+    migrationSettings: {
+      openingFiscalYearStart: 2082,
+      firstSystemDepreciationDateBs: "2082/04/01",
+      lastExternalDepreciationDateBs: "2082/03/31",
+      source: "database",
+      configuredByAdminId: 1,
+      configuredByAdminEmail: "admin@example.com",
+      configuredAt: "2026-07-30T10:00:00.000Z",
+      editable: false,
+      lockReason: "Locked after accounting history exists.",
+    },
+    ...overrides,
+  };
+}
+
+function renderPanel(input?: {
+  status?: DepreciationFyRolloverStatusView | null;
+  loading?: boolean;
+  error?: string | null;
+  createFyEndLoading?: boolean;
+  rolloverLoading?: boolean;
+  priorFyRunHref?: string | null;
+  onCreatePriorFyEnd?: () => Promise<void>;
+  onRefreshStatusBeforeConfirm?: () => Promise<DepreciationFyRolloverStatusView | null>;
+  onRunRollover?: () => Promise<DepreciationFyRolloverActionResult>;
+}) {
+  const onCreatePriorFyEnd =
+    input?.onCreatePriorFyEnd ?? vi.fn(async () => undefined);
+  const onRefreshStatusBeforeConfirm =
+    input?.onRefreshStatusBeforeConfirm ?? vi.fn(async () => buildStatus());
+  const onRunRollover =
+    input?.onRunRollover ??
+    vi.fn(async (): Promise<DepreciationFyRolloverActionResult> => ({
+      status: "applied",
+      newFiscalYearStart: 2083,
+      priorFiscalYearStart: 2082,
+      branchId: null,
+      sourceFinalRunId: 88,
+    }));
+
+  render(
+    <DepreciationFyRolloverPanel
+      status={input?.status ?? buildStatus()}
+      loading={input?.loading ?? false}
+      error={input?.error ?? null}
+      createFyEndLoading={input?.createFyEndLoading ?? false}
+      rolloverLoading={input?.rolloverLoading ?? false}
+      priorFyRunHref={input?.priorFyRunHref ?? "/admin/dashboard/asset-register/depreciation/88"}
+      onCreatePriorFyEnd={onCreatePriorFyEnd}
+      onRefreshStatusBeforeConfirm={onRefreshStatusBeforeConfirm}
+      onRunRollover={onRunRollover}
+    />
+  );
+
+  return {
+    onCreatePriorFyEnd,
+    onRefreshStatusBeforeConfirm,
+    onRunRollover,
+  };
+}
+
+describe("DepreciationFyRolloverPanel", () => {
+  it("shows the loading state", () => {
+    renderPanel({ status: null, loading: true });
+    expect(screen.getByText("Loading rollover status…")).toBeTruthy();
+  });
+
+  it("shows the not_required state calmly (no create FY_END CTA)", () => {
+    renderPanel({
+      status: buildStatus({
+        status: "not_required",
+        rolloverAllowed: false,
+        priorFyFinalRunId: null,
+        priorFyFinalRunStatus: null,
+        blockers: [],
+        blockingReason: null,
+        currentFiscalYearStart: 2083,
+        priorFiscalYearStart: 2082,
+        depreciationOpeningFiscalYearStart: 2083,
+        migrationSettings: {
+          openingFiscalYearStart: 2083,
+          firstSystemDepreciationDateBs: "2083/04/01",
+          lastExternalDepreciationDateBs: "2083/03/32",
+          source: "env",
+          configuredByAdminId: null,
+          configuredByAdminEmail: null,
+          configuredAt: null,
+          editable: true,
+          lockReason: null,
+        },
+      }),
+    });
+
+    expect(screen.getAllByText("Not required").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/still in the opening fiscal year/i)
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /create previous fy_end run/i })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /roll over to/i })
+    ).toBeNull();
+  });
+
+  it("shows a blocked state with the backend reason", () => {
+    renderPanel({
+      status: buildStatus({
+        status: "blocked",
+        rolloverAllowed: false,
+        priorFyFinalRunId: null,
+        priorFyFinalRunStatus: null,
+        blockers: ["PRIOR_FY_FINAL_DEPRECIATION_REQUIRED"],
+        blockingReason:
+          "Previous FY_END depreciation has not been created yet. Create and review the prior fiscal year final run before rollover.",
+      }),
+    });
+
+    expect(screen.getAllByText("Previous FY_END missing").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/Previous FY_END depreciation has not been created yet/i)
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /create previous fy_end run/i })
+    ).toBeTruthy();
+  });
+
+  it("shows the completed state with audit information", () => {
+    renderPanel({
+      status: buildStatus({
+        status: "completed",
+        rolloverAllowed: false,
+        completedAt: "2026-07-30T10:30:00.000Z",
+        completedByAdminEmail: "admin@example.com",
+      }),
+    });
+
+    expect(screen.getAllByText("Already completed").length).toBeGreaterThan(0);
+    expect(screen.getByText("admin@example.com")).toBeTruthy();
+    expect(screen.getAllByText("#88").length).toBeGreaterThan(0);
+  });
+
+  it("shows a safe non-admin error state", () => {
+    renderPanel({
+      status: null,
+      error: "Unauthorized.",
+    });
+
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Unauthorized.");
+    expect(
+      screen.queryByRole("button", { name: /roll over to/i })
+    ).toBeNull();
+  });
+
+  it("allows cancelling the confirmation dialog", async () => {
+    const user = userEvent.setup();
+    const { onRefreshStatusBeforeConfirm, onRunRollover } = renderPanel();
+
+    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    expect(onRefreshStatusBeforeConfirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Confirm fiscal year rollover")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => {
+      expect(screen.queryByText("Confirm fiscal year rollover")).toBeNull();
+    });
+    expect(onRunRollover).not.toHaveBeenCalled();
+  });
+
+  it("handles successful rollover after a fresh status check", async () => {
+    const user = userEvent.setup();
+    const { onRefreshStatusBeforeConfirm, onRunRollover } = renderPanel();
+
+    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    expect(onRefreshStatusBeforeConfirm).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: /confirm rollover/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain(
+        "Previous FY closing WDV is now the new FY opening WDV"
+      );
+    });
+    expect(onRunRollover).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats already_applied as a completed outcome", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      onRunRollover: vi.fn(async (): Promise<DepreciationFyRolloverActionResult> => ({
+        status: "already_applied",
+        newFiscalYearStart: 2083,
+        priorFiscalYearStart: 2082,
+        branchId: null,
+        sourceFinalRunId: 88,
+      })),
+    });
+
+    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: /confirm rollover/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain(
+        "already applied earlier"
+      );
+    });
+  });
+
+  it("shows backend action errors without crashing", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      onRunRollover: vi.fn(async () => {
+        throw new Error("Prior FY_END depreciation exists but is not posted.");
+      }),
+    });
+
+    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: /confirm rollover/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain(
+        "Prior FY_END depreciation exists but is not posted."
+      );
+    });
+  });
+
+  it("disables the rollover button during submission", () => {
+    renderPanel({ rolloverLoading: true });
+    const button = screen.getByRole("button", {
+      name: /rollover in progress/i,
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it("uses the fresh server status before opening confirmation", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      onRefreshStatusBeforeConfirm: vi.fn(async () =>
+        buildStatus({
+          status: "blocked",
+          rolloverAllowed: false,
+          blockingReason: "Previous FY_END depreciation was voided.",
+        })
+      ),
+    });
+
+    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain(
+        "Previous FY_END depreciation was voided."
+      );
+    });
+    expect(screen.queryByText("Confirm fiscal year rollover")).toBeNull();
+  });
+});

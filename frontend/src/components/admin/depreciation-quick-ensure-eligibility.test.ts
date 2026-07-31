@@ -67,6 +67,36 @@ describe("getQuickAsOfTodayEligibility", () => {
     expect(result.reason).toMatch(/before the system calculation start date/i);
   });
 
+  it("Shrawan cutover: disables on last external 2083/04/14; enables on first system 2083/04/15", () => {
+    const cutoverMigration = {
+      openingFiscalYearStart: 2083,
+      firstSystemDepreciationDateBs: "2083/04/15",
+      lastExternalDepreciationDateBs: "2083/04/14",
+      source: "database" as const,
+      configuredByAdminId: null,
+      configuredByAdminEmail: null,
+      configuredAt: null,
+      editable: true,
+      lockReason: null,
+    };
+    const before = getQuickAsOfTodayEligibility(
+      baseStatus({
+        currentBsDate: "2083/04/14",
+        migrationSettings: cutoverMigration,
+      })
+    );
+    expect(before.enabled).toBe(false);
+    expect(before.reason).toMatch(/2083\/04\/15/);
+
+    const onBoundary = getQuickAsOfTodayEligibility(
+      baseStatus({
+        currentBsDate: "2083/04/15",
+        migrationSettings: cutoverMigration,
+      })
+    );
+    expect(onBoundary).toEqual({ enabled: true, reason: null });
+  });
+
   it("disables when rollover is blocked", () => {
     const result = getQuickAsOfTodayEligibility(
       baseStatus({

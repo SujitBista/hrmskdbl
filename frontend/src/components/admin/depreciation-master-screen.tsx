@@ -9,6 +9,10 @@ import {
   type DepreciationFyRolloverActionResult,
   type DepreciationFyRolloverStatusView,
 } from "./depreciation-fy-rollover-panel";
+import {
+  buildEmptyRunsSupportingText,
+  getQuickAsOfTodayEligibility,
+} from "./depreciation-quick-ensure-eligibility";
 import { FixedAssetSectionTabs } from "./fixed-asset-section-tabs";
 import { DepreciationSectionNav } from "./depreciation-section-nav";
 
@@ -426,6 +430,31 @@ export function DepreciationMasterScreen() {
     [runs]
   );
 
+  const hasRuns = runs.length > 0;
+  const showEmptyState = !loading && !error && !hasRuns;
+  const quickEligibility = useMemo(
+    () =>
+      getQuickAsOfTodayEligibility(fyRolloverStatus, {
+        statusLoading: fyRolloverLoading,
+      }),
+    [fyRolloverStatus, fyRolloverLoading]
+  );
+  const emptySupportingText = useMemo(
+    () => buildEmptyRunsSupportingText(fyRolloverStatus),
+    [fyRolloverStatus]
+  );
+  const createRunHref = "/admin/dashboard/asset-register/depreciation/new";
+  const createRunLabel = showEmptyState ? "Create depreciation run" : "Add New";
+  const quickLabel = showEmptyState
+    ? quickEnsureLoading
+      ? "Calculating…"
+      : "Calculate as of today"
+    : quickEnsureLoading
+      ? "Running…"
+      : "Quick: as of today";
+  const quickDisabled =
+    quickEnsureLoading || !quickEligibility.enabled;
+
   function exportList() {
     const header = [
       "DepID",
@@ -591,11 +620,23 @@ export function DepreciationMasterScreen() {
             Depreciation Master List
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Fiscal-year depreciation runs (Shrawan–Ashadh), each stored as an as-of-date
-            snapshot through the calculation date (capped at fiscal year end). Use{" "}
-            <span className="font-medium">Add New</span> to post a run, or{" "}
-            <span className="font-medium">Quick: as of today</span> for today’s BS date
-            without opening the form. Select a row for Details.
+            {showEmptyState ? (
+              <>
+                Fiscal-year depreciation runs (Shrawan–Ashadh). Create the first
+                as-of-date run when you are ready to start system-owned
+                calculations.
+              </>
+            ) : (
+              <>
+                Fiscal-year depreciation runs (Shrawan–Ashadh), each stored as an
+                as-of-date snapshot through the calculation date (capped at fiscal
+                year end). Use{" "}
+                <span className="font-medium">Add New</span> to post a run, or{" "}
+                <span className="font-medium">Quick: as of today</span> for
+                today’s BS date without opening the form. Select a row for
+                Details.
+              </>
+            )}
           </p>
         </div>
 
@@ -604,108 +645,169 @@ export function DepreciationMasterScreen() {
           role="toolbar"
           aria-label="Depreciation run actions"
         >
-          {/* Primary + list utilities */}
           <div className="flex w-full flex-wrap items-center gap-2 sm:justify-end">
-            <Link
-              href="/admin/dashboard/asset-register/depreciation/new"
-              className={toolbarAddNew}
-            >
+            <Link href={createRunHref} className={toolbarAddNew}>
               <PlusIcon className="h-4 w-4 shrink-0" />
-              Add New
+              {createRunLabel}
             </Link>
             <button
               type="button"
               className={toolbarQuick}
-              disabled={quickEnsureLoading}
+              disabled={quickDisabled}
               onClick={() => void onQuickEnsureCurrentFy()}
-              title="Runs depreciation for the current fiscal year as of today’s BS date (AS_OF_DATE mode)"
+              title={
+                quickEligibility.reason ??
+                "Runs depreciation for the current fiscal year as of today’s BS date (AS_OF_DATE mode)"
+              }
+              aria-disabled={quickDisabled}
             >
               <BoltIcon className="h-4 w-4 shrink-0" />
-              {quickEnsureLoading ? "Running…" : "Quick: as of today"}
+              {quickLabel}
             </button>
-            <button type="button" className={toolbarExport} onClick={exportList}>
-              <DownloadIcon className="h-4 w-4 shrink-0" />
-              Export
-            </button>
-          </div>
-
-          {/* Row-selection actions */}
-          <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-200/80 pt-2.5 sm:justify-end">
-            <Link
-              href={
-                selected
-                  ? `/admin/dashboard/asset-register/depreciation/${selected.id}`
-                  : "#"
-              }
-              className={`${toolbarRowAction} ${
-                !selected
-                  ? "pointer-events-none border-slate-100 bg-slate-50/80 text-slate-400 opacity-60 shadow-none hover:border-slate-100 hover:bg-slate-50/80"
-                  : ""
-              }`}
-              aria-disabled={!selected}
-              onClick={(e) => {
-                if (!selected) e.preventDefault();
-              }}
-            >
-              <EyeIcon className="h-4 w-4 shrink-0" />
-              Details
-            </Link>
-            <button
-              type="button"
-              className={toolbarRowAction}
-              disabled={!selected}
-              onClick={openEdit}
-            >
-              <PencilIcon className="h-4 w-4 shrink-0" />
-              Edit
-            </button>
-            <button
-              type="button"
-              className={
-                !selected || selected.is_final_for_fy || deleteLoading
-                  ? toolbarDeleteDisabled
-                  : toolbarDeleteEnabled
-              }
-              disabled={!selected || selected.is_final_for_fy || deleteLoading}
-              onClick={() => setDeleteConfirmOpen(true)}
-              title={
-                selected?.is_final_for_fy
-                  ? "Final fiscal year runs cannot be deleted directly."
-                  : undefined
-              }
-            >
-              <TrashIcon className="h-4 w-4 shrink-0" />
-              {deleteLoading ? "Deleting…" : "Delete"}
-            </button>
-            {selected?.is_final_for_fy ? (
-              <>
-                <button
-                  type="button"
-                  className={toolbarRowAction}
-                  disabled={recalcLoading}
-                  onClick={() => void onRecalculateSelected()}
-                >
-                  {recalcLoading ? "Recalculating…" : "Recalculate"}
-                </button>
-                <button
-                  type="button"
-                  className={toolbarRowAction}
-                  disabled={voidLoading}
-                  onClick={() => void onVoidSelected()}
-                  title="Admin only"
-                >
-                  {voidLoading ? "Voiding…" : "Void (admin only)"}
-                </button>
-              </>
+            {hasRuns ? (
+              <button type="button" className={toolbarExport} onClick={exportList}>
+                <DownloadIcon className="h-4 w-4 shrink-0" />
+                Export
+              </button>
             ) : null}
           </div>
+
+          {quickDisabled && quickEligibility.reason && !quickEnsureLoading ? (
+            <p className="max-w-md text-right text-xs text-slate-600" role="note">
+              {quickEligibility.reason}
+            </p>
+          ) : null}
+
+          {hasRuns ? (
+            <div className="flex w-full flex-wrap items-center gap-2 border-t border-slate-200/80 pt-2.5 sm:justify-end">
+              <Link
+                href={
+                  selected
+                    ? `/admin/dashboard/asset-register/depreciation/${selected.id}`
+                    : "#"
+                }
+                className={`${toolbarRowAction} ${
+                  !selected
+                    ? "pointer-events-none border-slate-100 bg-slate-50/80 text-slate-400 opacity-60 shadow-none hover:border-slate-100 hover:bg-slate-50/80"
+                    : ""
+                }`}
+                aria-disabled={!selected}
+                onClick={(e) => {
+                  if (!selected) e.preventDefault();
+                }}
+              >
+                <EyeIcon className="h-4 w-4 shrink-0" />
+                Details
+              </Link>
+              <button
+                type="button"
+                className={toolbarRowAction}
+                disabled={!selected}
+                onClick={openEdit}
+              >
+                <PencilIcon className="h-4 w-4 shrink-0" />
+                Edit
+              </button>
+              <button
+                type="button"
+                className={
+                  !selected || selected.is_final_for_fy || deleteLoading
+                    ? toolbarDeleteDisabled
+                    : toolbarDeleteEnabled
+                }
+                disabled={!selected || selected.is_final_for_fy || deleteLoading}
+                onClick={() => setDeleteConfirmOpen(true)}
+                title={
+                  selected?.is_final_for_fy
+                    ? "Final fiscal year runs cannot be deleted directly."
+                    : undefined
+                }
+              >
+                <TrashIcon className="h-4 w-4 shrink-0" />
+                {deleteLoading ? "Deleting…" : "Delete"}
+              </button>
+              {selected?.is_final_for_fy ? (
+                <>
+                  <button
+                    type="button"
+                    className={toolbarRowAction}
+                    disabled={recalcLoading}
+                    onClick={() => void onRecalculateSelected()}
+                  >
+                    {recalcLoading ? "Recalculating…" : "Recalculate"}
+                  </button>
+                  <button
+                    type="button"
+                    className={toolbarRowAction}
+                    disabled={voidLoading}
+                    onClick={() => void onVoidSelected()}
+                    title="Admin only"
+                  >
+                    {voidLoading ? "Voiding…" : "Void (admin only)"}
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
       {error ? (
-        <p className="text-sm text-red-600">{error}</p>
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+          {error}
+        </p>
       ) : null}
 
+      {loading ? (
+        <div
+          className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-600 shadow-sm"
+          role="status"
+          aria-live="polite"
+        >
+          Loading depreciation runs…
+        </div>
+      ) : null}
+
+      {showEmptyState ? (
+        <div
+          className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center shadow-sm sm:px-8"
+          data-testid="depreciation-runs-empty-state"
+        >
+          <h3 className="text-base font-semibold text-slate-900">
+            No depreciation runs yet
+          </h3>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">
+            {emptySupportingText}
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Link href={createRunHref} className={toolbarAddNew}>
+              <PlusIcon className="h-4 w-4 shrink-0" />
+              Create depreciation run
+            </Link>
+            <button
+              type="button"
+              className={toolbarQuick}
+              disabled={quickDisabled}
+              onClick={() => void onQuickEnsureCurrentFy()}
+              title={
+                quickEligibility.reason ??
+                "Calculate depreciation as of today’s BS date"
+              }
+              aria-disabled={quickDisabled}
+            >
+              <BoltIcon className="h-4 w-4 shrink-0" />
+              {quickEnsureLoading ? "Calculating…" : "Calculate as of today"}
+            </button>
+          </div>
+          {quickDisabled && quickEligibility.reason && !quickEnsureLoading ? (
+            <p className="mx-auto mt-3 max-w-lg text-xs text-slate-600" role="note">
+              {quickEligibility.reason}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!loading && !error && hasRuns ? (
       <div className="overflow-x-auto rounded-sm border border-slate-300 bg-white shadow-sm">
         <table className="min-w-[880px] w-full border-collapse text-left text-sm">
           <thead>
@@ -761,20 +863,7 @@ export function DepreciationMasterScreen() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={8} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
-                  Loading…
-                </td>
-              </tr>
-            ) : runs.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="border border-slate-300 px-3 py-8 text-center text-slate-500">
-                  No depreciation runs yet. Use Add New to post an as-of-date run.
-                </td>
-              </tr>
-            ) : (
-              sortedRuns.map((r) => (
+              {sortedRuns.map((r) => (
                 <tr
                   key={r.id}
                   className={`cursor-pointer transition hover:bg-blue-50/60 ${
@@ -818,11 +907,11 @@ export function DepreciationMasterScreen() {
                     {r.is_final_for_fy ? "True" : "False"}
                   </td>
                 </tr>
-              ))
-            )}
+              ))}
           </tbody>
         </table>
       </div>
+      ) : null}
 
       {editOpen ? (
         <div

@@ -22,6 +22,8 @@ describe("resolveFyRolloverStatus", () => {
       })
     ).toMatchObject({
       status: "not_required",
+      priorFyFinalRunId: null,
+      priorFyFinalRunStatus: "not_applicable",
       blockers: [],
     });
   });
@@ -104,7 +106,28 @@ describe("resolveFyRolloverStatus", () => {
       })
     ).toMatchObject({
       status: "not_required",
+      priorFyFinalRunId: null,
+      priorFyFinalRunStatus: "not_applicable",
       blockers: [],
+    });
+  });
+
+  it("marks prior FY_END as not_applicable in opening FY even if a prior run snapshot exists", () => {
+    expect(
+      resolveFyRolloverStatus({
+        currentBsDate: "2083/04/14",
+        currentFiscalYearStart: 2083,
+        priorFiscalYearStart: 2082,
+        rolloverApplied: false,
+        priorFyFinalRun: { id: 99, status: "posted", dep_title: "FY_END" },
+        priorFyStrictCarryForwardFloor: 2083,
+      })
+    ).toMatchObject({
+      status: "not_required",
+      priorFyFinalRunId: null,
+      priorFyFinalRunStatus: "not_applicable",
+      priorFyFinalRunTitle: null,
+      rolloverAllowed: false,
     });
   });
 
@@ -118,6 +141,7 @@ describe("resolveFyRolloverStatus", () => {
       priorFyStrictCarryForwardFloor: 2082,
     });
     expect(status.status).toBe("blocked");
+    expect(status.priorFyFinalRunStatus).toBeNull();
     expect(status.blockers).toContain(PRIOR_FY_FINAL_DEPRECIATION_REQUIRED_CODE);
   });
 });

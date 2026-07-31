@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -116,7 +116,7 @@ describe("DepreciationFyRolloverPanel", () => {
         status: "not_required",
         rolloverAllowed: false,
         priorFyFinalRunId: null,
-        priorFyFinalRunStatus: null,
+        priorFyFinalRunStatus: "not_applicable",
         blockers: [],
         blockingReason: null,
         currentFiscalYearStart: 2083,
@@ -138,14 +138,56 @@ describe("DepreciationFyRolloverPanel", () => {
 
     expect(screen.getAllByText("Not required").length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/still in the opening fiscal year/i)
+      screen.getByText(/opening fiscal year\. Imported opening balances are authoritative/i)
     ).toBeTruthy();
+    expect(screen.getAllByText("Not applicable").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Previous FY_END missing/i)).toBeNull();
+    expect(screen.queryByText(/^Missing$/)).toBeNull();
     expect(
       screen.queryByRole("button", { name: /create previous fy_end run/i })
     ).toBeNull();
     expect(
       screen.queryByRole("button", { name: /roll over to/i })
     ).toBeNull();
+    expect(screen.getByText("Technical details")).toBeTruthy();
+    const technical = screen.getByText("Technical details").closest("details");
+    expect(technical).toBeTruthy();
+    expect(
+      within(technical as HTMLElement).getByText("Environment fallback")
+    ).toBeTruthy();
+  });
+
+  it("still shows genuine prior FY_END requirements after opening FY", () => {
+    renderPanel({
+      status: buildStatus({
+        status: "blocked",
+        rolloverAllowed: false,
+        priorFyFinalRunId: null,
+        priorFyFinalRunStatus: null,
+        blockers: ["PRIOR_FY_FINAL_DEPRECIATION_REQUIRED"],
+        blockingReason:
+          "Previous FY_END depreciation has not been created yet. Create and review the prior fiscal year final run before rollover.",
+        currentFiscalYearStart: 2084,
+        priorFiscalYearStart: 2083,
+        depreciationOpeningFiscalYearStart: 2083,
+        migrationSettings: {
+          openingFiscalYearStart: 2083,
+          firstSystemDepreciationDateBs: "2083/04/01",
+          lastExternalDepreciationDateBs: "2083/03/32",
+          source: "database",
+          configuredByAdminId: 1,
+          configuredByAdminEmail: "admin@example.com",
+          configuredAt: "2026-07-30T10:00:00.000Z",
+          editable: false,
+          lockReason: "Locked after accounting history exists.",
+        },
+      }),
+    });
+
+    expect(screen.getAllByText("Previous FY_END missing").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: /create previous fy_end run/i })
+    ).toBeTruthy();
   });
 
   it("shows a blocked state with the backend reason", () => {
@@ -181,7 +223,7 @@ describe("DepreciationFyRolloverPanel", () => {
     });
 
     expect(screen.getAllByText("Already completed").length).toBeGreaterThan(0);
-    expect(screen.getByText("admin@example.com")).toBeTruthy();
+    expect(screen.getAllByText("admin@example.com").length).toBeGreaterThan(0);
     expect(screen.getAllByText("#88").length).toBeGreaterThan(0);
   });
 

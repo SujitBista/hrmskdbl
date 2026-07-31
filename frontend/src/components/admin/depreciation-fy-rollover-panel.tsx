@@ -73,11 +73,23 @@ function formatRunStatus(status: string | null): string {
       return "Posted";
     case "void":
       return "Voided";
+    case "not_applicable":
+      return "Not applicable";
     case null:
       return "Missing";
     default:
       return status;
   }
+}
+
+function formatPriorFyEndRunLabel(status: DepreciationFyRolloverStatusView): string {
+  if (
+    status.status === "not_required" ||
+    status.priorFyFinalRunStatus === "not_applicable"
+  ) {
+    return "Not applicable";
+  }
+  return status.priorFyFinalRunId ? `#${status.priorFyFinalRunId}` : "Not created";
 }
 
 function formatTimestamp(iso: string | null | undefined): string {
@@ -120,7 +132,7 @@ function deriveUiState(status: DepreciationFyRolloverStatusView | null): {
       label: "Not required",
       tone: "border-slate-200 bg-slate-50 text-slate-900",
       description:
-        "You are still in the opening fiscal year (or earlier). Fiscal year rollover is not needed until the next Shrawan 1 transition.",
+        "This is the opening fiscal year. Imported opening balances are authoritative.",
     };
   }
   if (status.status === "pending") {
@@ -295,13 +307,16 @@ export function DepreciationFyRolloverPanel({
             <div>
               <dt className="font-medium text-slate-700">Previous FY_END run</dt>
               <dd className="mt-1 text-slate-900">
-                {status.priorFyFinalRunId ? `#${status.priorFyFinalRunId}` : "Not created"}
+                {formatPriorFyEndRunLabel(status)}
               </dd>
             </div>
             <div>
               <dt className="font-medium text-slate-700">Previous FY_END status</dt>
               <dd className="mt-1 text-slate-900">
-                {formatRunStatus(status.priorFyFinalRunStatus)}
+                {status.status === "not_required" ||
+                status.priorFyFinalRunStatus === "not_applicable"
+                  ? "Not applicable"
+                  : formatRunStatus(status.priorFyFinalRunStatus)}
               </dd>
             </div>
             <div>
@@ -317,7 +332,7 @@ export function DepreciationFyRolloverPanel({
           ) : null}
 
           {status.migrationSettings ? (
-            <dl className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-white/70 px-3 py-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+            <dl className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-white/70 px-3 py-3 text-sm md:grid-cols-2 xl:grid-cols-3">
               <div>
                 <dt className="font-medium text-slate-700">Opening fiscal year</dt>
                 <dd className="mt-1 text-slate-900">
@@ -338,17 +353,51 @@ export function DepreciationFyRolloverPanel({
                   {status.migrationSettings.lastExternalDepreciationDateBs ?? "—"}
                 </dd>
               </div>
-              <div>
-                <dt className="font-medium text-slate-700">Settings source</dt>
-                <dd className="mt-1 text-slate-900">
-                  {status.migrationSettings.source === "database"
-                    ? "Database"
-                    : status.migrationSettings.source === "env"
-                      ? "Environment fallback"
-                      : "Not configured"}
-                </dd>
-              </div>
             </dl>
+          ) : null}
+
+          {status.migrationSettings ? (
+            <details className="mt-4 rounded-lg border border-slate-200 bg-white/70 px-3 py-2 text-sm text-slate-700">
+              <summary className="cursor-pointer font-medium text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-800/25 focus-visible:ring-offset-1">
+                Technical details
+              </summary>
+              <dl className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <dt className="font-medium text-slate-700">Settings source</dt>
+                  <dd className="mt-1 text-slate-900">
+                    {status.migrationSettings.source === "database"
+                      ? "Database"
+                      : status.migrationSettings.source === "env"
+                        ? "Environment fallback"
+                        : "Not configured"}
+                  </dd>
+                </div>
+                {status.migrationSettings.configuredByAdminEmail ? (
+                  <div>
+                    <dt className="font-medium text-slate-700">Configured by</dt>
+                    <dd className="mt-1 text-slate-900">
+                      {status.migrationSettings.configuredByAdminEmail}
+                    </dd>
+                  </div>
+                ) : null}
+                {status.migrationSettings.configuredAt ? (
+                  <div>
+                    <dt className="font-medium text-slate-700">Configured at</dt>
+                    <dd className="mt-1 text-slate-900">
+                      {formatTimestamp(status.migrationSettings.configuredAt)}
+                    </dd>
+                  </div>
+                ) : null}
+                {status.migrationSettings.lockReason ? (
+                  <div className="md:col-span-2">
+                    <dt className="font-medium text-slate-700">Lock reason</dt>
+                    <dd className="mt-1 text-slate-900">
+                      {status.migrationSettings.lockReason}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </details>
           ) : null}
 
           {status.status === "completed" ? (

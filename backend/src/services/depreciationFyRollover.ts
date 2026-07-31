@@ -149,14 +149,15 @@ export function resolveFyRolloverStatus(input: {
   const priorFyFinalRunId = input.priorFyFinalRun?.id ?? null;
 
   if (input.priorFiscalYearStart < input.priorFyStrictCarryForwardFloor) {
+    // Prior FY was before system-managed opening FY: do not report it as "missing".
     return {
       currentBsDate: input.currentBsDate,
       currentFiscalYearStart: input.currentFiscalYearStart,
       priorFiscalYearStart: input.priorFiscalYearStart,
       status: "not_required",
-      priorFyFinalRunId,
-      priorFyFinalRunStatus: input.priorFyFinalRun?.status ?? null,
-      priorFyFinalRunTitle: input.priorFyFinalRun?.dep_title ?? null,
+      priorFyFinalRunId: null,
+      priorFyFinalRunStatus: "not_applicable",
+      priorFyFinalRunTitle: null,
       blockers,
       rolloverAllowed: false,
       blockingReason: null,
@@ -492,7 +493,7 @@ export async function getDepreciationFyRolloverStatus(input?: {
       priorFiscalYearStart: (currentFy ?? 0) - 1,
       status: "not_required",
       priorFyFinalRunId: null,
-      priorFyFinalRunStatus: null,
+      priorFyFinalRunStatus: "not_applicable",
       priorFyFinalRunTitle: null,
       blockers: [],
       rolloverAllowed: false,

@@ -101,7 +101,9 @@ describe("getQuickAsOfTodayEligibility", () => {
     const result = getQuickAsOfTodayEligibility(
       baseStatus({
         status: "blocked",
+        priorFyFinalRunId: null,
         priorFyFinalRunStatus: null,
+        blockers: ["PRIOR_FY_FINAL_DEPRECIATION_REQUIRED"],
         blockingReason: "Previous FY_END depreciation has not been created yet.",
         depreciationOpeningFiscalYearStart: 2082,
         migrationSettings: {
@@ -118,7 +120,7 @@ describe("getQuickAsOfTodayEligibility", () => {
       })
     );
     expect(result.enabled).toBe(false);
-    expect(result.reason).toMatch(/Previous FY_END/i);
+    expect(result.reason).toMatch(/year-end depreciation for the previous fiscal year/i);
   });
 
   it("disables when rollover is pending", () => {
@@ -131,6 +133,6 @@ describe("getQuickAsOfTodayEligibility", () => {
       })
     );
     expect(result.enabled).toBe(false);
-    expect(result.reason).toMatch(/Complete fiscal year rollover/i);
+    expect(result.reason).toMatch(/Set opening balances for the new fiscal year/i);
   });
 });

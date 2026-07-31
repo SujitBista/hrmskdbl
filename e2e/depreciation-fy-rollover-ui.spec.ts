@@ -92,35 +92,37 @@ test.describe.serial("Depreciation FY rollover admin UI", () => {
     await page.goto("/admin/dashboard/asset-register/depreciation");
 
     const rolloverRegion = page.getByRole("region", {
-      name: "Fiscal Year Rollover",
+      name: "Opening balances (new fiscal year)",
     });
     await expect(
-      page.getByRole("heading", { name: "Fiscal Year Rollover" })
+      page.getByRole("heading", { name: "Opening balances (new fiscal year)" })
     ).toBeVisible();
-    await expect(rolloverRegion.getByText("Loading rollover status…")).toHaveCount(0, {
+    await expect(rolloverRegion.getByText("Loading status…")).toHaveCount(0, {
       timeout: 15_000,
     });
-    await expect(rolloverRegion).toContainText("Previous FY_END missing");
+    await expect(rolloverRegion).toContainText("Year-end depreciation missing");
     await expect(
-      page.getByRole("button", { name: /roll over to fy 2083\/84/i })
+      page.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
     ).toHaveCount(0);
     const blockedShot = await screenshotStep(page, "fy-rollover-ui-blocked-missing");
 
-    await page.getByRole("button", { name: /create previous fy_end run/i }).click();
+    await page
+      .getByRole("button", { name: /create year-end depreciation for fy 2082\/83/i })
+      .click();
     await page.waitForURL(/\/admin\/dashboard\/asset-register\/depreciation\/\d+$/);
 
     const fyEndRunId = Number.parseInt(page.url().split("/").pop() ?? "", 10);
     expect(Number.isFinite(fyEndRunId)).toBe(true);
 
     await expect(
-      page.getByText(/Draft FY_END depreciation/i)
+      page.getByText(/Draft year-end depreciation/i)
     ).toBeVisible();
     const draftShot = await screenshotStep(page, "fy-rollover-ui-fy-end-draft");
 
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });
-    await page.getByRole("button", { name: /post fy_end depreciation/i }).click();
+    await page.getByRole("button", { name: /post year-end depreciation/i }).click();
     await expect
       .poll(async () => {
         const runRes = await apiJson<RunByIdResponse>(
@@ -143,15 +145,21 @@ test.describe.serial("Depreciation FY rollover admin UI", () => {
     const closingWdv = num(finalLine!.balance_amount);
 
     await page.goto("/admin/dashboard/asset-register/depreciation");
-    await expect(rolloverRegion).toContainText("Ready for rollover");
+    await expect(rolloverRegion).toContainText("Ready to set opening balances");
     await expect(
-      page.getByRole("button", { name: /roll over to fy 2083\/84/i })
+      page.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
     ).toBeVisible();
     const readyShot = await screenshotStep(page, "fy-rollover-ui-ready");
 
-    await page.getByRole("button", { name: /roll over to fy 2083\/84/i }).click();
-    await expect(page.getByText("Confirm fiscal year rollover")).toBeVisible();
-    const confirmButton = page.getByRole("button", { name: /confirm rollover/i });
+    await page
+      .getByRole("button", { name: /set opening balances for fy 2083\/84/i })
+      .click();
+    await expect(
+      page.getByText(/Set opening balances for FY 2083\/84\?/i)
+    ).toBeVisible();
+    const confirmButton = page.getByRole("button", {
+      name: /confirm opening balances/i,
+    });
     await expect(confirmButton).toBeDisabled();
     const confirmShot = await screenshotStep(page, "fy-rollover-ui-confirm");
 
@@ -159,9 +167,9 @@ test.describe.serial("Depreciation FY rollover admin UI", () => {
     await expect(confirmButton).toBeEnabled();
     await confirmButton.click();
 
-    await expect(rolloverRegion).toContainText("Already completed");
+    await expect(rolloverRegion).toContainText("Opening balances are set");
     await expect(
-      page.getByText(/Previous FY closing WDV is now the new FY opening WDV/i)
+      page.getByText(/Closing values from the previous year are now this year’s opening book values/i)
     ).toBeVisible();
     const completedShot = await screenshotStep(page, "fy-rollover-ui-completed");
 
@@ -178,9 +186,9 @@ test.describe.serial("Depreciation FY rollover admin UI", () => {
     expect(Math.abs(num(assetRow!.book_value) - closingWdv)).toBeLessThan(0.05);
 
     await page.reload();
-    await expect(rolloverRegion).toContainText("Already completed");
+    await expect(rolloverRegion).toContainText("Opening balances are set");
     await expect(
-      page.getByRole("button", { name: /roll over to fy 2083\/84/i })
+      page.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
     ).toHaveCount(0);
 
     const nonAdminContext = await browser.newContext();

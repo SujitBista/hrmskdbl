@@ -199,7 +199,9 @@ describe("DepreciationMasterScreen empty state", () => {
       runs: [],
       status: openingFyStatus({
         status: "blocked",
+        priorFyFinalRunId: null,
         priorFyFinalRunStatus: null,
+        blockers: ["PRIOR_FY_FINAL_DEPRECIATION_REQUIRED"],
         blockingReason:
           "Previous FY_END depreciation has not been created yet.",
         depreciationOpeningFiscalYearStart: 2082,
@@ -226,7 +228,7 @@ describe("DepreciationMasterScreen empty state", () => {
     }) as HTMLButtonElement;
     expect(quick.disabled).toBe(true);
     expect(
-      within(empty).getByText(/Previous FY_END depreciation has not been created yet/i)
+      within(empty).getByText(/year-end depreciation for the previous fiscal year/i)
     ).toBeTruthy();
   });
 

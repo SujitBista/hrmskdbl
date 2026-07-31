@@ -1860,7 +1860,8 @@ export async function createPriorFyEndDepreciationDraft(
     depreciationScopeMode: "FY_END",
     branchId,
     depTitle: "Fiscal year closing (FY_END)",
-    remarks: "Draft FY_END depreciation for prior fiscal year — review and post before rollover.",
+    remarks:
+      "Year-end depreciation for the previous fiscal year — review and post before setting opening balances.",
     status: "draft",
   });
 

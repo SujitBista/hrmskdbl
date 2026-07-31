@@ -1,6 +1,9 @@
 import { compareBsDateString } from "@hrmskdbl/depreciation-core";
 
-import type { DepreciationFyRolloverStatusView } from "./depreciation-fy-rollover-panel";
+import {
+  userFacingRolloverReason,
+  type DepreciationFyRolloverStatusView,
+} from "./depreciation-fy-rollover-panel";
 
 export function formatOpeningFySlashLabel(start: number): string {
   return `FY ${start}/${String(start + 1).slice(-2)}`;
@@ -34,37 +37,38 @@ export function getQuickAsOfTodayEligibility(
   options?: { statusLoading?: boolean }
 ): { enabled: boolean; reason: string | null } {
   if (options?.statusLoading) {
-    return { enabled: false, reason: "Waiting for rollover status…" };
+    return { enabled: false, reason: "Waiting for year-end status…" };
   }
   if (!status) {
-    return { enabled: false, reason: "Rollover status is unavailable." };
+    return { enabled: false, reason: "Year-end status is unavailable." };
   }
   if (status.migrationSettings?.source === "none") {
     return {
       enabled: false,
       reason:
-        "Configure depreciation migration settings before calculating as of today.",
+        "Configure Depreciation → Settings before calculating as of today.",
     };
   }
   if (status.status === "blocked") {
     return {
       enabled: false,
       reason:
+        userFacingRolloverReason(status) ??
         status.blockingReason ??
-        "Fiscal year rollover prerequisites are not met.",
+        "Finish previous year-end depreciation before calculating as of today.",
     };
   }
   if (status.status === "pending") {
     return {
       enabled: false,
       reason:
-        "Complete fiscal year rollover before calculating as of today.",
+        "Set opening balances for the new fiscal year (panel above) before calculating as of today.",
     };
   }
 
   const today = status.currentBsDate;
   if (!today) {
-    return { enabled: false, reason: "Current BS date is unavailable." };
+    return { enabled: false, reason: "Today’s BS date is unavailable." };
   }
 
   const firstSystem =

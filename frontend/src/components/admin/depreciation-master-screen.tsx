@@ -306,7 +306,7 @@ export function DepreciationMasterScreen() {
         error?: string;
       };
       if (!res.ok) {
-        window.alert(json.error ?? "Could not create FY_END depreciation draft.");
+        window.alert(json.error ?? "Could not create year-end depreciation draft.");
         return;
       }
       const runId = json.run?.id;
@@ -315,7 +315,7 @@ export function DepreciationMasterScreen() {
         router.push(`/admin/dashboard/asset-register/depreciation/${runId}`);
       }
     } catch {
-      window.alert("Could not reach the server to create FY_END depreciation.");
+      window.alert("Could not reach the server to create year-end depreciation.");
     } finally {
       setCreateFyEndLoading(false);
     }

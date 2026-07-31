@@ -107,10 +107,10 @@ function renderPanel(input?: {
 describe("DepreciationFyRolloverPanel", () => {
   it("shows the loading state", () => {
     renderPanel({ status: null, loading: true });
-    expect(screen.getByText("Loading rollover status…")).toBeTruthy();
+    expect(screen.getByText("Loading status…")).toBeTruthy();
   });
 
-  it("shows the not_required state calmly (no create FY_END CTA)", () => {
+  it("shows the not_required state calmly (no create year-end CTA)", () => {
     renderPanel({
       status: buildStatus({
         status: "not_required",
@@ -136,28 +136,27 @@ describe("DepreciationFyRolloverPanel", () => {
       }),
     });
 
-    expect(screen.getAllByText("Not required").length).toBeGreaterThan(0);
+    expect(screen.getByText("Not needed this year")).toBeTruthy();
     expect(
-      screen.getByText(/opening fiscal year\. Imported opening balances are authoritative/i)
+      screen.getByText(/first system fiscal year/i)
     ).toBeTruthy();
-    expect(screen.getAllByText("Not applicable").length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Previous FY_END missing/i)).toBeNull();
-    expect(screen.queryByText(/^Missing$/)).toBeNull();
+    expect(screen.queryByText(/Year-end depreciation missing/i)).toBeNull();
+    expect(screen.queryByText(/^Not created yet$/)).toBeNull();
     expect(
-      screen.queryByRole("button", { name: /create previous fy_end run/i })
+      screen.queryByRole("button", { name: /create year-end depreciation/i })
     ).toBeNull();
     expect(
-      screen.queryByRole("button", { name: /roll over to/i })
+      screen.queryByRole("button", { name: /set opening balances/i })
     ).toBeNull();
-    expect(screen.getByText("Technical details")).toBeTruthy();
-    const technical = screen.getByText("Technical details").closest("details");
+    expect(screen.getByText("More details")).toBeTruthy();
+    const technical = screen.getByText("More details").closest("details");
     expect(technical).toBeTruthy();
     expect(
       within(technical as HTMLElement).getByText("Environment fallback")
     ).toBeTruthy();
   });
 
-  it("still shows genuine prior FY_END requirements after opening FY", () => {
+  it("still shows genuine prior year-end requirements after opening FY", () => {
     renderPanel({
       status: buildStatus({
         status: "blocked",
@@ -184,13 +183,16 @@ describe("DepreciationFyRolloverPanel", () => {
       }),
     });
 
-    expect(screen.getAllByText("Previous FY_END missing").length).toBeGreaterThan(0);
+    expect(screen.getByText("Year-end depreciation missing")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /create previous fy_end run/i })
+      screen.getByRole("button", {
+        name: /create year-end depreciation for fy 2083\/84/i,
+      })
     ).toBeTruthy();
+    expect(screen.getByText(/you are here/i)).toBeTruthy();
   });
 
-  it("shows a blocked state with the backend reason", () => {
+  it("shows a blocked state with plain-language guidance", () => {
     renderPanel({
       status: buildStatus({
         status: "blocked",
@@ -203,16 +205,16 @@ describe("DepreciationFyRolloverPanel", () => {
       }),
     });
 
-    expect(screen.getAllByText("Previous FY_END missing").length).toBeGreaterThan(0);
+    expect(screen.getByText("Year-end depreciation missing")).toBeTruthy();
     expect(
-      screen.getByText(/Previous FY_END depreciation has not been created yet/i)
+      screen.getByText(/Create year-end depreciation for the previous fiscal year/i)
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /create previous fy_end run/i })
+      screen.getByRole("button", { name: /create year-end depreciation/i })
     ).toBeTruthy();
   });
 
-  it("shows the completed state with audit information", () => {
+  it("shows the completed state with audit information and next step", () => {
     renderPanel({
       status: buildStatus({
         status: "completed",
@@ -222,9 +224,11 @@ describe("DepreciationFyRolloverPanel", () => {
       }),
     });
 
-    expect(screen.getAllByText("Already completed").length).toBeGreaterThan(0);
+    expect(screen.getByText("Opening balances are set")).toBeTruthy();
     expect(screen.getAllByText("admin@example.com").length).toBeGreaterThan(0);
     expect(screen.getAllByText("#88").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Quick: as of today/i)).toBeTruthy();
+    expect(screen.queryByText(/System calculates from/i)).toBeNull();
   });
 
   it("shows a safe non-admin error state", () => {
@@ -233,10 +237,10 @@ describe("DepreciationFyRolloverPanel", () => {
       error: "Unauthorized.",
     });
 
-    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getByText("Could not load")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("Unauthorized.");
     expect(
-      screen.queryByRole("button", { name: /roll over to/i })
+      screen.queryByRole("button", { name: /set opening balances/i })
     ).toBeNull();
   });
 
@@ -244,13 +248,19 @@ describe("DepreciationFyRolloverPanel", () => {
     const user = userEvent.setup();
     const { onRefreshStatusBeforeConfirm, onRunRollover } = renderPanel();
 
-    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(
+      screen.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
+    );
     expect(onRefreshStatusBeforeConfirm).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Confirm fiscal year rollover")).toBeTruthy();
+    expect(
+      screen.getByText(/Set opening balances for FY 2083\/84\?/i)
+    ).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /^cancel$/i }));
     await waitFor(() => {
-      expect(screen.queryByText("Confirm fiscal year rollover")).toBeNull();
+      expect(
+        screen.queryByText(/Set opening balances for FY 2083\/84\?/i)
+      ).toBeNull();
     });
     expect(onRunRollover).not.toHaveBeenCalled();
   });
@@ -259,15 +269,19 @@ describe("DepreciationFyRolloverPanel", () => {
     const user = userEvent.setup();
     const { onRefreshStatusBeforeConfirm, onRunRollover } = renderPanel();
 
-    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(
+      screen.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
+    );
     expect(onRefreshStatusBeforeConfirm).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("checkbox"));
-    await user.click(screen.getByRole("button", { name: /confirm rollover/i }));
+    await user.click(
+      screen.getByRole("button", { name: /confirm opening balances/i })
+    );
 
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toContain(
-        "Previous FY closing WDV is now the new FY opening WDV"
+        "Opening balances are set"
       );
     });
     expect(onRunRollover).toHaveBeenCalledTimes(1);
@@ -285,13 +299,17 @@ describe("DepreciationFyRolloverPanel", () => {
       })),
     });
 
-    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(
+      screen.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
+    );
     await user.click(screen.getByRole("checkbox"));
-    await user.click(screen.getByRole("button", { name: /confirm rollover/i }));
+    await user.click(
+      screen.getByRole("button", { name: /confirm opening balances/i })
+    );
 
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toContain(
-        "already applied earlier"
+        "already set earlier"
       );
     });
   });
@@ -304,9 +322,13 @@ describe("DepreciationFyRolloverPanel", () => {
       }),
     });
 
-    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(
+      screen.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
+    );
     await user.click(screen.getByRole("checkbox"));
-    await user.click(screen.getByRole("button", { name: /confirm rollover/i }));
+    await user.click(
+      screen.getByRole("button", { name: /confirm opening balances/i })
+    );
 
     await waitFor(() => {
       expect(screen.getByRole("alert").textContent).toContain(
@@ -318,7 +340,7 @@ describe("DepreciationFyRolloverPanel", () => {
   it("disables the rollover button during submission", () => {
     renderPanel({ rolloverLoading: true });
     const button = screen.getByRole("button", {
-      name: /rollover in progress/i,
+      name: /setting opening balances/i,
     }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
   });
@@ -330,18 +352,25 @@ describe("DepreciationFyRolloverPanel", () => {
         buildStatus({
           status: "blocked",
           rolloverAllowed: false,
+          priorFyFinalRunId: 88,
+          priorFyFinalRunStatus: "void",
+          blockers: ["PRIOR_FY_FINAL_DEPRECIATION_REQUIRED"],
           blockingReason: "Previous FY_END depreciation was voided.",
         })
       ),
     });
 
-    await user.click(screen.getByRole("button", { name: /roll over to fy 2083\/84/i }));
+    await user.click(
+      screen.getByRole("button", { name: /set opening balances for fy 2083\/84/i })
+    );
 
     await waitFor(() => {
-      expect(screen.getByRole("alert").textContent).toContain(
-        "Previous FY_END depreciation was voided."
+      expect(screen.getByRole("alert").textContent).toMatch(
+        /year-end|voided/i
       );
     });
-    expect(screen.queryByText("Confirm fiscal year rollover")).toBeNull();
+    expect(
+      screen.queryByText(/Set opening balances for FY 2083\/84\?/i)
+    ).toBeNull();
   });
 });

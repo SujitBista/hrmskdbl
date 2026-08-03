@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   }
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error ?? "Could not create FY_END depreciation draft." },
+      { error: data.error ?? "Could not create year-end depreciation draft." },
       { status: res.status }
     );
   }

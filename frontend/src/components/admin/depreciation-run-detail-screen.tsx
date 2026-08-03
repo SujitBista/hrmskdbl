@@ -332,7 +332,7 @@ export function DepreciationRunDetailScreen() {
     if (!run || !isDraftFyEnd) return;
     if (
       !window.confirm(
-        `Post FY_END depreciation run #${run.id}? After posting, it can be used for fiscal year rollover.`
+        `Post year-end depreciation run #${run.id}? After posting, you can set opening balances on the depreciation master panel.`
       )
     ) {
       return;
@@ -346,12 +346,12 @@ export function DepreciationRunDetailScreen() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setPostError(json.error ?? "Could not post FY_END depreciation.");
+        setPostError(json.error ?? "Could not post year-end depreciation.");
         return;
       }
       await load();
     } catch {
-      setPostError("Could not post FY_END depreciation.");
+      setPostError("Could not post year-end depreciation.");
     } finally {
       setPostBusy(false);
     }
@@ -402,7 +402,7 @@ export function DepreciationRunDetailScreen() {
     const modeLine =
       (run.depreciation_scope_mode ?? "FY_END") === "AS_OF_DATE"
         ? `Calculation mode: AS_OF_DATE; through calculation date ${run.calculation_date_bs} (BS) (capped at fiscal year end).`
-        : `Calculation mode: FY_END; through fiscal quarter end (Q${run.quarter_no}) / fiscal year end.`;
+        : `Calculation mode: year-end; through fiscal quarter end (Q${run.quarter_no}) / fiscal year end.`;
     const header = [
       "FiscalYear",
       "AssetCode",
@@ -573,7 +573,7 @@ export function DepreciationRunDetailScreen() {
               disabled={postBusy || pagination.total === 0}
               onClick={() => void postFyEndDepreciation()}
             >
-              {postBusy ? "Posting…" : "Post FY_END Depreciation"}
+              {postBusy ? "Posting…" : "Post year-end depreciation"}
             </button>
           ) : null}
           <button
@@ -602,11 +602,11 @@ export function DepreciationRunDetailScreen() {
           className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950"
           role="status"
         >
-          <p className="font-medium">Draft FY_END depreciation — review required</p>
+          <p className="font-medium">Draft year-end depreciation — review required</p>
           <p className="mt-1">
             Review the detail lines below, then click{" "}
-            <span className="font-medium">Post FY_END Depreciation</span> before
-            running fiscal year rollover.
+            <span className="font-medium">Post year-end depreciation</span> before
+            setting opening balances on the depreciation master panel.
           </p>
         </div>
       ) : null}

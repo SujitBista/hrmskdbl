@@ -116,10 +116,10 @@ test.describe.serial("Depreciation mid-year migration", () => {
 
     await page.getByLabel(/Opening fiscal year/i).fill(String(fixture.openingFiscalYear));
     await page
-      .getByLabel(/First system depreciation date/i)
+      .getByLabel(/System calculates from/i)
       .fill(fixture.firstSystemDepreciationDateBs);
     await page
-      .getByLabel(/Last depreciation date calculated by the previous system/i)
+      .getByLabel(/Depreciation covered up to/i)
       .fill(fixture.lastExternalDepreciationDateBs);
 
     // Settings may already be seeded and locked only after posted runs — seed clears runs.
@@ -133,7 +133,7 @@ test.describe.serial("Depreciation mid-year migration", () => {
     await expect(page.getByLabel(/Opening fiscal year/i)).toHaveValue(
       String(fixture.openingFiscalYear)
     );
-    await expect(page.getByLabel(/First system depreciation date/i)).toHaveValue(
+    await expect(page.getByLabel(/System calculates from/i)).toHaveValue(
       fixture.firstSystemDepreciationDateBs
     );
     await screenshotStep(page, "mid-year-settings-persisted");
@@ -342,7 +342,7 @@ test.describe.serial("Depreciation mid-year migration", () => {
         "# Mid-year migration E2E",
         "",
         `- Opening FY: ${fixture.openingFiscalYear}`,
-        `- First system date: ${fixture.firstSystemDepreciationDateBs}`,
+        `- System calculates from: ${fixture.firstSystemDepreciationDateBs}`,
         `- Imported WDV: ${fixture.importedWdv}`,
         `- First valid run id: ${firstValidRunId}`,
         `- FY_END run id: ${fyEndRunId}`,

@@ -234,4 +234,115 @@ describe("mid-year / FY-boundary depreciation migration (core)", () => {
       ).toBe(FY_START);
     });
   });
+
+  /**
+   * Go-live cutover: external through Shrawan 14; system owns from Shrawan 15.
+   * Inclusive day count: as-of D includes day D when effective start ≤ D.
+   */
+  describe("Shrawan 14/15 migration cutover (2083/04/14 → 2083/04/15)", () => {
+    const LAST_EXTERNAL = "2083/04/14";
+    const FIRST_SYSTEM = "2083/04/15";
+    const DAY_AFTER = "2083/04/16";
+
+    it("as-of first system date includes exactly one system-owned day from imported WDV", () => {
+      const r = computeAssetQuarterCumulative({
+        purchaseAmount: GROSS,
+        depreciationStartBs: "2075/01/01",
+        depRatePercent: RATE,
+        method: "DECLINING_BALANCE",
+        fiscalYearStart: OPENING_FY,
+        quarter: 1,
+        depreciationScopeMode: "AS_OF_DATE",
+        asOfDateBs: FIRST_SYSTEM,
+        registerPriorAccumulatedDep: IMPLIED_PRIOR,
+        firstSystemDepreciationDateBs: FIRST_SYSTEM,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      expect(r.detail.effectiveCalcStartBs).toBe(FIRST_SYSTEM);
+      expect(r.detail.depDays).toBe(1);
+      expect(r.detail.bookValue).toBe(IMPORTED_WDV);
+      const expectedDep = (IMPORTED_WDV * (RATE / 100) * 1) / 365;
+      expect(Math.abs(r.detail.depAmount - expectedDep)).toBeLessThan(0.02);
+      expect(r.detail.balanceAmount).toBeCloseTo(
+        IMPORTED_WDV - r.detail.depAmount,
+        1
+      );
+      // No overlap: days through last external are outside DepDays.
+      expect(
+        compareBsDateString(r.detail.effectiveCalcStartBs, LAST_EXTERNAL)
+      ).toBeGreaterThan(0);
+    });
+
+    it("as-of day after first system includes two inclusive system-owned days", () => {
+      const r = computeAssetQuarterCumulative({
+        purchaseAmount: GROSS,
+        depreciationStartBs: "2075/01/01",
+        depRatePercent: RATE,
+        method: "DECLINING_BALANCE",
+        fiscalYearStart: OPENING_FY,
+        quarter: 1,
+        depreciationScopeMode: "AS_OF_DATE",
+        asOfDateBs: DAY_AFTER,
+        registerPriorAccumulatedDep: IMPLIED_PRIOR,
+        firstSystemDepreciationDateBs: FIRST_SYSTEM,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.detail.effectiveCalcStartBs).toBe(FIRST_SYSTEM);
+      expect(r.detail.depDays).toBe(
+        inclusiveCalendarDaysBetweenBs(FIRST_SYSTEM, DAY_AFTER)
+      );
+      expect(r.detail.depDays).toBe(2);
+      expect(r.detail.bookValue).toBe(IMPORTED_WDV);
+    });
+
+    it("compute-only as-of last external yields zero system days (gate also rejects create)", () => {
+      const r = computeAssetQuarterCumulative({
+        purchaseAmount: GROSS,
+        depreciationStartBs: "2075/01/01",
+        depRatePercent: RATE,
+        method: "DECLINING_BALANCE",
+        fiscalYearStart: OPENING_FY,
+        quarter: 1,
+        depreciationScopeMode: "AS_OF_DATE",
+        asOfDateBs: LAST_EXTERNAL,
+        registerPriorAccumulatedDep: IMPLIED_PRIOR,
+        firstSystemDepreciationDateBs: FIRST_SYSTEM,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.detail.effectiveCalcStartBs).toBe(FIRST_SYSTEM);
+      expect(r.detail.depDays).toBe(0);
+      expect(r.detail.depAmount).toBe(0);
+      expect(r.detail.bookValue).toBe(IMPORTED_WDV);
+      expect(r.detail.balanceAmount).toBe(IMPORTED_WDV);
+    });
+
+    it("later as-of date never includes pre-migration days in DepDays", () => {
+      const later = "2083/05/01";
+      const r = computeAssetQuarterCumulative({
+        purchaseAmount: GROSS,
+        depreciationStartBs: "2075/01/01",
+        depRatePercent: RATE,
+        method: "DECLINING_BALANCE",
+        fiscalYearStart: OPENING_FY,
+        quarter: 1,
+        depreciationScopeMode: "AS_OF_DATE",
+        asOfDateBs: later,
+        registerPriorAccumulatedDep: IMPLIED_PRIOR,
+        firstSystemDepreciationDateBs: FIRST_SYSTEM,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.detail.depDays).toBe(
+        inclusiveCalendarDaysBetweenBs(FIRST_SYSTEM, later)
+      );
+      expect(r.detail.depDays).toBeLessThan(
+        inclusiveCalendarDaysBetweenBs(FY_START, later)
+      );
+      expect(r.detail.bookValue).toBe(IMPORTED_WDV);
+    });
+  });
 });

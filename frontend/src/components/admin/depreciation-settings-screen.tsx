@@ -128,7 +128,7 @@ export function DepreciationSettingsScreen() {
     const firstSystem = firstSystemDateInput.trim();
     if (!firstSystem) {
       setError(
-        "First system depreciation date is required (e.g. 2083/04/01 or 2083/06/01)."
+        "System calculates from date is required (e.g. 2083/04/01 or 2083/06/01)."
       );
       return;
     }
@@ -261,7 +261,7 @@ export function DepreciationSettingsScreen() {
                     htmlFor={`${formId}-first-system`}
                     className="mb-1 block text-sm font-medium text-slate-700"
                   >
-                    First system depreciation date (BS)
+                    System calculates from (BS)
                   </label>
                   <input
                     id={`${formId}-first-system`}
@@ -284,8 +284,7 @@ export function DepreciationSettingsScreen() {
                     htmlFor={`${formId}-last-external`}
                     className="mb-1 block text-sm font-medium text-slate-700"
                   >
-                    Last depreciation date calculated by the previous system
-                    (BS, optional)
+                    Depreciation covered up to (BS, optional)
                   </label>
                   <input
                     id={`${formId}-last-external`}
@@ -294,11 +293,11 @@ export function DepreciationSettingsScreen() {
                     value={lastExternalDateInput}
                     onChange={(e) => setLastExternalDateInput(e.target.value)}
                     disabled={!settings?.editable}
-                    placeholder="Derived as day before first system date"
+                    placeholder="Derived as day before system calculates from"
                   />
                   <p className="mt-1 text-xs text-slate-500">
-                    When set, must be the day immediately before the first
-                    system depreciation date.
+                    When set, must be the day immediately before the system
+                    calculates from date.
                   </p>
                 </div>
 
@@ -371,7 +370,9 @@ export function DepreciationSettingsScreen() {
                           <th className="px-3 py-2 font-medium">When</th>
                           <th className="px-3 py-2 font-medium">Action</th>
                           <th className="px-3 py-2 font-medium">Opening FY</th>
-                          <th className="px-3 py-2 font-medium">First system</th>
+                          <th className="px-3 py-2 font-medium">
+                            System calculates from
+                          </th>
                           <th className="px-3 py-2 font-medium">By</th>
                         </tr>
                       </thead>
